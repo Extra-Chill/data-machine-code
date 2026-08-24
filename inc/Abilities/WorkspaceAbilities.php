@@ -3307,12 +3307,12 @@ class WorkspaceAbilities {
 		return array_merge(
 			$diagnostic,
 			array(
-				'success'        => true,
-				'backend'        => $backend,
-				'local_backend'  => $diagnostic['backend'] ?? 'local_git',
-				'workspace_path' => $workspace->get_path(),
+				'success'          => true,
+				'backend'          => $backend,
+				'local_backend'    => $diagnostic['backend'] ?? 'local_git',
+				'workspace_path'   => $workspace->get_path(),
 				'runtime_identity' => self::runtimeIdentity(array()),
-				'remediation'    => $remediation,
+				'remediation'      => $remediation,
 			)
 		);
 	}
@@ -3320,9 +3320,9 @@ class WorkspaceAbilities {
 	/** @return array<string,mixed> */
 	public static function runtimeIdentity( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
 		$config = apply_filters('datamachine_code_runtime_identity_config', array(
-			'runtime_file' => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
+			'runtime_file'    => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
 			'runtime_version' => DATAMACHINE_CODE_VERSION,
-			'source_path' => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
+			'source_path'     => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
 		));
 		$config = is_array($config) ? $config : array();
 		return RuntimeSourceSkewDiagnostic::inspect(
@@ -4522,27 +4522,27 @@ class WorkspaceAbilities {
 	/** Schema shared by allocation and revalidation handoff proof payloads. */
 	private static function worktreeHandoffProofSchemaProperties(): array {
 		return array(
-			'version'            => array(
+			'version'                       => array(
 				'type'        => 'integer',
 				'enum'        => array( 3 ),
 				'description' => 'Only proof schema version 3 is accepted. Earlier proofs must be replaced by a fresh allocation proof.',
 			),
-			'proof_id'           => array( 'type' => 'string' ),
-			'handle'             => array( 'type' => 'string' ),
-			'worktree_sha'       => array( 'type' => 'string' ),
-			'resolved_base_ref'  => array( 'type' => 'string' ),
-			'resolved_base_sha'  => array( 'type' => 'string' ),
-			'remote_default_ref' => array( 'type' => 'string' ),
-			'remote_default_sha' => array( 'type' => 'string' ),
+			'proof_id'                      => array( 'type' => 'string' ),
+			'handle'                        => array( 'type' => 'string' ),
+			'worktree_sha'                  => array( 'type' => 'string' ),
+			'resolved_base_ref'             => array( 'type' => 'string' ),
+			'resolved_base_sha'             => array( 'type' => 'string' ),
+			'remote_default_ref'            => array( 'type' => 'string' ),
+			'remote_default_sha'            => array( 'type' => 'string' ),
 			'remote_default_advertised_sha' => array(
 				'type'        => 'string',
 				'description' => 'Commit SHA advertised by git ls-remote --symref origin HEAD and matched to the fetched remote-tracking ref.',
 			),
-			'verified_at'        => array(
+			'verified_at'                   => array(
 				'type'   => 'string',
 				'format' => 'date-time',
 			),
-			'digest'             => array( 'type' => 'string' ),
+			'digest'                        => array( 'type' => 'string' ),
 		);
 	}
 

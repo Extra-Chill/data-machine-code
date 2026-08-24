@@ -237,7 +237,7 @@ trait WorkspaceWorktreeLifecycle {
 	 */
 	public function worktree_handoff_revalidate( string $handle, array $proof ): array|\WP_Error {
 		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
-		$parsed = $this->parse_handle($handle);
+		$parsed   = $this->parse_handle($handle);
 		if ( ! $parsed['is_worktree'] || (string) ( $proof['handle'] ?? '' ) !== $handle ) {
 			return new \WP_Error('invalid_worktree_handoff_proof', 'A matching managed worktree handoff proof is required.', array( 'status' => 400 ));
 		}
@@ -250,7 +250,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
 				return $this->worktree_handoff_timeout();
 			}
-			$stored   = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
+			$stored = is_array($metadata) ? (array) ( $metadata['handoff_freshness_proof'] ?? array() ) : array();
 			if ( 3 !== (int) ( $stored['version'] ?? 0 ) || 3 !== (int) ( $proof['version'] ?? 0 ) || array() === $stored || ! hash_equals($this->worktree_handoff_proof_digest($stored), (string) ( $stored['digest'] ?? '' )) || ! hash_equals( (string) ( $stored['digest'] ?? '' ), (string) ( $proof['digest'] ?? '' )) || $this->worktree_handoff_proof_canonical_json($stored) !== $this->worktree_handoff_proof_canonical_json($proof) ) {
 				return new \WP_Error('untrusted_worktree_handoff_proof', 'The supplied proof is not the active metadata-bound managed proof.', array( 'status' => 409 ));
 			}
@@ -259,7 +259,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($base_ref) ) {
 				return $base_ref;
 			}
-			$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
+			$fetch = WorktreeStalenessProbe::fetch($primary, null, $deadline);
 			if ( empty($fetch['ok']) ) {
 				return array(
 					'success' => false,
@@ -394,9 +394,9 @@ trait WorkspaceWorktreeLifecycle {
 			return $remote_default;
 		}
 		$remote_default_ref = $remote_default['ref'];
-		$head    = $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline);
-		$base    = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($base_ref . '^{commit}'), $deadline);
-		$default = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($remote_default_ref . '^{commit}'), $deadline);
+		$head               = $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline);
+		$base               = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($base_ref . '^{commit}'), $deadline);
+		$default            = $this->worktree_handoff_git($primary, 'rev-parse --verify ' . escapeshellarg($remote_default_ref . '^{commit}'), $deadline);
 		if ( is_wp_error($head) || is_wp_error($base) || is_wp_error($default) ) {
 			return is_wp_error($head) ? $head : ( is_wp_error($base) ? $base : $default );
 		}
@@ -404,16 +404,16 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('remote_default_changed_during_verification', 'The remote default branch changed after the bounded fetch. Retry to obtain a proof for one remote advertisement.', array( 'status' => 409 ));
 		}
 		$proof           = array(
-			'version'            => 3,
-			'proof_id'           => $proof_id,
-			'handle'             => $handle,
-			'worktree_sha'       => trim( (string) $head['output']),
-			'resolved_base_ref'  => $base_ref,
-			'resolved_base_sha'  => trim( (string) $base['output']),
-			'remote_default_ref' => $remote_default_ref,
-			'remote_default_sha' => $remote_default['sha'],
+			'version'                       => 3,
+			'proof_id'                      => $proof_id,
+			'handle'                        => $handle,
+			'worktree_sha'                  => trim( (string) $head['output']),
+			'resolved_base_ref'             => $base_ref,
+			'resolved_base_sha'             => trim( (string) $base['output']),
+			'remote_default_ref'            => $remote_default_ref,
+			'remote_default_sha'            => $remote_default['sha'],
 			'remote_default_advertised_sha' => $remote_default['sha'],
-			'verified_at'        => gmdate('c'),
+			'verified_at'                   => gmdate('c'),
 		);
 		$proof['digest'] = $this->worktree_handoff_proof_digest($proof);
 		return $proof;
@@ -824,7 +824,7 @@ trait WorkspaceWorktreeLifecycle {
 			),
 			$capacity_timeout,
 			array(
-				'expected_release_at'      => gmdate('c', (int) ceil($operation_deadline)),
+				'expected_release_at'       => gmdate('c', (int) ceil($operation_deadline)),
 				'operation_timeout_seconds' => $operation_timeout,
 				'lease_strategy'            => 'operation_deadline',
 			)
@@ -844,7 +844,7 @@ trait WorkspaceWorktreeLifecycle {
 		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
 		$this->worktree_add_progress($progress_callback, 'demand_planning');
-		$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		$demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
 			// Preserve the existing capacity-path wrapper for explicit missing bases;
 			// it adds detected default-ref evidence and a replayable retry command.
@@ -1134,7 +1134,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
 		}
-		$disk_budget      = $capacity_reclaim['after'];
+		$disk_budget     = $capacity_reclaim['after'];
 		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'capacity_reclaim_complete', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $heartbeat_error ) {
 			return $heartbeat_error;
@@ -1328,11 +1328,11 @@ trait WorkspaceWorktreeLifecycle {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
 				return $post_rebase_demand;
 			}
-			$post_rebase_demand                       = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
-			$measurement_plan                         = $post_rebase_demand;
-			$post_rebase_demand                       = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
+			$post_rebase_demand = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
+			$measurement_plan   = $post_rebase_demand;
+			$post_rebase_demand = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
 			$this->worktree_add_progress($progress_callback, 'post_rebase_capacity_inspection');
-			$post_rebase_budget                       = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
+			$post_rebase_budget = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
 			$this->worktree_add_progress($progress_callback, 'post_rebase_artifact_reclamation');
 			$post_rebase_capacity_reclaim             = $this->reclaim_capacity_eligible_artifacts(
 				$repo,
@@ -1412,8 +1412,8 @@ trait WorkspaceWorktreeLifecycle {
 						'bootstrap_created_dirty_paths' => $bootstrap_created_dirty_paths,
 						'rollback'                      => array(
 							'git_materialization_rolled_back' => false,
-							'lifecycle_metadata_rolled_back'  => false,
-							'reason'                          => 'new bootstrap outputs are retained for review',
+							'lifecycle_metadata_rolled_back' => false,
+							'reason' => 'new bootstrap outputs are retained for review',
 						),
 						'remediation_command'           => 'git -C ' . escapeshellarg($wt_path) . ' status --short --branch --untracked-files=all',
 					)
@@ -1723,7 +1723,7 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_operation_timeout('git_worktree_add', $operation_timeout, $operation_started, array( 'cleanup' => 'no_checkout_created' ));
 		}
 		$this->worktree_add_progress($progress_callback, 'git_worktree_add');
-		$result        = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
+		$result = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
 			if ( $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
 				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
@@ -1941,7 +1941,7 @@ trait WorkspaceWorktreeLifecycle {
 			),
 		);
 		$this->worktree_add_progress($progress_callback, 'lifecycle_metadata');
-		$metadata_stored                      = WorktreeContextInjector::promote_creation_intent( $wt_handle, $creation_intent, $lifecycle_metadata );
+		$metadata_stored = WorktreeContextInjector::promote_creation_intent( $wt_handle, $creation_intent, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
 			if ( null !== WorktreeContextInjector::get_creation_intent($wt_handle) ) {
 				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent );
@@ -4856,8 +4856,8 @@ trait WorkspaceWorktreeLifecycle {
 				'path'     => $path,
 				'probe'    => $probe,
 				'recovery' => array(
-					'status'      => 'creation_journal_retained',
-					'reason_code' => 'post_create_probe_timeout',
+					'status'             => 'creation_journal_retained',
+					'reason_code'        => 'post_create_probe_timeout',
 					'retry_same_request' => true,
 				),
 			)

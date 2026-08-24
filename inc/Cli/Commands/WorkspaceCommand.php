@@ -5343,7 +5343,7 @@ class WorkspaceCommand extends BaseCommand {
 
 	/** Render phase checkpoints without contaminating JSON response stdout. */
 	private function render_worktree_add_progress( array $event, bool $json ): void {
-		$phase = (string) ( $event['phase'] ?? 'working' );
+		$phase   = (string) ( $event['phase'] ?? 'working' );
 		$message = sprintf('Worktree add progress: %s.', str_replace('_', ' ', $phase));
 		if ( $json ) {
 			WP_CLI::warning($message);
@@ -6067,8 +6067,8 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private function render_workspace_error( \WP_Error $error ): void {
-		$data = (array) $error->get_error_data();
-		$runtime_identity = WorkspaceAbilities::runtimeIdentity(array());
+		$data             = (array) $error->get_error_data();
+		$runtime_identity = class_exists(WorkspaceAbilities::class) ? WorkspaceAbilities::runtimeIdentity(array()) : array();
 		$active_runtime   = (array) ( $runtime_identity['active_runtime'] ?? array() );
 		if ( ! empty($active_runtime['version']) ) {
 			WP_CLI::log(sprintf('Active runtime: %s%s', (string) $active_runtime['version'], ! empty($active_runtime['build']) ? ' (' . (string) $active_runtime['build'] . ')' : ''));

@@ -88,7 +88,7 @@ final class WorkspaceEmergencyCandidateSelector {
 
 			$unique_states = array();
 			foreach ( $next_states as $state ) {
-				$key = sprintf(
+				$key                     = sprintf(
 					'%d:%d:%d',
 					min($target_bytes, $state['bytes']),
 					min($target_inodes, $state['inodes']),
