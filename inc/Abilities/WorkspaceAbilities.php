@@ -30,6 +30,7 @@ use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorktreeDiskBudget;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
+use DataMachineCode\Runtime\RuntimeSourceSkewDiagnostic;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -184,6 +185,20 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-runtime-identity',
+				array(
+					'label'               => 'Get Workspace Runtime Identity',
+					'description'         => 'Return the loaded plugin identity and one explicitly configured managed source identity without scanning the workspace.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'runtimeIdentity' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-capabilities',
 				array(
 					'label'               => 'Inspect Workspace Capabilities',
@@ -203,6 +218,7 @@ class WorkspaceAbilities {
 							'exec_available'      => array( 'type' => 'boolean' ),
 							'proc_open_available' => array( 'type' => 'boolean' ),
 							'git_path'            => array( 'type' => 'string' ),
+							'runtime_identity'    => array( 'type' => 'object' ),
 							'remediation'         => array( 'type' => 'string' ),
 						),
 					),
@@ -3229,8 +3245,24 @@ class WorkspaceAbilities {
 				'backend'        => $backend,
 				'local_backend'  => $diagnostic['backend'] ?? 'local_git',
 				'workspace_path' => $workspace->get_path(),
+				'runtime_identity' => self::runtimeIdentity(array()),
 				'remediation'    => $remediation,
 			)
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public static function runtimeIdentity( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$config = apply_filters('datamachine_code_runtime_identity_config', array(
+			'runtime_file' => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
+			'runtime_version' => DATAMACHINE_CODE_VERSION,
+			'source_path' => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
+		));
+		$config = is_array($config) ? $config : array();
+		return RuntimeSourceSkewDiagnostic::inspect(
+			(string) ( $config['runtime_file'] ?? DATAMACHINE_CODE_PATH . 'data-machine-code.php' ),
+			(string) ( $config['runtime_version'] ?? DATAMACHINE_CODE_VERSION ),
+			(string) ( $config['source_path'] ?? '' )
 		);
 	}
 
