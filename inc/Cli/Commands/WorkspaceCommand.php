@@ -376,6 +376,7 @@ class WorkspaceCommand extends BaseCommand {
 						'type'        => 'positional',
 						'name'        => 'repo',
 						'description' => 'Optional repository name.',
+						'optional'    => true,
 					),
 					$option( 'state', 'Lifecycle state filter.' ),
 					$option( 'task-ref', 'Exact recorded task URL or task reference filter.' ),
