@@ -8,12 +8,26 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitHubRemote;
+use DataMachineCode\Support\CommandSpec;
+use DataMachineCode\Support\ProcessRunner;
+use DataMachineCode\Support\WallClockBudget;
 
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(WallClockBudget::class) ) {
+	require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
+}
+if ( ! class_exists(ProcessRunner::class) ) {
+	require_once dirname(__DIR__) . '/Support/ProcessRunner.php';
+}
+if ( ! class_exists(CommandSpec::class) ) {
+	require_once dirname(__DIR__) . '/Support/CommandSpec.php';
+}
 
 trait WorkspaceWorktreeCleanupEngine {
 
 	private const RETENTION_RECENT_ACTIVITY_SECONDS = 86400;
+	private const WORKTREE_SIZE_PROBE_TIMEOUT_SECONDS = 5;
 
 	/**
 	 * Cleanup merged worktrees across all primary checkouts.
@@ -1202,6 +1216,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		$source                    = isset($opts['source']) ? trim( (string) $opts['source']) : 'workspace_bounded_cleanup_eligible_apply';
 		$repo                      = isset($opts['repo']) ? trim( (string) $opts['repo']) : '';
 		$apply_plan                = isset($opts['apply_plan']) && is_array($opts['apply_plan']) ? $opts['apply_plan'] : null;
+		$progress                  = isset($opts['progress_callback']) && is_callable($opts['progress_callback']) ? $opts['progress_callback'] : null;
+		$budget                    = WallClockBudget::from_duration($opts['until_budget'] ?? null, '30s', 'invalid_bounded_cleanup_eligible_budget');
+		if ( is_wp_error($budget) ) {
+			return $budget;
+		}
 		$remove_timeout_seconds    = $this->normalize_worktree_cleanup_remove_timeout($opts['remove_timeout'] ?? null);
 		if ( is_wp_error($remove_timeout_seconds) ) {
 			return $remove_timeout_seconds;
@@ -1238,7 +1257,7 @@ trait WorkspaceWorktreeCleanupEngine {
 		} else {
 			// Reuse the cheap inventory_only review path for candidate discovery so
 			// the bounded cleanup-eligible apply never triggers full worktree_list / fetch / GitHub API work just to plan.
-			$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo);
+			$inventory = $this->worktree_cleanup_inventory_only($older_than, $sort, $include_repaired_metadata, null, 0, $repo, null, $budget);
 			if ( $inventory instanceof \WP_Error ) {
 				return $inventory;
 			}
@@ -1260,6 +1279,9 @@ trait WorkspaceWorktreeCleanupEngine {
 			'remove_timeout'    => $remove_timeout_seconds,
 			'scope'             => $scope,
 		);
+		if ( ! empty($inventory['pagination']['partial']) ) {
+			$continuation['inventory'] = $inventory['pagination'];
+		}
 		$active_no_signal_triage = WorktreeActiveNoSignalTriagePreview::build($inventory_skipped, min($limit, 25));
 
 		if ( $dry_run ) {
@@ -1298,6 +1320,7 @@ trait WorkspaceWorktreeCleanupEngine {
 					'remove_timeout'   => $remove_timeout_seconds,
 					'scope'            => $scope,
 					'source'           => $source,
+					'wall_clock_budget' => $budget->evidence(),
 				),
 			);
 		}
@@ -1315,15 +1338,30 @@ trait WorkspaceWorktreeCleanupEngine {
 		$timeout_handles      = array();
 		$discarded_unpushed   = array();
 
-		foreach ( $batch as $candidate ) {
+		foreach ( $batch as $candidate_index => $candidate ) {
+			if ( $budget->expired() || 0 === $budget->probe_timeout_seconds($remove_timeout_seconds) ) {
+				$unprocessed = array_slice($batch, $candidate_index);
+				$deferred    = array_merge($unprocessed, $deferred);
+				$continuation['remaining_total']   = count($deferred);
+				$continuation['remaining_handles'] = array_values(array_filter(array_map(fn( $row ) => is_array($row) ? (string) ( $row['handle'] ?? '' ) : '', $deferred)));
+				$continuation['reason']            = 'budget_exhausted';
+				$continuation['resumable']         = true;
+				break;
+			}
 			++$processed;
-			$locked = $this->remove_cleanup_candidate_with_repo_lock($candidate, $force, false, $remove_timeout_seconds, $discard_unpushed);
+			$this->emit_bounded_cleanup_checkpoint($progress, 'candidate_started', $candidate);
+			$locked = $this->remove_cleanup_candidate_with_repo_lock($candidate, $force, false, $remove_timeout_seconds, $discard_unpushed, null, $budget, $progress);
 			$locked = $this->normalize_bounded_cleanup_locked_result($locked, $candidate);
 
 			if ( is_wp_error($locked) ) {
+				$locked_data = (array) $locked->get_error_data();
+				if ( ! empty($locked_data['mutation_committed']) ) {
+					return $locked;
+				}
 				$skip                   = $this->build_worktree_remove_failure_skip($candidate, $locked, $remove_timeout_seconds);
 				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $skip);
 				$skipped[]              = $skip;
+				$this->emit_bounded_cleanup_checkpoint($progress, 'candidate_terminal', $candidate, array( 'action' => 'skipped', 'outcome' => $skip ));
 				if ( 'remove_timeout' === (string) ( $skip['reason_code'] ?? '' ) ) {
 					$timeout_handles[] = (string) ( $skip['handle'] ?? '' );
 				}
@@ -1332,6 +1370,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			if ( isset($locked['skipped']) ) {
 				$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($candidate, 'skipped', $locked['skipped']);
 				$skipped[]              = $locked['skipped'];
+				$this->emit_bounded_cleanup_checkpoint($progress, 'candidate_terminal', $candidate, array( 'action' => 'skipped', 'outcome' => $locked['skipped'] ));
 				continue;
 			}
 
@@ -1364,6 +1403,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			);
 			$removed[]              = $removed_row;
 			$processed_candidates[] = $this->build_bounded_cleanup_processed_candidate($validated, 'removed', $removed_row);
+			$this->emit_bounded_cleanup_checkpoint($progress, 'candidate_terminal', $validated, array( 'action' => 'removed', 'outcome' => $removed_row ));
 			if ( $discard_unpushed && $unpushed_count > 0 ) {
 				$discarded_unpushed[] = array(
 					'handle'                 => (string) ( $candidate['handle'] ?? '' ),
@@ -1388,7 +1428,9 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		// Best-effort prune in case any registry rows are now stale.
-		$this->worktree_prune();
+		if ( ! $budget->expired() ) {
+			$this->worktree_prune();
+		}
 
 		return array(
 			'success'                 => true,
@@ -1429,6 +1471,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				'remove_timeout'     => $remove_timeout_seconds,
 				'scope'              => $scope,
 				'source'             => $source,
+				'wall_clock_budget'  => $budget->evidence(),
 			),
 		);
 	}
@@ -1456,6 +1499,40 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return $row;
+	}
+
+	/** Emit append-only mutation evidence without allowing presentation/storage failures to weaken safety. */
+	private function emit_bounded_cleanup_checkpoint( ?callable $callback, string $phase, array $candidate, array $evidence = array() ): bool {
+		if ( null === $callback ) {
+			return true;
+		}
+		try {
+			$result = $callback(array_merge(
+				array(
+					'phase'       => $phase,
+					'generated_at' => gmdate('c'),
+					'candidate'   => array_intersect_key($candidate, array_flip(array( 'handle', 'repo', 'branch', 'path', 'reason_code', 'classification' ))),
+				),
+				$evidence
+			));
+			return false !== $result;
+		} catch ( \Throwable ) {
+			return false;
+		}
+	}
+
+	/** Build a fail-closed partial row when no safe child-process second remains. */
+	private function bounded_cleanup_budget_skip( array $candidate, string $phase, array $evidence = array() ): array {
+		return array_merge(
+			$candidate,
+			$evidence,
+			array(
+				'reason_code' => 'budget_exhausted',
+				'reason'      => 'The shared cleanup wall-clock budget expired before this candidate could cross the removal boundary.',
+				'phase'       => $phase,
+				'retry_safe'  => true,
+			)
+		);
 	}
 
 	/**
@@ -1544,11 +1621,17 @@ trait WorkspaceWorktreeCleanupEngine {
 	}
 
 	/** Hold the repository mutation lock across final safety probes and removal. */
-	private function remove_cleanup_candidate_with_repo_lock( array $candidate, bool $force, bool $stale_liveness_only, int $remove_timeout_seconds, bool $discard_unpushed, ?array $reviewed_lifecycle_snapshot = null ): array|\WP_Error {
+	private function remove_cleanup_candidate_with_repo_lock( array $candidate, bool $force, bool $stale_liveness_only, int $remove_timeout_seconds, bool $discard_unpushed, ?array $reviewed_lifecycle_snapshot = null, ?WallClockBudget $budget = null, ?callable $progress = null ): array|\WP_Error {
+		$lock_timeout = null === $budget ? 30 : $budget->probe_timeout_seconds(30);
+		if ( 0 === $lock_timeout ) {
+			return array( 'skipped' => $this->bounded_cleanup_budget_skip($candidate, 'before_repo_lock') );
+		}
 		return WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			(string) ( $candidate['repo'] ?? '' ),
-			fn() => $this->remove_revalidated_cleanup_candidate($candidate, $force, $stale_liveness_only, $remove_timeout_seconds, $discard_unpushed, $reviewed_lifecycle_snapshot)
+			fn() => $this->remove_revalidated_cleanup_candidate($candidate, $force, $stale_liveness_only, $remove_timeout_seconds, $discard_unpushed, $reviewed_lifecycle_snapshot, $budget, $progress),
+			$lock_timeout,
+			null === $budget ? array() : array( '_acquisition_deadline' => microtime(true) + $budget->remaining_seconds() )
 		);
 	}
 
@@ -1571,8 +1654,8 @@ trait WorkspaceWorktreeCleanupEngine {
 	}
 
 	/** Revalidate and remove one cleanup candidate while its repository lock is held. */
-	private function remove_revalidated_cleanup_candidate( array $candidate, bool $force, bool $stale_liveness_only, int $remove_timeout_seconds, bool $discard_unpushed, ?array $reviewed_lifecycle_snapshot = null ): array|\WP_Error {
-		$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot);
+	private function remove_revalidated_cleanup_candidate( array $candidate, bool $force, bool $stale_liveness_only, int $remove_timeout_seconds, bool $discard_unpushed, ?array $reviewed_lifecycle_snapshot = null, ?WallClockBudget $budget = null, ?callable $progress = null ): array|\WP_Error {
+		$validated = $this->revalidate_bounded_cleanup_eligible_candidate($candidate, $force, $stale_liveness_only, $discard_unpushed, $reviewed_lifecycle_snapshot, true, $budget);
 		if ( isset($validated['skipped']) ) {
 			return $validated;
 		}
@@ -1582,16 +1665,26 @@ trait WorkspaceWorktreeCleanupEngine {
 		$wt_path = (string) $validated['path'];
 		$size    = (int) ( $validated['size_bytes'] ?? 0 );
 		if ( $size <= 0 ) {
-			$measured = $this->estimate_path_size_bytes($wt_path);
+			$measured = null !== $budget && $budget->expired() ? null : $this->estimate_path_size_bytes($wt_path, $budget);
 			$size     = null === $measured ? null : (int) $measured;
 		}
 
-		$recovery = ! empty($validated['broken_orphan']) ? array() : $this->preserve_cleanup_recovery_ref($validated);
+		if ( null !== $budget && 0 === $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT) ) {
+			return array( 'skipped' => $this->bounded_cleanup_budget_skip($validated, 'before_recovery_ref') );
+		}
+		$recovery = ! empty($validated['broken_orphan']) ? array() : $this->preserve_cleanup_recovery_ref($validated, $budget);
 		if ( is_wp_error($recovery) ) {
 			return $recovery;
 		}
+		if ( ! $this->emit_bounded_cleanup_checkpoint($progress, 'mutation_prepared', $validated, array( 'recovery' => $recovery )) ) {
+			return new \WP_Error('cleanup_checkpoint_persist_failed', 'Cleanup refused removal because durable pre-mutation evidence could not be persisted.', array( 'status' => 503, 'handle' => $validated['handle'] ?? null, 'recovery' => $recovery ));
+		}
 
-		$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds, ! empty($validated['broken_orphan']));
+		$effective_remove_timeout = null === $budget ? $remove_timeout_seconds : $budget->probe_timeout_seconds($remove_timeout_seconds);
+		if ( 0 === $effective_remove_timeout ) {
+			return array( 'skipped' => $this->bounded_cleanup_budget_skip($validated, 'before_removal', $recovery) );
+		}
+		$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $effective_remove_timeout, ! empty($validated['broken_orphan']));
 		if ( is_wp_error($result) ) {
 			return $result;
 		}
@@ -1600,9 +1693,13 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		$result       = array_merge($result, $recovery);
+		if ( ! $this->emit_bounded_cleanup_checkpoint($progress, 'mutation_committed', $validated, array( 'outcome' => $result + array( 'path_exists_after' => is_dir($wt_path) ) )) ) {
+			return new \WP_Error('cleanup_committed_checkpoint_failed', 'The worktree removal committed, but terminal evidence persistence failed. Inspect the durable prepared checkpoint and exact path before retrying.', array( 'status' => 503, 'partial_success' => true, 'mutation_committed' => true, 'handle' => $validated['handle'] ?? null, 'path' => $wt_path, 'path_exists_after' => is_dir($wt_path), 'recovery' => $recovery ));
+		}
 		$primary_path = $this->get_primary_path($repo);
-		if ( '' !== $branch ) {
-			$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$branch_timeout = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( '' !== $branch && $branch_timeout > 0 ) {
+			$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), $branch_timeout);
 			if ( is_wp_error($delete) ) {
 				// Branch deletion is best-effort after the worktree has been removed.
 				$result['local_branch_deleted'] = false;
@@ -1613,35 +1710,48 @@ trait WorkspaceWorktreeCleanupEngine {
 			} else {
 				$result['local_branch_deleted'] = true;
 			}
+		} elseif ( '' !== $branch ) {
+			$result['local_branch_deleted'] = false;
+			$result['branch_delete_error']  = array( 'code' => 'budget_exhausted', 'message' => 'The worktree was removed; branch deletion was skipped after the shared budget expired.' );
 		}
 
 		return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
 	}
 
 	/** Preserve the exact candidate commit before crossing the removal boundary. */
-	private function preserve_cleanup_recovery_ref( array $candidate ): array|\WP_Error {
+	private function preserve_cleanup_recovery_ref( array $candidate, ?WallClockBudget $budget = null ): array|\WP_Error {
 		$repo         = (string) ( $candidate['repo'] ?? '' );
 		$worktree     = (string) ( $candidate['path'] ?? '' );
 		$primary_path = $this->get_primary_path($repo);
-		$head         = $this->run_git($worktree, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$timeout      = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( 0 === $timeout ) {
+			return new \WP_Error('cleanup_budget_exhausted', 'Cleanup budget expired before the durable recovery ref could be prepared.', array( 'status' => 504 ));
+		}
+		$head         = $this->run_git($worktree, 'rev-parse --verify HEAD', $timeout);
 		$commit       = is_wp_error($head) ? '' : trim( (string) ( $head['output'] ?? '' ) );
 		if ( 1 !== preg_match('/^[0-9a-f]{40,64}$/', $commit) ) {
 			return new \WP_Error('cleanup_recovery_head_unverified', 'Cleanup refused removal because the candidate commit could not be resolved for durable recovery.', array( 'status' => 409 ));
 		}
 
 		$ref      = 'refs/dmc/recovery/' . $commit;
-		$existing = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$timeout  = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( 0 === $timeout ) {
+			return new \WP_Error('cleanup_budget_exhausted', 'Cleanup budget expired before the durable recovery ref could be verified.', array( 'status' => 504, 'recovery_ref' => $ref ));
+		}
+		$existing = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($ref)), $timeout);
 		if ( ! is_wp_error($existing) && ! hash_equals($commit, trim( (string) ( $existing['output'] ?? '' ) )) ) {
 			return new \WP_Error('cleanup_recovery_ref_conflict', 'Cleanup refused removal because the deterministic recovery ref identifies another commit.', array( 'status' => 409, 'recovery_ref' => $ref ));
 		}
 		if ( is_wp_error($existing) ) {
-			$preserved = $this->run_git($primary_path, sprintf('update-ref %s %s %s', escapeshellarg($ref), escapeshellarg($commit), escapeshellarg(str_repeat('0', strlen($commit)))), self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$timeout   = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$preserved = 0 === $timeout ? new \WP_Error('cleanup_budget_exhausted', 'Cleanup budget expired before the durable recovery ref could be written.') : $this->run_git($primary_path, sprintf('update-ref %s %s %s', escapeshellarg($ref), escapeshellarg($commit), escapeshellarg(str_repeat('0', strlen($commit)))), $timeout);
 			if ( is_wp_error($preserved) ) {
 				return new \WP_Error('cleanup_recovery_ref_failed', 'Cleanup refused removal because the durable recovery ref could not be written.', array( 'status' => 409, 'recovery_ref' => $ref ));
 			}
 		}
 
-		$verified = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$timeout  = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$verified = 0 === $timeout ? new \WP_Error('cleanup_budget_exhausted', 'Cleanup budget expired before recovery-ref readback.') : $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($ref)), $timeout);
 		if ( is_wp_error($verified) || ! hash_equals($commit, trim( (string) ( $verified['output'] ?? '' ) )) ) {
 			return new \WP_Error('cleanup_recovery_ref_unverified', 'Cleanup refused removal because the durable recovery ref could not be verified.', array( 'status' => 409, 'recovery_ref' => $ref ));
 		}
@@ -1701,12 +1811,15 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  bool  $require_removable_lifecycle Whether lifecycle eligibility is required by this cleanup mode.
 	 * @return array<string,mixed>
 	 */
-	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null, bool $require_removable_lifecycle = true ): array {
+	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null, bool $require_removable_lifecycle = true, ?WallClockBudget $budget = null ): array {
 		$handle   = (string) ( $candidate['handle'] ?? '' );
 		$repo     = (string) ( $candidate['repo'] ?? '' );
 		$branch   = (string) ( $candidate['branch'] ?? '' );
 		$wt_path  = (string) ( $candidate['path'] ?? '' );
 		$metadata = is_array($candidate['metadata'] ?? null) ? $candidate['metadata'] : array();
+		if ( null !== $budget && $budget->expired() ) {
+			return array( 'skipped' => $this->bounded_cleanup_budget_skip($candidate, 'before_revalidation') );
+		}
 		if ( function_exists('get_option') ) {
 			$current_metadata = WorktreeContextInjector::get_metadata($handle);
 			$metadata         = is_array($current_metadata) ? $current_metadata : array();
@@ -1928,7 +2041,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		// Dirty gate: cheap porcelain call, bounded by the cleanup git timeout.
-		$dirty = $this->run_git($real_path, 'status --porcelain --untracked-files=normal', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$probe_timeout = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( 0 === $probe_timeout ) {
+			return array( 'skipped' => $this->bounded_cleanup_budget_skip($candidate, 'before_dirty_probe') );
+		}
+		$dirty = $this->run_git($real_path, 'status --porcelain --untracked-files=normal', $probe_timeout);
 		if ( is_wp_error($dirty) ) {
 			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $real_path, $dirty, 'dirty-state probe', 'refusing bounded cleanup-eligible apply');
 			return array(
@@ -1948,7 +2065,11 @@ trait WorkspaceWorktreeCleanupEngine {
 		$dirty_count = '' === $dirty_lines ? 0 : substr_count($dirty_lines, "\n") + 1;
 		// Unpushed gate: hard stop unless metadata was promoted by the reviewed
 		// upstream-equivalent apply path and the same evidence still holds now.
-		$unpushed = $this->count_unpushed_commits($real_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$probe_timeout = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( 0 === $probe_timeout ) {
+			return array( 'skipped' => $this->bounded_cleanup_budget_skip($candidate, 'before_unpushed_probe') );
+		}
+		$unpushed = $this->count_unpushed_commits($real_path, $probe_timeout);
 		if ( $unpushed instanceof \WP_Error ) {
 			$diagnostic = $this->classify_worktree_git_probe_failure($handle, $repo, $real_path, $unpushed, 'unpushed-commit probe', 'refusing bounded cleanup-eligible apply');
 			return array(
@@ -2011,6 +2132,9 @@ trait WorkspaceWorktreeCleanupEngine {
 			true
 		);
 		if ( $uses_remote_tracking_clean ) {
+			if ( null !== $budget && $budget->remaining_seconds() < self::CLEANUP_GITHUB_TIMEOUT ) {
+				return array( 'skipped' => $this->bounded_cleanup_budget_skip($candidate, 'before_open_pr_probe') );
+			}
 			$open_pr_protection = $this->worktree_cleanup_open_pr_protection($primary_path, $repo, $branch);
 			if ( null !== $open_pr_protection ) {
 				$reason_code = (string) ( $open_pr_protection['reason_code'] ?? 'skipped_unverified' );
@@ -2034,9 +2158,15 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		if ( $protected_branch ) {
-			$current_branch = $this->run_git($real_path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
-			$remote_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg('origin/' . $branch), self::CLEANUP_GIT_PROBE_TIMEOUT);
-			$local_head = $this->run_git($real_path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$probe_timeout = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( 0 === $probe_timeout ) {
+				return array( 'skipped' => $this->bounded_cleanup_budget_skip($candidate, 'before_protected_branch_probe') );
+			}
+			$current_branch = $this->run_git($real_path, 'branch --show-current', $probe_timeout);
+			$probe_timeout  = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$remote_head    = 0 === $probe_timeout ? new \WP_Error('cleanup_budget_exhausted') : $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg('origin/' . $branch), $probe_timeout);
+			$probe_timeout  = null === $budget ? self::CLEANUP_GIT_PROBE_TIMEOUT : $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$local_head     = 0 === $probe_timeout ? new \WP_Error('cleanup_budget_exhausted') : $this->run_git($real_path, 'rev-parse --verify HEAD', $probe_timeout);
 			if ( is_wp_error($current_branch) || is_wp_error($remote_head) || is_wp_error($local_head)
 				|| $branch !== trim((string) ($current_branch['output'] ?? ''))
 				|| trim((string) ($remote_head['output'] ?? '')) !== trim((string) ($local_head['output'] ?? '')) ) {
@@ -2918,11 +3048,11 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  array|null  $metadata    Stored lifecycle/context metadata.
 	 * @return array<string,mixed>
 	 */
-	protected function build_worktree_disk_report( string $repo, string $path, bool $is_worktree, ?string $created_at, ?array $metadata ): array {
-		$size_bytes      = $this->estimate_path_size_bytes($path);
+	protected function build_worktree_disk_report( string $repo, string $path, bool $is_worktree, ?string $created_at, ?array $metadata, ?WallClockBudget $budget = null ): array {
+		$size_bytes      = $this->estimate_path_size_bytes($path, $budget);
 		$last_touched_at = $this->detect_worktree_last_touched_at($path, $metadata, $created_at);
 		$age_days        = $this->calculate_age_days($created_at);
-		$artifacts       = $is_worktree ? $this->detect_worktree_artifacts($repo, $path) : array();
+		$artifacts       = $is_worktree ? $this->detect_worktree_artifacts($repo, $path, $budget) : array();
 		$artifact_bytes  = array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts));
 		$artifact_apparent_bytes = array_sum(array_map(fn( $artifact ) => (int) ( $artifact['apparent_bytes'] ?? 0 ), $artifacts));
 
@@ -2962,8 +3092,8 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  string $path Path to inspect.
 	 * @return int|null Size in bytes, or null when unavailable.
 	 */
-	private function estimate_path_size_bytes( string $path ): ?int {
-		$measurement = $this->measure_path_bytes($path);
+	private function estimate_path_size_bytes( string $path, ?WallClockBudget $budget = null ): ?int {
+		$measurement = $this->measure_path_bytes($path, $budget);
 		return $measurement['allocated_bytes'];
 	}
 
@@ -2974,12 +3104,12 @@ trait WorkspaceWorktreeCleanupEngine {
 	 *
 	 * @return array{apparent_bytes:?int,allocated_bytes:?int,allocation_accounting:string,reclaimable_bytes:?int}
 	 */
-	private function measure_path_bytes( string $path ): array {
+	private function measure_path_bytes( string $path, ?WallClockBudget $budget = null ): array {
 		if ( '' === $path || ( ! file_exists($path) && ! is_link($path) ) ) {
 			return array( 'apparent_bytes' => null, 'allocated_bytes' => null, 'allocation_accounting' => 'unknown', 'reclaimable_bytes' => null );
 		}
-		$allocated = $this->du_path_bytes($path, false);
-		$apparent  = $this->du_path_bytes($path, true);
+		$allocated = $this->du_path_bytes($path, false, $budget);
+		$apparent  = $this->du_path_bytes($path, true, $budget);
 		return array(
 			'apparent_bytes'        => $apparent,
 			'allocated_bytes'       => $allocated,
@@ -2988,25 +3118,30 @@ trait WorkspaceWorktreeCleanupEngine {
 		);
 	}
 
-	private function du_path_bytes( string $path, bool $apparent ): ?int {
-		$output = array();
-		$code   = 1;
+	private function du_path_bytes( string $path, bool $apparent, ?WallClockBudget $budget = null ): ?int {
 		if ( $apparent && 'Darwin' === PHP_OS_FAMILY ) {
-			$command = sprintf('du -A -sk %s 2>/dev/null', escapeshellarg($path));
+			$argv = array( 'du', '-A', '-sk', $path );
 		} elseif ( $apparent && 'Linux' === PHP_OS_FAMILY ) {
-			$command = sprintf('du --apparent-size -sk %s 2>/dev/null', escapeshellarg($path));
+			$argv = array( 'du', '--apparent-size', '-sk', $path );
 		} elseif ( $apparent ) {
 			return null;
 		} else {
-			$command = sprintf('du -sk %s 2>/dev/null', escapeshellarg($path));
+			$argv = array( 'du', '-sk', $path );
 		}
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
-		exec($command, $output, $code);
-		if ( 0 !== $code || empty($output[0]) ) {
+		$timeout = null === $budget ? self::WORKTREE_SIZE_PROBE_TIMEOUT_SECONDS : $budget->probe_timeout_seconds(self::WORKTREE_SIZE_PROBE_TIMEOUT_SECONDS);
+		if ( 0 === $timeout ) {
+			return null;
+		}
+		$command = CommandSpec::from_argv($argv);
+		if ( $command instanceof \WP_Error ) {
+			return null;
+		}
+		$result = ProcessRunner::run($command, array( 'timeout_seconds' => $timeout, 'output_cap_bytes' => 4096, 'error_code' => 'cleanup_size_probe_failed', 'error_as_result' => true ));
+		if ( $result instanceof \WP_Error || empty($result['success']) ) {
 			return null;
 		}
 
-		$parts = preg_split('/\s+/', trim( (string) $output[0]));
+		$parts = preg_split('/\s+/', trim( (string) ( $result['output'] ?? '' )));
 		$kb    = isset($parts[0]) && ctype_digit($parts[0]) ? (int) $parts[0] : 0;
 		return $kb > 0 ? $kb * 1024 : 0;
 	}
@@ -3031,11 +3166,14 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @param  string $path Worktree path.
 	 * @return array<int,array<string,mixed>> Artifact rows.
 	 */
-	private function detect_worktree_artifacts( string $repo, string $path ): array {
+	private function detect_worktree_artifacts( string $repo, string $path, ?WallClockBudget $budget = null ): array {
 		$patterns = $this->get_worktree_artifact_profile($repo, $path);
 		$rows     = array();
 
 		foreach ( $patterns as $relative => $label ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$relative = trim( (string) $relative, '/');
 			if ( '' === $relative || str_contains($relative, '..') ) {
 				continue;
@@ -3046,7 +3184,7 @@ trait WorkspaceWorktreeCleanupEngine {
 				continue;
 			}
 
-			$measurement = $this->measure_path_bytes($artifact_path);
+			$measurement = $this->measure_path_bytes($artifact_path, $budget);
 			$rows[] = array(
 				'path'                  => $relative,
 				'label'                 => (string) $label,

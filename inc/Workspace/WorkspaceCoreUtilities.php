@@ -676,12 +676,12 @@ trait WorkspaceCoreUtilities {
 	 * @param  string $handle    Workspace primary handle.
 	 * @return array<string,mixed>|null
 	 */
-	private function build_primary_freshness_report( string $repo_path, string $handle ): ?array {
+	private function build_primary_freshness_report( string $repo_path, string $handle, int $timeout_seconds = 0 ): ?array {
 		if ( ! file_exists($repo_path . '/.git') ) {
 			return null;
 		}
 
-		$status_result = $this->run_git($repo_path, 'status --porcelain=v1 --branch --untracked-files=no');
+		$status_result = $this->run_git($repo_path, 'status --porcelain=v1 --branch --untracked-files=no', $timeout_seconds);
 		if ( is_wp_error($status_result) ) {
 			return array(
 				'status'                         => 'unknown',
