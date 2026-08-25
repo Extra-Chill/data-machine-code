@@ -2,6 +2,29 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.11] - 2026-08-25
+
+### Changed
+- canonicalize finalization assertions
+- use canonical finalization state
+
+### Fixed
+- preserve registry contention recovery
+
+## [0.70.10] - 2026-08-25
+
+### Fixed
+- reserve handoff continuation budget
+
+## [0.70.9] - 2026-08-25
+
+### Changed
+- align freshness identity
+- format freshness planning
+
+### Fixed
+- keep planning read-only
+
 ## [0.70.8] - 2026-08-25
 
 ### Fixed
