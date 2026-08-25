@@ -25,7 +25,7 @@ final class SqliteBusyRetry {
 	public static function run( string $operation_name, callable $operation, array $options = array() ): mixed {
 		global $wpdb;
 
-		if ( ! self::is_sqlite($wpdb) ) {
+		if ( ! self::is_sqlite($wpdb) && ( ! is_object($wpdb) || ! method_exists($wpdb, 'suppress_errors') ) ) {
 			return $operation();
 		}
 
