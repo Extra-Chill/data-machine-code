@@ -33,6 +33,7 @@ namespace {
 	final class WP_Error {
 		public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 		public function get_error_code(): string { return $this->code; }
+		public function get_error_data(): array { return $this->data; }
 	}
 
 	require_once dirname(__DIR__) . '/inc/Support/ListCursor.php';
@@ -46,6 +47,7 @@ namespace {
 		public int $expensive_probes = 0;
 		public int $max_bounded_rows = 0;
 		public bool $fail_probes = false;
+		public bool $timeout_inventory_probe = false;
 		public function __construct( private string $workspace_path ) {}
 		private function parse_handle( string $handle ): array {
 			$parts = explode('@', $handle, 2);
@@ -53,8 +55,9 @@ namespace {
 		}
 		private function sanitize_name( string $name ): string { return trim($name); }
 		private function worktree_get( string $handle, array $opts ): array|WP_Error { if ( 'repo@branch-300' !== $handle ) { return new WP_Error( 'worktree_not_found' ); } $metadata = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata($handle); if ( ! empty($opts['task_ref']) && \DataMachineCode\Workspace\TaskUrl::canonicalize($opts['task_ref']) !== \DataMachineCode\Workspace\TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) ) { return array( 'worktrees' => array() ); } if ( $this->fail_probes && ! empty($opts['include_status']) ) { throw new RuntimeException('A mismatched handle must not start a status probe.'); } return array( 'worktrees' => array( array( 'handle' => $handle, 'metadata' => $metadata, 'lifecycle_state' => 'active' ) ) ); }
-		private function run_git( string $path, string $command ): array {
+		private function run_git( string $path, string $command, int $timeout_seconds = 0 ): array|WP_Error {
 			if ( 'worktree list --porcelain' === $command ) {
+				if ( $this->timeout_inventory_probe ) { return new WP_Error( 'git_command_timeout', 'Synthetic timed-out inventory probe.', array( 'timeout' => $timeout_seconds, 'cleanup' => array( 'verified' => true ) ) ); }
 				$blocks = array( "worktree {$this->workspace_path}/repo\nHEAD primary\nbranch refs/heads/main" );
 				for ( $index = 0; $index < 338; ++$index ) {
 					$branch = 330 === $index ? 'main' : sprintf('branch-%03d', $index);
@@ -129,6 +132,11 @@ namespace {
 		$harness->fail_probes = false;
 		unset($GLOBALS['dmc_task_every_row']);
 		bounded_worktree_assert(is_wp_error($overflow) && 'worktree_task_candidates_overflow' === $overflow->get_error_code(), 'The wp-coding-agents complete task lookup must overflow before any status probe can run.');
+		$harness->timeout_inventory_probe = true;
+		$timed_out_inventory = $harness->worktree_list('repo', null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1 ));
+		$harness->timeout_inventory_probe = false;
+		bounded_worktree_assert(is_wp_error($timed_out_inventory) && 'worktree_list_probe_timeout' === $timed_out_inventory->get_error_code(), 'A timed-out filtered inventory probe must return a typed error.');
+		bounded_worktree_assert(5 === ($timed_out_inventory->get_error_data()['timeout_seconds'] ?? null) && 'worktree_inventory' === ($timed_out_inventory->get_error_data()['phase'] ?? null) && true === ($timed_out_inventory->get_error_data()['cleanup']['verified'] ?? null), 'A timed-out inventory probe must retain its budget, phase, and cleanup evidence.');
 		$missing = $harness->worktree_list(null, null, array( 'handle' => 'repo@missing', 'include_status' => false, 'include_disk' => false, 'limit' => 50 ));
 		bounded_worktree_assert(0 === $missing['total'] && 0 === $missing['returned'] && null === $missing['next_cursor'] && array() === $missing['summary']['repos'], 'Missing handles must return the advertised empty envelope shape.');
 

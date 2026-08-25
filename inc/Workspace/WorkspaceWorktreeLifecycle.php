@@ -19,6 +19,9 @@ if ( ! class_exists(MacOSLsofProcessPathProbe::class) ) {
 
 trait WorkspaceWorktreeLifecycle {
 
+	/** Keep each primary's read-only worktree inventory probe within the CLI budget. */
+	private const WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS = 5;
+
 	/**
 	 * Produce a non-mutating, digest-addressed worktree allocation decision.
 	 *
@@ -3641,8 +3644,25 @@ trait WorkspaceWorktreeLifecycle {
 			$primary_path      = $this->workspace_path . '/' . $primary;
 			$primary_repo      = $this->parse_handle($primary)['repo'];
 			$scanning_worktree = str_contains($primary, '@');
-			$result            = $this->run_git($primary_path, 'worktree list --porcelain');
+			$result            = $this->run_git($primary_path, 'worktree list --porcelain', self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
 			if ( is_wp_error($result) ) {
+				if ( 'git_command_timeout' === $result->get_error_code() ) {
+					$data = $result->get_error_data();
+					return new \WP_Error(
+						'worktree_list_probe_timeout',
+						sprintf('Worktree inventory for "%s" timed out after %d second(s).', $primary, self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS),
+						array_merge(
+							is_array($data) ? $data : array(),
+							array(
+								'status'          => 504,
+								'phase'           => 'worktree_inventory',
+								'repo'            => $primary,
+								'timeout_seconds' => self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS,
+								'retry_command'   => sprintf('studio wp datamachine-code workspace worktree list %s', $primary),
+							)
+						)
+					);
+				}
 				continue;
 			}
 
