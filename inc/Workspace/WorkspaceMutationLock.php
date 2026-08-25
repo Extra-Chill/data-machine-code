@@ -20,7 +20,7 @@ final class WorkspaceMutationLock {
 
 
 
-	private const POLL_USEC = 100000;
+	private const POLL_USEC               = 100000;
 	private const REQUEST_EXPIRES_SECONDS = 900;
 
 	/**
@@ -64,11 +64,14 @@ final class WorkspaceMutationLock {
 			return $lock;
 		}
 
+		$result  = null;
+		$release = true;
 		try {
-			return self::invoke_callback($callback, $lock);
+			$result = self::invoke_callback($callback, $lock);
 		} finally {
-			$lock->release();
+			$release = $lock->release();
 		}
+		return is_wp_error($release) ? self::completed_callback_error($release, $result) : $result;
 	}
 
 	/**
@@ -81,7 +84,9 @@ final class WorkspaceMutationLock {
 	public static function with_repos( string $workspace_path, array $repos, callable $callback, int $timeout = 30 ): mixed {
 		$repos = array_values(array_unique(array_filter(array_map(array( self::class, 'sanitize_repo_key' ), $repos))));
 		sort($repos, SORT_STRING);
-		$locks = array();
+		$locks         = array();
+		$result        = null;
+		$release_error = null;
 
 		try {
 			foreach ( $repos as $repo ) {
@@ -92,12 +97,16 @@ final class WorkspaceMutationLock {
 				$locks[] = $lock;
 			}
 
-			return $callback();
+			$result = $callback();
 		} finally {
 			foreach ( array_reverse($locks) as $lock ) {
-				$lock->release();
+				$released = $lock->release();
+				if ( null === $release_error && is_wp_error($released) ) {
+					$release_error = $released;
+				}
 			}
 		}
+		return $release_error instanceof \WP_Error ? self::completed_callback_error($release_error, $result) : $result;
 	}
 
 	/**
@@ -136,7 +145,7 @@ final class WorkspaceMutationLock {
 			}
 		}
 
-		$lock_path    = $lock_dir . '/worktree-' . $repo . '.lock';
+		$lock_path = $lock_dir . '/worktree-' . $repo . '.lock';
 		self::prune_stale_requests($lock_dir);
 		$request_path = self::record_request($lock_dir, $repo, $lock_path);
 		$request_id   = '' === $request_path ? '' : basename($request_path, '.json');
@@ -203,18 +212,23 @@ final class WorkspaceMutationLock {
 		} while ( true );
 	}
 
-	public function release(): void {
+	public function release(): true|\WP_Error {
 		if ( null === $this->handle ) {
-			return;
+			return true;
 		}
 
-		WorkspaceLockStore::release($this->lock_id);
+		$released = WorkspaceLockStore::release($this->lock_id);
 		flock($this->handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($this->handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		$this->handle  = null;
 		$this->lock_id = 0;
 		self::remove_request($this->request_path);
 		$this->request_path = '';
+		if ( is_wp_error($released) ) {
+			$data = array_merge( (array) $released->get_error_data(), array( 'filesystem_lock_released' => true ));
+			return new \WP_Error($released->get_error_code(), $released->get_error_message(), $data);
+		}
+		return true;
 	}
 
 	/** Refresh the DB lease for callers that reach a bounded long-running phase. */
@@ -245,11 +259,40 @@ final class WorkspaceMutationLock {
 			if ( 0 === $reflection->getNumberOfParameters() && ! $reflection->isVariadic() ) {
 				return $callback();
 			}
+		// phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- Reflection is only a compatibility probe.
 		} catch ( \ReflectionException | \TypeError ) {
 			// Callable reflection is best-effort; PHP remains the invocation authority.
 		}
 
 		return $callback($lock);
+	}
+
+	/** Preserve terminal ownership-write failure after a callback has returned. */
+	private static function completed_callback_error( \WP_Error $error, mixed $result ): \WP_Error {
+		if ( is_wp_error($result) ) {
+			$release_data = (array) $error->get_error_data();
+			$data         = array_merge(
+				(array) $result->get_error_data(),
+				array(
+					'lock_release_error' => array(
+						'code'                     => $error->get_error_code(),
+						'operation'                => $release_data['operation'] ?? null,
+						'retryable'                => $release_data['retryable'] ?? false,
+						'filesystem_lock_released' => $release_data['filesystem_lock_released'] ?? false,
+					),
+				)
+			);
+			return new \WP_Error($result->get_error_code(), $result->get_error_message(), $data);
+		}
+
+		$data = array_merge(
+			(array) $error->get_error_data(),
+			array(
+				'lock_callback_completed'  => true,
+				'lock_callback_error_code' => null,
+			)
+		);
+		return new \WP_Error($error->get_error_code(), $error->get_error_message(), $data);
 	}
 
 	/**
@@ -334,19 +377,19 @@ final class WorkspaceMutationLock {
 		if ( ! is_dir($request_dir) && ! @mkdir($request_dir, 0755, true) && ! is_dir($request_dir) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir,WordPress.PHP.NoSilencedErrors.Discouraged -- Atomic local lock setup handles the suppressed race by rechecking the directory.
 			return '';
 		}
-		$request_id = bin2hex(random_bytes(12));
-		$path       = $request_dir . '/' . $request_id . '.json';
+		$request_id     = bin2hex(random_bytes(12));
+		$path           = $request_dir . '/' . $request_id . '.json';
 		$queue_position = count(self::queued_requests_for_resource($lock_dir, $lock_path)) + 1;
 		self::write_request($path, array(
-			'request_id' => $request_id,
-			'repo'       => $repo,
-			'resource'   => $lock_path,
-			'state'      => 'queued',
-			'pid'        => getmypid(),
-			'created_at' => self::request_time(),
-			'heartbeat_at' => self::request_time(),
-			'expires_at' => self::request_expires_at(),
-			'queue_order' => sprintf('%020.6F-%s', microtime(true), $request_id),
+			'request_id'     => $request_id,
+			'repo'           => $repo,
+			'resource'       => $lock_path,
+			'state'          => 'queued',
+			'pid'            => getmypid(),
+			'created_at'     => self::request_time(),
+			'heartbeat_at'   => self::request_time(),
+			'expires_at'     => self::request_expires_at(),
+			'queue_order'    => sprintf('%020.6F-%s', microtime(true), $request_id),
 			'queue_position' => $queue_position,
 		));
 		return $path;
@@ -360,10 +403,10 @@ final class WorkspaceMutationLock {
 		if ( ! is_array($data) ) {
 			return;
 		}
-		$data['state']      = $state;
-		$data['updated_at'] = self::request_time();
+		$data['state']        = $state;
+		$data['updated_at']   = self::request_time();
 		$data['heartbeat_at'] = self::request_time();
-		$data['expires_at'] = self::request_expires_at();
+		$data['expires_at']   = self::request_expires_at();
 		self::write_request($path, $data);
 	}
 
@@ -406,15 +449,15 @@ final class WorkspaceMutationLock {
 				self::remove_request($file);
 			}
 		}
-		usort($rows, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? $left['created_at'] ?? ''), (string) ($right['queue_order'] ?? $right['created_at'] ?? '')));
+		usort($rows, static fn( array $left, array $right ): int => strcmp( (string) ( $left['queue_order'] ?? $left['created_at'] ?? '' ), (string) ( $right['queue_order'] ?? $right['created_at'] ?? '' )));
 		$positions = array();
 		foreach ( $rows as &$row ) {
 			if ( 'queued' !== (string) ( $row['state'] ?? '' ) ) {
 				continue;
 			}
-			$resource = (string) ( $row['resource'] ?? '' );
+			$resource               = (string) ( $row['resource'] ?? '' );
 			$positions[ $resource ] = (int) ( $positions[ $resource ] ?? 0 ) + 1;
-			$row['queue_position'] = $positions[ $resource ];
+			$row['queue_position']  = $positions[ $resource ];
 		}
 		unset($row);
 		return $rows;
@@ -445,34 +488,52 @@ final class WorkspaceMutationLock {
 			return true;
 		}
 
-		$expires = strtotime((string) ( $request['expires_at'] ?? $request['updated_at'] ?? $request['created_at'] ?? '' ));
+		$expires = strtotime( (string) ( $request['expires_at'] ?? $request['updated_at'] ?? $request['created_at'] ?? '' ));
 		return false === $expires || $expires < self::request_time_timestamp();
 	}
 
 	/** @return array{state:string,reason:string} */
 	private static function request_owner_liveness( array $request ): array {
 		$override = function_exists('apply_filters') ? apply_filters('datamachine_code_workspace_lock_request_liveness', null, $request) : null;
-		if ( is_array($override) && in_array((string) ( $override['state'] ?? '' ), array( 'live', 'exited', 'unknown' ), true) ) {
-			return array( 'state' => (string) $override['state'], 'reason' => (string) ( $override['reason'] ?? 'runtime_override' ) );
+		if ( is_array($override) && in_array( (string) ( $override['state'] ?? '' ), array( 'live', 'exited', 'unknown' ), true) ) {
+			return array(
+				'state'  => (string) $override['state'],
+				'reason' => (string) ( $override['reason'] ?? 'runtime_override' ),
+			);
 		}
 
 		$pid = (int) ( $request['pid'] ?? 0 );
 		if ( $pid <= 0 || ! function_exists('posix_kill') ) {
-			return array( 'state' => 'unknown', 'reason' => $pid <= 0 ? 'missing_pid' : 'posix_unavailable' );
+			return array(
+				'state'  => 'unknown',
+				'reason' => $pid <= 0 ? 'missing_pid' : 'posix_unavailable',
+			);
 		}
 		if ( @posix_kill($pid, 0) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- POSIX liveness probes report false with an errno.
-			return array( 'state' => 'live', 'reason' => 'pid_signalable' );
+			return array(
+				'state'  => 'live',
+				'reason' => 'pid_signalable',
+			);
 		}
 		$errno = function_exists('posix_get_last_error') ? posix_get_last_error() : 0;
 		$esrch = defined('POSIX_ESRCH') ? POSIX_ESRCH : 3;
 		$eperm = defined('POSIX_EPERM') ? POSIX_EPERM : 1;
 		if ( $esrch === $errno ) {
-			return array( 'state' => 'exited', 'reason' => 'esrch' );
+			return array(
+				'state'  => 'exited',
+				'reason' => 'esrch',
+			);
 		}
 		if ( $eperm === $errno ) {
-			return array( 'state' => 'unknown', 'reason' => 'eperm' );
+			return array(
+				'state'  => 'unknown',
+				'reason' => 'eperm',
+			);
 		}
-		return array( 'state' => 'unknown', 'reason' => 'probe_failed' );
+		return array(
+			'state'  => 'unknown',
+			'reason' => 'probe_failed',
+		);
 	}
 
 	private static function request_time(): string {
@@ -686,14 +747,14 @@ final class WorkspaceMutationLock {
 		if ( is_array($active_lock) ) {
 			$data['active_lock'] = $active_lock;
 			$data['owner']       = array_filter(array(
-				'owner'          => $active_lock['owner'] ?? null,
-				'run_id'         => $active_lock['run_id'] ?? null,
-				'job_id'         => $active_lock['job_id'] ?? null,
-				'owner_context'  => $active_lock['metadata']['owner_context'] ?? null,
-				'acquired_at'    => $active_lock['acquired_at'] ?? null,
-				'heartbeat_at'   => $active_lock['heartbeat_at'] ?? null,
+				'owner'                 => $active_lock['owner'] ?? null,
+				'run_id'                => $active_lock['run_id'] ?? null,
+				'job_id'                => $active_lock['job_id'] ?? null,
+				'owner_context'         => $active_lock['metadata']['owner_context'] ?? null,
+				'acquired_at'           => $active_lock['acquired_at'] ?? null,
+				'heartbeat_at'          => $active_lock['heartbeat_at'] ?? null,
 				'heartbeat_age_seconds' => $active_lock['heartbeat_age_seconds'] ?? null,
-				'source'         => 'database',
+				'source'                => 'database',
 			));
 			if ( isset($active_lock['age_seconds']) ) {
 				$data['age_seconds'] = (int) $active_lock['age_seconds'];
@@ -701,15 +762,15 @@ final class WorkspaceMutationLock {
 			if ( isset($active_lock['retry_after_seconds']) ) {
 				// Preserve lease timing for stale-owner recovery without presenting it
 				// as the healthy owner's expected completion time.
-				$data['retry_after_seconds']       = (int) $active_lock['retry_after_seconds'];
+				$data['retry_after_seconds']      = (int) $active_lock['retry_after_seconds'];
 				$data['lease_expires_in_seconds'] = (int) $active_lock['retry_after_seconds'];
 			}
 			$expected_release_at = (string) ( $active_lock['metadata']['expected_release_at'] ?? '' );
 			$expected_release    = '' === $expected_release_at ? false : strtotime($expected_release_at);
 			if ( false !== $expected_release ) {
-				$data['expected_release_at']     = $expected_release_at;
-				$data['estimated_wait_seconds']  = max(0, $expected_release - time());
-				$data['eta_status']              = 'owner_operation_deadline';
+				$data['expected_release_at']    = $expected_release_at;
+				$data['estimated_wait_seconds'] = max(0, $expected_release - time());
+				$data['eta_status']             = 'owner_operation_deadline';
 			}
 		} elseif ( is_wp_error($active_lock) ) {
 			$data['lock_store_error'] = $active_lock->get_error_message();
@@ -725,13 +786,13 @@ final class WorkspaceMutationLock {
 				'phase' => 'lock_wait',
 				'state' => 'timed_out',
 			);
-			$request = self::read_request($request_path);
+			$request            = self::read_request($request_path);
 			if ( is_array($request) && isset($request['queue_position']) ) {
 				$data['queue_position'] = (int) $request['queue_position'];
 			}
 			$queue = self::queued_requests_for_resource(dirname($lock_path), $lock_path);
 			foreach ( $queue as $position => $request ) {
-				if ( $request_path === (string) ($request['path'] ?? '') ) {
+				if ( (string) ( $request['path'] ?? '' ) === $request_path ) {
 					$data['queue_position'] = $position + 1;
 					break;
 				}
@@ -752,19 +813,19 @@ final class WorkspaceMutationLock {
 		$rows  = array();
 		foreach ( false === $files ? array() : $files as $file ) {
 			$row = self::read_request($file);
-			if ( is_array($row) && 'queued' === (string) ($row['state'] ?? '') && $lock_path === (string) ($row['resource'] ?? '') ) {
+			if ( is_array($row) && 'queued' === (string) ( $row['state'] ?? '' ) && (string) ( $row['resource'] ?? '' ) === $lock_path ) {
 				$row['path'] = $file;
 				$rows[]      = $row;
 			}
 		}
-		usort($rows, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? $left['created_at'] ?? ''), (string) ($right['queue_order'] ?? $right['created_at'] ?? '')));
+		usort($rows, static fn( array $left, array $right ): int => strcmp( (string) ( $left['queue_order'] ?? $left['created_at'] ?? '' ), (string) ( $right['queue_order'] ?? $right['created_at'] ?? '' )));
 		return $rows;
 	}
 
 	/** Only the oldest live request may contend for the OS flock. */
 	private static function request_is_head( string $lock_dir, string $lock_path, string $request_path ): bool {
 		$queue = self::queued_requests_for_resource($lock_dir, $lock_path);
-		return array() !== $queue && $request_path === (string) ( $queue[0]['path'] ?? '' );
+		return array() !== $queue && (string) ( $queue[0]['path'] ?? '' ) === $request_path;
 	}
 
 	/**
