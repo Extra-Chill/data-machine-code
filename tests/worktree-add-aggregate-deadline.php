@@ -73,6 +73,7 @@ try {
 	deadline_assert(false === ($timed_out->get_error_data()['admission']['mutation_committed'] ?? true), 'lock expiry must confirm that admission has not mutated the workspace');
 	deadline_assert(true === ($timed_out->get_error_data()['retryable'] ?? false), 'lock expiry must be explicitly retryable');
 	deadline_assert($harness::worktree_capacity_wait_timeout_seconds(true) === $harness::worktree_capacity_admission_timeout_seconds(), 'Capacity admission must use the aggregate capacity wait policy.');
+	deadline_assert($harness::worktree_capacity_operation_timeout_seconds(true) * 2 === $harness::worktree_capacity_aggregate_timeout_seconds(true), 'The declared aggregate bound must include both bounded admission and the acquisition-time allocation section.');
 	deadline_assert(40 === $harness::admission_wait(140.0, 100.0), 'Capacity admission must wait for the aggregate operation budget rather than a fixed 30-second cap.');
 	foreach (array( 'follower-one', 'follower-two' ) as $follower) {
 		deadline_assert(35 === $harness::admission_wait(135.0, 100.0), $follower . ' must remain queued behind a healthy 35-second holder without consuming a fixed 30-second timeout.');

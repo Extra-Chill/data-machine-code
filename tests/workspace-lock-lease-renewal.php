@@ -41,6 +41,7 @@ final class Workspace_Lock_Lease_Wpdb {
 	public function get_row(string $query, string $format): array|false { $row = $this->pdo->query($query)->fetch(PDO::FETCH_ASSOC); return false === $row ? false : $row; }
 	public function insert(string $table, array $data, array $formats): int|false { $columns = array_keys($data); $statement = $this->pdo->prepare('INSERT INTO ' . $table . ' (' . implode(',', $columns) . ') VALUES (' . implode(',', array_fill(0, count($columns), '?')) . ')'); $statement->execute(array_values($data)); $this->insert_id = (int) $this->pdo->lastInsertId(); return 1; }
 	public function update(string $table, array $data, array $where, array $formats, array $where_formats): int|false { $sets = implode(',', array_map(static fn(string $key): string => $key . ' = ?', array_keys($data))); $terms = implode(' AND ', array_map(static fn(string $key): string => $key . ' = ?', array_keys($where))); $statement = $this->pdo->prepare('UPDATE ' . $table . ' SET ' . $sets . ' WHERE ' . $terms); $statement->execute(array_merge(array_values($data), array_values($where))); return $statement->rowCount(); }
+	public function query(string $query): int|false { return $this->pdo->exec($query); }
 }
 
 function lease_assert(bool $condition, string $message): void { if (! $condition) { throw new RuntimeException($message); } }
@@ -66,7 +67,7 @@ try {
 	lease_assert(gmdate('c', 4000) === ($renewed_active['metadata']['expected_release_at'] ?? null), 'Heartbeat renewal did not refresh the DB-visible operation ETA.');
 	lease_assert(2099 === ($renewed_active['expires_in_seconds'] ?? null), 'Renewal must use the declared operation ETA as its exact expiry.');
 	$GLOBALS['workspace_lock_test_time'] = 4001;
-	lease_assert(false === WorkspaceLockStore::heartbeat($id, array( 'expected_release_at' => gmdate('c', 4000) )), 'Over-deadline heartbeat renewal must not revive an expired allocation ETA.');
+	lease_assert(false === WorkspaceLockStore::heartbeat($id, array( 'expected_release_at' => gmdate('c', 5000) )), 'A later heartbeat deadline must not revive an already expired allocation row.');
 	lease_assert(null === WorkspaceLockStore::active_lock('worktree-workspace-capacity-admission', 'workspace-capacity-admission'), 'Expired owner operation deadline must remain bounded for stale recovery.');
 	WorkspaceLockStore::release($id);
 	lease_assert(false === WorkspaceLockStore::heartbeat($id, array()), 'Conditional heartbeat must report false when no active row was updated.');
@@ -77,12 +78,14 @@ try {
 	mkdir($workspace, 0777, true);
 	$allocation_time = time();
 	$GLOBALS['workspace_lock_test_time'] = $allocation_time;
-	$started  = microtime(true);
-	$deadline = $started + 35.0;
-	$lock = WorkspaceMutationLock::acquire($workspace, 'workspace-capacity-admission', 1, array( 'expected_release_at' => gmdate('c', (int) ceil($deadline)) ));
+	$lock = WorkspaceMutationLock::acquire($workspace, 'workspace-capacity-admission', 1, array( 'lease_duration_seconds' => 35, 'lease_strategy' => 'acquisition_bounded' ));
 	lease_assert($lock instanceof WorkspaceMutationLock, 'Could not acquire the DB-backed allocation heartbeat lock.');
+	$deadline = (float) $lock->lease_deadline();
+	$started  = $deadline - 35.0;
+	lease_assert((int) $deadline === $allocation_time + 35, 'Allocation lease duration was not activated from the ownership acquisition time.');
 	$before_heartbeat = WorkspaceLockStore::active_lock('worktree-workspace-capacity-admission', 'workspace-capacity-admission');
 	lease_assert(is_array($before_heartbeat) && 0 === ($before_heartbeat['heartbeat_age_seconds'] ?? null), 'DB-backed allocation lock did not expose its initial heartbeat.');
+	lease_assert(gmdate('c', $allocation_time) === ($before_heartbeat['metadata']['lease_activated_at'] ?? null) && gmdate('c', $allocation_time + 35) === ($before_heartbeat['metadata']['expected_release_at'] ?? null), 'DB-backed allocation evidence did not retain acquisition and release timestamps.');
 	$GLOBALS['workspace_lock_test_time'] = $allocation_time + 5;
 	$lifecycle = new Workspace_Lock_Lease_Lifecycle_Harness();
 	lease_assert(null === $lifecycle->heartbeat($lock, 'bootstrap', $deadline, 35, $started), 'A virtual allocation phase beyond 30 seconds must renew its DB-backed heartbeat.');

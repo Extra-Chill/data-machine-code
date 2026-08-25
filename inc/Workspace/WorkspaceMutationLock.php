@@ -165,6 +165,7 @@ final class WorkspaceMutationLock {
 		do {
 			self::update_request($request_path, 'queued');
 			if ( self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+				$metadata = WorkspaceLockStore::activate_lease($metadata);
 				self::update_request($request_path, 'acquiring');
 				$lock_id = WorkspaceLockStore::register_acquired(
 					array(
@@ -242,6 +243,29 @@ final class WorkspaceMutationLock {
 		}
 		$this->metadata = array_merge($this->metadata, $metadata);
 		return WorkspaceLockStore::heartbeat($this->lock_id, $this->metadata);
+	}
+
+	/** Return the acquisition-bounded lease deadline, when one was declared. */
+	public function lease_deadline(): ?int {
+		$deadline = strtotime((string) ( $this->metadata['expected_release_at'] ?? '' ));
+		return false === $deadline ? null : $deadline;
+	}
+
+	/** Whether this object still owns its authoritative OS lock handle. */
+	public function is_active(): bool {
+		return null !== $this->handle;
+	}
+
+	/** Return bounded ownership evidence without exposing arbitrary caller metadata. */
+	public function lease_evidence(): array {
+		return array(
+			'os_lock_active'        => $this->is_active(),
+			'lease_strategy'        => $this->metadata['lease_strategy'] ?? null,
+			'lease_activated_at'    => $this->metadata['lease_activated_at'] ?? null,
+			'expected_release_at'   => $this->metadata['expected_release_at'] ?? null,
+			'lease_duration_seconds' => isset($this->metadata['lease_duration_seconds']) ? (int) $this->metadata['lease_duration_seconds'] : null,
+			'owner'                 => WorkspaceLockStore::default_owner_context(),
+		);
 	}
 
 	/** Invoke legacy zero-argument callbacks without a new argument. */

@@ -89,6 +89,20 @@ final class WorkspaceLockStore {
 		return (int) $wpdb->insert_id;
 	}
 
+	/** Start a bounded lease when its owner actually acquires the OS lock. */
+	public static function activate_lease( array $metadata ): array {
+		if ( ! isset($metadata['lease_duration_seconds']) || ! is_numeric($metadata['lease_duration_seconds']) ) {
+			return $metadata;
+		}
+
+		$activated_at                    = self::now_timestamp();
+		$duration                        = max(1, (int) $metadata['lease_duration_seconds']);
+		$metadata['lease_activated_at']  = gmdate('c', $activated_at);
+		$metadata['expected_release_at'] = gmdate('c', $activated_at + $duration);
+
+		return $metadata;
+	}
+
 	/**
 	 * Mark a lock row released.
 	 */

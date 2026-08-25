@@ -1062,9 +1062,11 @@ trait WorkspaceWorktreeLifecycle {
 			),
 			$capacity_timeout,
 			array(
-				'expected_release_at'       => gmdate('c', (int) ceil($operation_deadline)),
-				'operation_timeout_seconds' => $operation_timeout,
-				'lease_strategy'            => 'operation_deadline',
+				'lease_duration_seconds'     => $operation_timeout,
+				'operation_timeout_seconds'  => $operation_timeout,
+				'aggregate_timeout_seconds'  => self::worktree_capacity_aggregate_timeout_seconds($bootstrap),
+				'operation_requested_at'     => gmdate('c', (int) floor($operation_started)),
+				'lease_strategy'             => 'acquisition_bounded',
 			)
 		);
 
@@ -1075,6 +1077,11 @@ trait WorkspaceWorktreeLifecycle {
 
 		// The reservation was committed during admission, before both lock handles
 		// are closed by with_repo(). Dependency children therefore inherit neither.
+		if ( $bootstrap && ! empty($locked['bootstrap_deferred']) && isset($locked['_capacity_operation_deadline']) ) {
+			$operation_deadline = (float) $locked['_capacity_operation_deadline'];
+			$operation_started  = $operation_deadline - $operation_timeout;
+			unset($locked['_capacity_operation_deadline']);
+		}
 		$result = ! $bootstrap || empty($locked['bootstrap_deferred'])
 			? $locked
 			: $this->complete_deferred_bootstrap($locked, $repo, $branch, $operation_deadline, $operation_timeout, $operation_started, $progress_callback);
@@ -1224,6 +1231,12 @@ trait WorkspaceWorktreeLifecycle {
 		return max(1, $timeout);
 	}
 
+	/** Declare the maximum pre-admission plus acquisition-bounded lifecycle time. */
+	public static function worktree_capacity_aggregate_timeout_seconds( bool $bootstrap = true ): int {
+		$operation = self::worktree_capacity_operation_timeout_seconds($bootstrap);
+		return $operation + min($operation, self::worktree_capacity_admission_timeout_seconds($bootstrap));
+	}
+
 	/**
 	 * Inspect, create, and reserve bootstrap demand while holding the workspace-
 	 * wide capacity lock. A later admission includes the durable reservation while
@@ -1258,6 +1271,11 @@ trait WorkspaceWorktreeLifecycle {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
 		$operation_deadline = $operation_deadline ?? ( $operation_started + $operation_timeout );
+		$lease_deadline     = $capacity_lock?->lease_deadline();
+		if ( null !== $lease_deadline ) {
+			$operation_deadline = (float) $lease_deadline;
+			$operation_started  = $operation_deadline - $operation_timeout;
+		}
 		$deadline_error     = $this->worktree_operation_deadline_error('freshness', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
@@ -1572,6 +1590,9 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
+		if ( $bootstrap ) {
+			$response['_capacity_operation_deadline'] = $operation_deadline;
+		}
 		$measurement_plan             = $demand_plan;
 		if ( is_array($capacity_remediation) ) {
 			$response['capacity_remediation'] = $capacity_remediation;
@@ -1716,11 +1737,12 @@ trait WorkspaceWorktreeLifecycle {
 		if ( false === $renewed ) {
 			return new \WP_Error(
 				'workspace_capacity_lock_heartbeat_lost',
-				'The workspace capacity lock is no longer active; refusing to continue allocation without current ownership evidence.',
+				sprintf('The workspace capacity lock DB lease is no longer active during %s (OS ownership %s, deadline %s, timeout %d); refusing to continue allocation without current ownership evidence.', str_replace('_', ' ', $phase), $lock->is_active() ? 'active' : 'inactive', gmdate('c', (int) ceil($operation_deadline)), $operation_timeout),
 				array(
 					'status'             => 423,
 					'retryable'          => true,
 					'phase'              => $phase,
+					'ownership'          => $lock->lease_evidence(),
 					'operation_timeout'  => $operation_timeout,
 					'operation_started'  => $operation_started,
 					'operation_deadline' => gmdate('c', (int) ceil($operation_deadline)),

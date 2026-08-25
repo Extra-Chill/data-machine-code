@@ -114,7 +114,7 @@ if ( 'signal-holder' === $mode ) {
 		'workspace-capacity-admission',
 		static function () use ( $ready, $release ): string|WP_Error {
 			file_put_contents($ready, 'ready');
-			$deadline = microtime(true) + 5;
+			$deadline = microtime(true) + 15;
 			while ( ! is_file($release) && microtime(true) < $deadline ) {
 				usleep(10000);
 			}
@@ -174,6 +174,32 @@ if ( 'ordered-waiter' === $mode ) {
 	);
 	fwrite(STDOUT, is_wp_error($result) ? 'error:' . $result->get_error_code() : $result);
 	exit(is_wp_error($result) ? 8 : 0);
+}
+
+if ( 'leased-allocation' === $mode ) {
+	$workspace = (string) $argv[2];
+	$id        = (string) $argv[3];
+	$order     = (string) $argv[4];
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function ( WorkspaceMutationLock $lock ) use ( $id, $order ): string|WP_Error {
+			$deadline = $lock->lease_deadline();
+			if ( null === $deadline || $deadline <= time() ) {
+				return new WP_Error('stale_admitted_lease');
+			}
+			file_put_contents($order, $id . "\n", FILE_APPEND | LOCK_EX);
+			usleep(50000);
+			if ( $deadline <= time() ) {
+				return new WP_Error('lease_expired_during_allocation');
+			}
+			return $id;
+		},
+		8,
+		array( 'lease_duration_seconds' => 1, 'lease_strategy' => 'acquisition_bounded' )
+	);
+	fwrite(STDOUT, is_wp_error($result) ? 'error:' . $result->get_error_code() : $result);
+	exit(is_wp_error($result) ? 10 : 0);
 }
 
 if ( 'repo-holder' === $mode ) {
@@ -379,14 +405,14 @@ try {
 		return array( 'output' => $output, 'error' => $error, 'waiter_exit' => $waiter_exit, 'holder_exit' => $holder_exit );
 	};
 
-	$waited = $run_contention(2, 5);
+	$waited = $run_contention(3, 5);
 	capacity_lock_assert(0 === $waited['holder_exit'], 'Capacity lock holder failed.');
 	capacity_lock_assert(0 === $waited['waiter_exit'], 'A bounded legitimate waiter failed instead of acquiring: ' . $waited['error']);
 	capacity_lock_assert(str_starts_with($waited['output'], 'acquired:'), 'Successful waiter did not report acquisition.');
-	capacity_lock_assert((float) substr($waited['output'], 9) >= 1.0, 'Waiter did not actually serialize behind the holder.');
-	capacity_lock_assert((float) substr($waited['output'], 9) < 2.5, 'Waiter did not wake promptly after the holder released the OS flock.');
+	capacity_lock_assert((float) substr($waited['output'], 9) >= 2.0, 'Waiter did not actually serialize behind the holder: ' . $waited['output']);
+	capacity_lock_assert((float) substr($waited['output'], 9) < 3.5, 'Waiter did not wake promptly after the holder released the OS flock.');
 
-	$timed_out = $run_contention(2, 1);
+	$timed_out = $run_contention(3, 1);
 	capacity_lock_assert(3 === $timed_out['waiter_exit'], 'Short waiter did not return the retryable timeout path.');
 	capacity_lock_assert('error:workspace_repo_busy' === $timed_out['output'], 'Short waiter returned an unexpected lock error.');
 	capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Cancelled or released requests left queue evidence behind.');
@@ -394,7 +420,7 @@ try {
 	// A timed-out client receives durable diagnostic identity and enough owner
 	// state to inspect the holder rather than silently guessing at completion.
 	$ready = $workspace . '/diagnostic-ready';
-	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '2' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '3' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
 	capacity_lock_assert(is_resource($holder), 'Could not start diagnostic lock holder.');
 	fclose($holder_pipes[0]);
 	$deadline = microtime(true) + 3;
@@ -546,6 +572,48 @@ try {
 		unlink($cancel_order);
 		unlink($ready);
 
+		// Lease duration starts at ownership acquisition, not queue entry. Leave all
+		// seven callers queued beyond that duration, cancel one, then require every
+		// admitted successor to retain a live lease through its bounded callback.
+		$ready   = $workspace . '/lease-wave-ready';
+		$release = $workspace . '/lease-wave-release';
+		$order   = $workspace . '/lease-wave-order';
+		$holder  = proc_open(array( PHP_BINARY, __FILE__, 'signal-holder', $workspace, $ready, $release), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+		capacity_lock_assert(is_resource($holder), 'Could not start lease-wave holder.');
+		fclose($holder_pipes[0]);
+		$deadline = microtime(true) + 3;
+		while ( ! is_file($ready) && microtime(true) < $deadline ) { usleep(10000); }
+		$allocations = array();
+		foreach ( range(1, 7) as $id ) {
+			$process = proc_open(array( PHP_BINARY, __FILE__, 'leased-allocation', $workspace, (string) $id, $order), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes);
+			capacity_lock_assert(is_resource($process), 'Could not start lease-wave allocation ' . $id . '.');
+			fclose($pipes[0]);
+			$allocations[$id] = array( $process, $pipes );
+			$deadline = microtime(true) + 2;
+			do { $queued = array_filter(WorkspaceMutationLock::status($workspace)['queue'] ?? array(), static fn( array $request ): bool => 'queued' === ($request['state'] ?? '')); usleep(10000); } while ( count($queued) < count($allocations) && microtime(true) < $deadline );
+			capacity_lock_assert(count($queued) === count($allocations), 'Lease-wave allocation did not become durably queued.');
+		}
+		$cancelled = $allocations[4];
+		$cancelled_status = proc_get_status($cancelled[0]);
+		posix_kill((int) $cancelled_status['pid'], SIGKILL);
+		stream_get_contents($cancelled[1][1]); stream_get_contents($cancelled[1][2]);
+		fclose($cancelled[1][1]); fclose($cancelled[1][2]); proc_close($cancelled[0]);
+		unset($allocations[4]);
+		WorkspaceMutationLock::status($workspace);
+		sleep(2);
+		file_put_contents($release, 'release');
+		foreach ( $allocations as $id => [ $process, $pipes ] ) {
+			$output = stream_get_contents($pipes[1]);
+			$error  = stream_get_contents($pipes[2]);
+			fclose($pipes[1]); fclose($pipes[2]);
+			capacity_lock_assert(0 === proc_close($process) && (string) $id === $output, 'Admitted lease-wave allocation lost ownership: ' . $output . ' ' . $error);
+		}
+		fclose($holder_pipes[1]); fclose($holder_pipes[2]);
+		capacity_lock_assert(0 === proc_close($holder), 'Lease-wave holder failed.');
+		capacity_lock_assert(array( '1', '2', '3', '5', '6', '7' ) === array_values(array_filter(explode("\n", trim((string) file_get_contents($order))))), 'Lease-wave cancellation did not preserve FIFO successor admission.');
+		capacity_lock_assert(array() === ( glob($workspace . '/.locks/requests/*.json') ?: array() ), 'Lease-wave completion left queue evidence behind.');
+		unlink($ready); unlink($release); unlink($order);
+
 		// A holder killed after acquisition must release its OS flock so the next
 		// admission can proceed without waiting for its stale DB lease.
 		$ready = $workspace . '/owner-exit-ready';
@@ -673,7 +741,7 @@ try {
 	capacity_lock_assert('130' === file_get_contents($state), 'Refused second admission must not consume stale capacity.');
 	echo "workspace-capacity-lock-concurrency: ok\n";
 } finally {
-	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-release', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready' ) as $file ) {
+	foreach ( array( 'capacity-state', 'admission-ready', 'second-ready', 'fanout-ready', 'fifo-ready', 'fifo-release', 'fifo-order', 'cancel-order', 'kill-ready', 'diagnostic-ready', 'repo-a-ready', 'repo-b-ready', 'lease-wave-ready', 'lease-wave-release', 'lease-wave-order' ) as $file ) {
 		if ( is_file($workspace . '/' . $file) ) { unlink($workspace . '/' . $file); }
 	}
 	if ( is_file($workspace . '/ready') ) {
