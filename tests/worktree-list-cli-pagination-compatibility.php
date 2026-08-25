@@ -14,6 +14,7 @@ namespace DataMachine\Cli {
 namespace DataMachineCode\Workspace {
 	class Workspace {
 		public static array $limit_inputs = array();
+		public function sanitize_repo_name( string $name ): string { return preg_replace('/[^a-zA-Z0-9._-]/', '', $name); }
 		public static function normalize_workspace_list_limit( mixed $limit ): int|\WP_Error {
 			self::$limit_inputs[] = $limit;
 			return ( is_int($limit) || ( is_string($limit) && ctype_digit($limit) ) ) ? (int) $limit : new \WP_Error();
@@ -35,8 +36,9 @@ namespace {
 	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
 	final class WP_CLI {
 		public static string $output = '';
+		public static array $logs = array();
 		public static function line( string $message ): void { self::$output .= $message; }
-		public static function log( string $message ): void {}
+		public static function log( string $message ): void { self::$logs[] = $message; }
 		public static function warning( string $message ): void {}
 		public static function success( string $message ): void {}
 		public static function error( string $message ): void { throw new \RuntimeException($message); }
@@ -71,12 +73,29 @@ namespace {
 	function pagination_compat_assert( bool $condition, string $message ): void {
 		if ( ! $condition ) { throw new RuntimeException($message); }
 	}
-	function invoke_worktree_list( WorkspaceCommand $command, array $assoc_args ): void {
+	function invoke_worktree_list( WorkspaceCommand $command, array $assoc_args, array $args = array( 'list' ) ): void {
 		$method = new ReflectionMethod($command, 'worktree');
-		$method->invoke($command, array( 'list' ), $assoc_args);
+		$method->invoke($command, $args, $assoc_args);
 	}
 
 	$command = new WorkspaceCommand();
+	invoke_worktree_list($command, array( 'repo' => 'canonical-repo' ));
+	pagination_compat_assert('canonical-repo' === ($GLOBALS['dmc_worktree_list_ability']->inputs[0]['repo'] ?? null), 'Worktree list must forward the canonical --repo filter.');
+	invoke_worktree_list($command, array(), array( 'list', 'legacy-repo' ));
+	pagination_compat_assert('legacy-repo' === ($GLOBALS['dmc_worktree_list_ability']->inputs[1]['repo'] ?? null), 'Worktree list must retain the positional repository filter.');
+	pagination_compat_assert(str_contains(implode("\n", WP_CLI::$logs), '--repo=legacy-repo'), 'Legacy repository cursor guidance must use the canonical --repo filter.');
+	invoke_worktree_list($command, array( 'repo' => 'same/repo' ), array( 'list', 'same repo' ));
+	pagination_compat_assert('samerepo' === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['repo'] ?? null), 'Equivalent sanitized repository filters must normalize to one ability input.');
+	try {
+		invoke_worktree_list($command, array( 'repo' => 'canonical/repo' ), array( 'list', 'legacy repo' ));
+		throw new RuntimeException('Conflicting worktree repository filters must fail.');
+	} catch (RuntimeException $error) {
+		$diagnostic = json_decode($error->getMessage(), true);
+		pagination_compat_assert('worktree_list_repo_filter_conflict' === ($diagnostic['code'] ?? null), 'Conflicting repository filters must return a typed diagnostic.');
+		pagination_compat_assert('canonicalrepo' === ($diagnostic['data']['repo'] ?? null) && 'legacyrepo' === ($diagnostic['data']['positional_repo'] ?? null), 'Repository conflict diagnostic must identify normalized inputs.');
+		pagination_compat_assert(str_contains((string) ($diagnostic['data']['remediation'] ?? ''), '--repo=canonicalrepo'), 'Repository conflict diagnostic must remediate with the normalized canonical filter.');
+	}
+	$GLOBALS['dmc_worktree_list_ability']->inputs = array();
 	invoke_worktree_list($command, array( 'format' => 'json' ));
 	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[0]['all'] ?? false), 'Legacy JSON must request the exhaustive row stream.');
 	$legacy = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
