@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.11] - 2026-08-25
+
+### Changed
+- canonicalize finalization assertions
+- use canonical finalization state
+
+### Fixed
+- preserve registry contention recovery
+
 ## [0.70.10] - 2026-08-25
 
 ### Fixed
