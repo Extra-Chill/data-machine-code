@@ -7,6 +7,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/TaskUrl.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 
 use DataMachineCode\Workspace\WorktreeContextInjector;
+use DataMachineCode\Workspace\TaskUrl;
 
 function task_url_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
@@ -24,5 +25,7 @@ $persisted = WorktreeContextInjector::resolve_task_metadata(array( 'task_url' =>
 $requested = WorktreeContextInjector::canonical_task_url('https://user:pass@github.com/Extra-Chill/Data-Machine-Code/issues/1166#homeboy');
 task_url_assert($requested === ( $persisted['task_url'] ?? null ) && 'https://user:pass@github.com/Extra-Chill/Data-Machine-Code/issues/1166' === $requested, 'Persisted DMC metadata and a Homeboy-style request must agree after default-port normalization while preserving userinfo and path casing.');
 task_url_assert('https://user:pass@github.com:8443/Extra-Chill/Data-Machine-Code/issues/1166' === WorktreeContextInjector::canonical_task_url('https://user:pass@GitHub.COM:8443/Extra-Chill/Data-Machine-Code/issues/1166'), 'Non-default task URL ports must remain part of task identity.');
+task_url_assert($canonical === TaskUrl::canonicalize_for_replay(" {$source}/?source=homeboy#candidate "), 'Safe replay must use the existing canonical tracker identity contract.');
+task_url_assert(null === TaskUrl::canonicalize_for_replay('https://user:pass@github.com/Extra-Chill/Data-Machine-Code/issues/1166'), 'Credential-bearing userinfo must suppress executable tracker replay.');
 
 echo "worktree-task-url-canonicalization: ok\n";

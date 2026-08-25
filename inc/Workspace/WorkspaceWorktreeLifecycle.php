@@ -1056,6 +1056,7 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('invalid_branch', 'Branch name is required.', array( 'status' => 400 ));
 		}
 
+		$from         = null !== $from && '' !== trim($from) ? trim($from) : null;
 		$task         = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
 		$reuse_policy = strtolower(trim($reuse_policy));
 		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
@@ -1078,6 +1079,23 @@ trait WorkspaceWorktreeLifecycle {
 				array( 'status' => 400 )
 			);
 		}
+		$retry_request = array(
+			'repo'                       => $repo,
+			'branch'                     => $branch,
+			'from'                       => $from,
+			'inject_context'             => $inject_context,
+			'bootstrap'                  => $bootstrap,
+			'allow_stale'                => $allow_stale,
+			'allow_unverified_freshness' => $allow_unverified_freshness,
+			'rebase_base'                => $rebase_base,
+			'force'                      => $force,
+			'remediate_capacity'         => $remediate_capacity,
+			'remediate_capacity_dry_run' => $remediate_capacity_dry_run,
+			'task'                       => $task,
+			'require_task_tracker'       => $require_task_tracker,
+			'intent'                     => $intent,
+			'reuse_policy'               => $reuse_policy,
+		);
 
 		$slug = $this->slugify_branch($branch);
 		if ( '' === $slug ) {
@@ -1100,17 +1118,17 @@ trait WorkspaceWorktreeLifecycle {
 		// handle path can reset a terminal checkout or rewrite its metadata.
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			if ( 'recycle_terminal' === $reuse_policy ) {
-				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback);
+				return $this->decorate_worktree_add_lock_contention(WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback), $retry_request);
 			}
 			if ( 'claim_expired' === $reuse_policy ) {
-				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback);
+				return $this->decorate_worktree_add_lock_contention(WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback), $retry_request);
 			}
 			$reuse  = fn() => WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback);
 			$reused = $bootstrap
 				? WorkspaceMutationLock::with_repo($this->workspace_path, 'workspace-capacity-admission', $reuse, self::worktree_capacity_admission_timeout_seconds(true), array(), $progress_callback)
 				: $reuse();
 			if ( is_wp_error($reused) || ! $bootstrap || empty($reused['bootstrap_deferred']) ) {
-				return $reused;
+				return $this->decorate_worktree_add_lock_contention($reused, $retry_request);
 			}
 			return $this->complete_resumed_bootstrap($reused);
 		}
@@ -1138,7 +1156,7 @@ trait WorkspaceWorktreeLifecycle {
 		);
 		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
 		if ( is_wp_error($preflight) ) {
-			return $preflight;
+			return $this->decorate_worktree_add_lock_contention($preflight, $retry_request);
 		}
 
 		// Preflight shares the operation budget. Recompute before joining the
@@ -1192,7 +1210,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$locked = $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
 		if ( is_wp_error($locked) ) {
-			return $locked;
+			return $this->decorate_worktree_add_lock_contention($locked, $retry_request);
 		}
 		if ( ! empty($locked['bootstrap_noop_completed']) ) {
 			$this->worktree_add_progress($progress_callback, 'bootstrap_start');
@@ -1503,10 +1521,10 @@ trait WorkspaceWorktreeLifecycle {
 					'fetch_timed_out'            => $fetch_timed_out,
 					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
 					'allow_unverified_freshness' => false,
-					'next_commands'              => array(
+					'next_commands'              => array_values(array_filter(array(
 						$this->primary_refresh_command($repo),
 						$this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent),
-					),
+					))),
 				)
 			);
 		}
@@ -1643,16 +1661,17 @@ trait WorkspaceWorktreeLifecycle {
 				(array) ( $disk_budget['cleanup_recommendations'] ?? array() )
 			);
 			if ( 'no_actionable_rows' === ( $reclaim_evidence['actionability_status'] ?? '' ) ) {
+				$force_retry = $this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, true, $task, $intent);
 				$recommendations = array(
 					sprintf(
 						'1. Automatic safe artifact recovery found 0 actionable rows (0 B); gross inspected candidate bytes were %s. The capacity recovery target is not a reclaim forecast.',
 						WorktreeDiskBudget::format_bytes_for_operator( (int) ( $reclaim_evidence['gross_candidate_bytes'] ?? 0 ))
 					),
-					sprintf(
+					null !== $force_retry ? sprintf(
 						'2. If a human accepts this one worktree\'s projected demand of %s, retry only this request with --force: %s',
 						WorktreeDiskBudget::format_bytes_for_operator( (int) ( $disk_budget['projected_demand_bytes'] ?? 0 )),
-						$this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, true, $task, $intent)
-					),
+						$force_retry
+					) : '2. Retry receipt suppressed because the task URL contains credential-bearing userinfo; remove credentials before retrying.',
 					'3. If a capacity exception is not approved, run bounded metadata reconciliation and a fresh DB-backed replan; it returns an apply command only for currently actionable rows: studio wp datamachine-code workspace worktree capacity-recovery --limit=25 --until-budget=30s --format=json',
 				);
 			}
@@ -1918,30 +1937,65 @@ trait WorkspaceWorktreeLifecycle {
 		return null;
 	}
 
-	/** Build a safe, task-preserving retry command after freshness verification fails. */
-	private function worktree_freshness_retry_command( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent ): string {
+	/** Add an exact allocation receipt only to contention before a lock callback starts. */
+	private function decorate_worktree_add_lock_contention( mixed $result, array $request ): mixed {
+		if ( ! is_wp_error($result) ) {
+			return $result;
+		}
+		$data = (array) $result->get_error_data();
+		if ( empty($data['retryable']) || 'workspace_lock_register' !== ( $data['operation'] ?? null ) || false !== ( $data['lock_callback_started'] ?? null ) || ! empty($data['lock_callback_completed']) ) {
+			return $result;
+		}
+
+		$command = $this->worktree_add_retry_command($request);
+		if ( null === $command ) {
+			unset($data['retry_command']);
+		} else {
+			$data['retry_command'] = $command;
+		}
+		$result->add_data($data);
+		return $result;
+	}
+
+	/** Build a safe command from a normalized worktree allocation request. */
+	private function worktree_add_retry_command( array $request ): ?string {
+		$task = (array) ( $request['task'] ?? array() );
+		if ( isset($task['task_url']) ) {
+			$task_url = TaskUrl::canonicalize_for_replay($task['task_url']);
+			if ( null === $task_url ) {
+				return null;
+			}
+			$task['task_url'] = $task_url;
+		}
 		$parts = array(
 			'wp datamachine-code workspace worktree add',
-			escapeshellarg($repo),
-			escapeshellarg($branch),
+			escapeshellarg( (string) $request['repo']),
+			escapeshellarg( (string) $request['branch']),
 		);
-		if ( null !== $from && '' !== trim($from) ) {
-			$parts[] = '--from=' . escapeshellarg(trim($from));
+		if ( null !== ( $request['from'] ?? null ) ) {
+			$parts[] = '--from=' . escapeshellarg( (string) $request['from']);
 		}
-		if ( ! $inject_context ) {
+		if ( empty($request['inject_context']) ) {
 			$parts[] = '--skip-context-injection';
 		}
-		if ( ! $bootstrap ) {
+		if ( empty($request['bootstrap']) ) {
 			$parts[] = '--skip-bootstrap';
 		}
-		if ( $allow_stale ) {
-			$parts[] = '--allow-stale';
+		foreach ( array(
+			'allow_stale'                => '--allow-stale',
+			'allow_unverified_freshness' => '--allow-unverified-freshness',
+			'rebase_base'                => '--rebase-base',
+			'force'                      => '--force',
+			'remediate_capacity'         => '--remediate-capacity',
+			'remediate_capacity_dry_run' => '--remediate-capacity-dry-run',
+		) as $key => $flag ) {
+			if ( ! empty($request[ $key ]) ) {
+				$parts[] = $flag;
+			}
 		}
-		if ( $rebase_base ) {
-			$parts[] = '--rebase-base';
-		}
-		if ( $force ) {
-			$parts[] = '--force';
+		$reuse_policy = (string) ( $request['reuse_policy'] ?? 'reuse_compatible' );
+		if ( 'reuse_compatible' !== $reuse_policy ) {
+			$parts[] = '--reuse-policy=' . escapeshellarg($reuse_policy);
 		}
 		foreach ( array(
 			'task_url' => 'task-url',
@@ -1951,9 +2005,10 @@ trait WorkspaceWorktreeLifecycle {
 				$parts[] = '--' . $flag . '=' . escapeshellarg( (string) $task[ $key ]);
 			}
 		}
-		if ( ! empty($task) ) {
+		if ( ! empty($request['require_task_tracker']) ) {
 			$parts[] = '--require-task-tracker';
 		}
+		$intent = (array) ( $request['intent'] ?? array() );
 		foreach ( array(
 			'purpose'        => 'purpose',
 			'owner_run_ref'  => 'owner-run-ref',
@@ -1963,8 +2018,24 @@ trait WorkspaceWorktreeLifecycle {
 				$parts[] = '--' . $flag . '=' . escapeshellarg( (string) $intent[ $key ]);
 			}
 		}
-
 		return implode(' ', $parts);
+	}
+
+	/** Build a safe, task-preserving retry command after freshness verification fails. */
+	private function worktree_freshness_retry_command( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent ): ?string {
+		return $this->worktree_add_retry_command(array(
+			'repo'                 => $repo,
+			'branch'               => $branch,
+			'from'                 => null !== $from && '' !== trim($from) ? trim($from) : null,
+			'inject_context'       => $inject_context,
+			'bootstrap'            => $bootstrap,
+			'allow_stale'          => $allow_stale,
+			'rebase_base'          => $rebase_base,
+			'force'                => $force,
+			'task'                 => $task,
+			'require_task_tracker' => ! empty($task),
+			'intent'               => $intent,
+		));
 	}
 
 	/**
@@ -1979,13 +2050,14 @@ trait WorkspaceWorktreeLifecycle {
 		$data['requested_ref']        = trim($from);
 		$data['detected_default_ref'] = $default['ref'];
 		$data['default_ref_source']   = $default['source'];
-		$data['next_commands']        = null === $default['ref']
-			? array()
-			: array( $this->worktree_freshness_retry_command($repo, $branch, $default['ref'], $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent) );
+		$retry_command                = null === $default['ref'] ? null : $this->worktree_freshness_retry_command($repo, $branch, $default['ref'], $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent);
+		$data['next_commands']        = null === $retry_command ? array() : array( $retry_command );
 
 		$message = $error->get_error_message();
-		if ( null !== $default['ref'] ) {
-			$message .= sprintf(' The configured default ref is "%s". Retry with: %s', $default['ref'], $data['next_commands'][0]);
+		if ( null !== $retry_command ) {
+			$message .= sprintf(' The configured default ref is "%s". Retry with: %s', $default['ref'], $retry_command);
+		} elseif ( null !== $default['ref'] ) {
+			$message .= sprintf(' The configured default ref is "%s". Retry receipt suppressed because the task URL contains credential-bearing userinfo.', $default['ref']);
 		} else {
 			$message .= ' Remote default metadata is unavailable. Inspect the configured upstream or remote HEAD, then retry with an explicit --from ref.';
 		}
@@ -5372,6 +5444,14 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return array<string,mixed> */
 	private function capacity_add_intent( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, array $task, array $intent, string $reuse_policy ): array {
+		if ( isset($task['task_url']) ) {
+			$task_url = TaskUrl::canonicalize_for_replay($task['task_url']);
+			if ( null === $task_url ) {
+				unset($task['task_url']);
+			} else {
+				$task['task_url'] = $task_url;
+			}
+		}
 		return array(
 			'repo'           => $repo,
 			'branch'         => $branch,
