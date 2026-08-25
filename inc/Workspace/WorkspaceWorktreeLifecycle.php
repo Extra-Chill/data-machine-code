@@ -308,7 +308,11 @@ trait WorkspaceWorktreeLifecycle {
 	public function worktree_handoff_resume( string $handle, array $allocation_identity ): array|\WP_Error {
 		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
 		$parsed   = $this->parse_handle($handle);
-		if ( ! $parsed['is_worktree'] || (string) ( $allocation_identity['handle'] ?? '' ) !== $handle || 1 !== (int) ( $allocation_identity['version'] ?? 0 ) ) {
+		if ( ! $parsed['is_worktree']
+			|| (string) ( $allocation_identity['handle'] ?? '' ) !== $handle
+			|| 1 !== (int) ( $allocation_identity['version'] ?? 0 )
+			|| ! hash_equals($this->worktree_handoff_allocation_identity_digest($allocation_identity), (string) ( $allocation_identity['digest'] ?? '' ))
+		) {
 			return new \WP_Error('invalid_worktree_handoff_allocation_identity', 'An exact server-issued committed allocation identity is required.', array( 'status' => 400 ));
 		}
 
@@ -316,20 +320,23 @@ trait WorkspaceWorktreeLifecycle {
 			if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
 				return $this->worktree_handoff_resume_failure($this->worktree_handoff_timeout(), $allocation_identity);
 			}
-			$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
-			$path     = $this->workspace_path . '/' . $parsed['dir_name'];
-			$base_ref = $this->worktree_handoff_base_ref($metadata);
-			$readiness = WorktreeContextInjector::bootstrap_readiness($metadata);
-			$stored_identity = is_array($metadata['handoff_continuation_identity'] ?? null) ? $metadata['handoff_continuation_identity'] : array();
+			$metadata        = WorktreeContextInjector::get_metadata_fresh($handle);
+			$path            = $this->workspace_path . '/' . $parsed['dir_name'];
+			$base_ref        = $this->worktree_handoff_base_ref($metadata);
+			$readiness       = WorktreeContextInjector::bootstrap_readiness($metadata);
+			$stored_identity = is_array($metadata) && is_array($metadata['handoff_continuation_identity'] ?? null) ? $metadata['handoff_continuation_identity'] : array();
+			$stored_matches  = $this->worktree_handoff_proof_canonical_json($stored_identity) === $this->worktree_handoff_proof_canonical_json($allocation_identity);
+			$binding_current = is_array($metadata)
+				&& hash_equals($this->worktree_handoff_allocation_metadata_digest($metadata), (string) ( $allocation_identity['metadata_digest'] ?? '' ))
+				&& ! is_wp_error($base_ref)
+				&& hash_equals( (string) $base_ref, (string) ( $allocation_identity['resolved_base_ref'] ?? '' ) );
 			if ( ! is_array($metadata)
-				|| $this->worktree_handoff_proof_canonical_json($stored_identity) !== $this->worktree_handoff_proof_canonical_json($allocation_identity)
+				|| ! $stored_matches
 				|| ! hash_equals( (string) ( $metadata['allocation_id'] ?? '' ), (string) ( $allocation_identity['allocation_id'] ?? '' ) )
-				|| ! hash_equals($this->worktree_handoff_allocation_metadata_digest($metadata), (string) ( $allocation_identity['metadata_digest'] ?? '' ) )
 				|| ! hash_equals( (string) ( $metadata['path'] ?? '' ), (string) ( $allocation_identity['path'] ?? '' ) )
 				|| ! hash_equals($path, (string) ( $allocation_identity['path'] ?? '' ))
 				|| ! hash_equals( (string) ( $metadata['branch'] ?? '' ), (string) ( $allocation_identity['branch'] ?? '' ) )
 				|| is_wp_error($base_ref)
-				|| ! hash_equals( (string) $base_ref, (string) ( $allocation_identity['resolved_base_ref'] ?? '' ) )
 				|| ! $readiness['ready']
 				|| ! is_dir($path)
 				|| ! file_exists($path . '/.git')
@@ -359,6 +366,29 @@ trait WorkspaceWorktreeLifecycle {
 				return $this->worktree_handoff_resume_failure(
 					new \WP_Error('worktree_handoff_allocation_drift', 'The committed allocation changed after handoff was deferred; refusing to issue a freshness observation.', array( 'status' => 409 )),
 					$allocation_identity
+				);
+			}
+			if ( ! $binding_current ) {
+				if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+					return $this->worktree_handoff_resume_unbound_failure($this->worktree_handoff_timeout(), $allocation_identity);
+				}
+				$refreshed = $this->worktree_bind_handoff_allocation_identity(array(
+					'handle'           => $handle,
+					'path'             => $path,
+					'branch'           => (string) $metadata['branch'],
+					'worktree_sha'     => trim( (string) $head['output']),
+					'handoff_deadline' => $deadline,
+				));
+				if ( is_wp_error($refreshed) ) {
+					return $this->worktree_handoff_resume_unbound_failure($refreshed, $allocation_identity);
+				}
+				return $this->worktree_handoff_resume_failure(
+					new \WP_Error(
+						'worktree_handoff_allocation_identity_refreshed',
+						'The committed allocation metadata changed without changing the clean allocation; use the refreshed exact handoff continuation.',
+						array( 'status' => 409, 'supplied_allocation_identity' => $allocation_identity )
+					),
+					$refreshed
 				);
 			}
 
@@ -518,7 +548,9 @@ trait WorkspaceWorktreeLifecycle {
 				return new \WP_Error('worktree_handoff_allocation_identity_persist_failed', 'The exact handoff continuation identity could not be persisted.', array( 'status' => 500 ));
 			}
 
-			$confirmed = $this->worktree_handoff_allocation_identity($result);
+			$confirmation_result = $result;
+			unset($confirmation_result['worktree_sha']);
+			$confirmed = $this->worktree_handoff_allocation_identity($confirmation_result);
 			if ( is_wp_error($confirmed) ) {
 				return $confirmed;
 			}
@@ -553,12 +585,18 @@ trait WorkspaceWorktreeLifecycle {
 			$metadata      = is_wp_error($stored) || ! $stored ? $metadata : WorktreeContextInjector::get_metadata_fresh($handle);
 		}
 		$base_ref = $this->worktree_handoff_base_ref($metadata);
-		if ( '' === $handle || '' === $path || ! is_array($metadata) || '' === (string) ( $metadata['allocation_id'] ?? '' ) || ! hash_equals( (string) ( $metadata['path'] ?? '' ), $path ) || is_wp_error($base_ref) ) {
+		if ( '' === $handle || '' === $path || ! is_array($metadata) || '' === (string) ( $metadata['allocation_id'] ?? '' ) || '' === (string) ( $metadata['branch'] ?? '' ) || ! hash_equals( (string) ( $metadata['path'] ?? '' ), $path ) || is_wp_error($base_ref) ) {
 			return new \WP_Error('worktree_handoff_allocation_identity_missing', 'The committed allocation lacks exact continuation identity metadata.', array( 'status' => 409 ));
 		}
-		$head = $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($head) ) {
-			return $head;
+		$worktree_sha = (string) ( $result['worktree_sha'] ?? '' );
+		if ( 1 !== preg_match('/^[0-9a-f]{40,64}$/D', $worktree_sha) ) {
+			$head = isset($result['handoff_deadline'])
+				? $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', (float) $result['handoff_deadline'])
+				: $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($head) ) {
+				return $head;
+			}
+			$worktree_sha = trim( (string) ( $head['output'] ?? '' ));
 		}
 
 		$identity = array(
@@ -567,7 +605,7 @@ trait WorkspaceWorktreeLifecycle {
 			'handle'            => $handle,
 			'path'              => $path,
 			'branch'            => (string) ( $metadata['branch'] ?? $result['branch'] ?? '' ),
-			'worktree_sha'      => trim( (string) ( $head['output'] ?? '' )),
+			'worktree_sha'      => $worktree_sha,
 			'resolved_base_ref' => (string) $base_ref,
 			'metadata_digest'   => $this->worktree_handoff_allocation_metadata_digest($metadata),
 		);
@@ -642,6 +680,22 @@ trait WorkspaceWorktreeLifecycle {
 			'allocation_identity' => $allocation_identity,
 			'continuation'        => $continuation,
 			'next_commands'       => array( $continuation['command'] ),
+		)));
+	}
+
+	/** Preserve the mutation boundary without repeating an identity that could not be rebound. */
+	private function worktree_handoff_resume_unbound_failure( \WP_Error $error, array $allocation_identity ): \WP_Error {
+		$data = (array) $error->get_error_data();
+		return new \WP_Error($error->get_error_code(), $error->get_error_message(), array_merge($data, array(
+			'partial_success'              => true,
+			'mutation_committed'           => true,
+			'mutation_boundary'            => 'worktree_allocation_committed',
+			'state'                        => 'allocation_committed_handoff_pending',
+			'handle'                       => $allocation_identity['handle'] ?? null,
+			'path'                         => $allocation_identity['path'] ?? null,
+			'supplied_allocation_identity' => $allocation_identity,
+			'continuation'                 => null,
+			'next_commands'                => array(),
 		)));
 	}
 

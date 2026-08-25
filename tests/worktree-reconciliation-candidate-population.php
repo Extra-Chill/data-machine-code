@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 define('ABSPATH', dirname(__DIR__));
 
+function is_wp_error( mixed $value ): bool {
+	return $value instanceof WP_Error;
+}
+
 require_once dirname(__DIR__) . '/inc/Workspace/TaskUrl.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
@@ -15,6 +19,9 @@ require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceMetadataReconciliation.
 
 final class WorktreeReconciliationCandidatePopulationHarness {
 	use DataMachineCode\Workspace\WorkspaceMetadataReconciliation;
+	private const CLEANUP_GIT_PROBE_TIMEOUT = 5;
+	public int $dirty = 0;
+	public int $unpushed = 0;
 
 	protected function workspace_row_triage_status_from_metadata( array $metadata ): string {
 		return '';
@@ -28,6 +35,14 @@ final class WorktreeReconciliationCandidatePopulationHarness {
 			'conflicts'       => array(),
 			'hydrated_fields' => array(),
 		);
+	}
+
+	protected function probe_worktree_dirty_count( string $path, int $timeout ): int {
+		return $this->dirty;
+	}
+
+	protected function count_unpushed_commits( string $path ): int {
+		return $this->unpushed;
 	}
 
 	public function reason( array $row ): ?string {
@@ -125,6 +140,18 @@ try {
 	worktree_reconciliation_candidate_population_assert_same(false, isset($proposal['proposed_metadata']['provisioning']['bootstrap']['coordinator']), 'dead no-op bootstrap repair clears coordinator ownership');
 	worktree_reconciliation_candidate_population_assert_same('allocation-1225', $proposal['proposed_metadata']['allocation_id'] ?? null, 'dead bootstrap repair changed allocation identity');
 	worktree_reconciliation_candidate_population_assert_same($dead_bootstrap['handoff_continuation_identity'], $proposal['proposed_metadata']['handoff_continuation_identity'] ?? null, 'dead no-op repair discarded the exact handoff continuation');
+	$harness->dirty = 1;
+	$unsafe = $harness->dead_bootstrap_proposal(array(
+		'handle'          => $metadata['handle'],
+		'repo'            => $metadata['repo'],
+		'branch'          => $metadata['branch'],
+		'path'            => $noop_path,
+		'metadata'        => $dead_bootstrap,
+		'hydrated_fields' => array(),
+		'stored_identity' => array(),
+	), $noop_path);
+	worktree_reconciliation_candidate_population_assert_same('unsafe_dead_bootstrap_repair', $unsafe['skip']['reason_code'] ?? null, 'dirty no-op bootstrap was marked ready');
+	$harness->dirty = 0;
 
 	file_put_contents($noop_path . '/composer.lock', '{}');
 	$interrupted = $harness->dead_bootstrap_proposal(array(

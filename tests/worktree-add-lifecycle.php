@@ -1107,9 +1107,9 @@ try {
 		false,
 		false,
 		true,
-		array(),
+		array( 'task_url' => 'https://example.test/issues/handoff-partial-success' ),
 		false,
-		false,
+		true,
 		array(),
 		'reuse_compatible',
 		false,
@@ -1145,11 +1145,13 @@ try {
 	$stale_copied_metadata['last_seen_at'] = gmdate('c', time() + 60);
 	$stale_copied_metadata['provisioning']['bootstrap']['outcome'] = 'running';
 	$stale_copied_metadata['provisioning']['bootstrap']['coordinator'] = array( 'pid' => 999999, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '1' ) );
+	$stale_copied_metadata['origin_task']['task_url'] = 'https://example.test/issues/stale-copied-runtime';
 	$GLOBALS['datamachine_code_test_options'][ WorktreeContextInjector::METADATA_OPTION ][ $handle ] = $stale_copied_metadata;
 	$upgrade_write = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'runtime_upgrade_checked_at' => gmdate('c') ));
 	$upgraded_metadata = WorktreeContextInjector::get_metadata_fresh($handle);
 	assert_true(! is_wp_error($upgrade_write) && 'succeeded' === ( $upgraded_metadata['provisioning']['bootstrap']['outcome'] ?? null ), 'copied-runtime partial metadata write replayed stale bootstrap state over terminal inventory metadata');
 	assert_true($identity === ( $upgraded_metadata['handoff_continuation_identity'] ?? null ), 'copied-runtime metadata repair replaced the exact allocation identity');
+	assert_true('https://example.test/issues/handoff-partial-success' === ( $upgraded_metadata['origin_task']['task_url'] ?? null ) && WorktreeContextInjector::standalone_worktree_tracker_is_current($upgraded_metadata), 'copied-runtime metadata write replaced authoritative task-tracker ownership');
 
 	$worktrees_before = run_command('git worktree list --porcelain', $primary_path);
 	$branches_before  = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path);
@@ -1172,6 +1174,15 @@ try {
 	assert_true($branches_before === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path), 'handoff continuation created or collided with a branch');
 	assert_true($rows_before === $GLOBALS['wpdb']->rows, 'handoff continuation rewrote inventory state');
 	assert_true($metadata_before === WorktreeContextInjector::get_metadata_fresh($handle), 'handoff continuation rewrote lifecycle or bootstrap metadata');
+	$metadata_refresh = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'owner_run_ref' => 'refreshed-owner-run' ));
+	$refresh_required = $workspace->worktree_handoff_resume($handle, $identity);
+	$refreshed_data   = is_wp_error($refresh_required) ? (array) $refresh_required->get_error_data() : array();
+	$refreshed_identity = (array) ( $refreshed_data['continuation']['input']['allocation_identity'] ?? array() );
+	assert_true(! is_wp_error($metadata_refresh) && is_wp_error($refresh_required) && 'worktree_handoff_allocation_identity_refreshed' === $refresh_required->get_error_code(), 'safe metadata drift did not return a typed refreshed continuation');
+	assert_true(array() !== $refreshed_identity && $identity !== $refreshed_identity && $refreshed_identity === ( WorktreeContextInjector::get_metadata_fresh($handle)['handoff_continuation_identity'] ?? null ), 'refreshed continuation was not bound as the authoritative handoff identity');
+	$identity = $refreshed_identity;
+	$refreshed_resume = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(! is_wp_error($refreshed_resume) && 'current' === ( $refreshed_resume['status'] ?? null ), 'refreshed exact handoff continuation did not converge');
 
 	$path = (string) ( $partial['path'] ?? '' );
 	run_command('git switch -c handoff-collision', $path);

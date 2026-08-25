@@ -792,10 +792,34 @@ trait WorkspaceMetadataReconciliation {
 
 	/** Build a deterministic terminal repair for a verified-dead bootstrap. */
 	private function build_dead_bootstrap_coordinator_reconciliation_proposal( array $base_row, array $metadata, string $path, array $owner_state ): array {
+		if ( ! is_dir($path) || ! is_readable($path) ) {
+			return $this->build_worktree_metadata_reconciliation_skip($base_row, array(
+				'reason_code' => 'bootstrap_target_unreadable',
+				'reason'      => 'verified-dead bootstrap target cannot be read safely; leaving bootstrap incomplete',
+			));
+		}
 		$detected = WorktreeBootstrapper::detect($path);
 		$noop     = empty($detected['submodules']) && array() === (array) $detected['package_roots'] && array() === (array) $detected['composer_roots'];
 		$outcome  = $noop ? 'succeeded' : 'interrupted';
 		$reason   = $noop ? 'dead_coordinator_noop_bootstrap' : 'dead_coordinator_interrupted_bootstrap';
+		if ( $noop ) {
+			$dirty = $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($dirty) ) {
+				return $this->build_worktree_metadata_reconciliation_skip($base_row, array(
+					'reason_code' => 'bootstrap_safety_probe_failed',
+					'reason'      => 'could not verify no-op bootstrap cleanliness; leaving bootstrap incomplete',
+				));
+			}
+			$unpushed = $this->count_unpushed_commits($path);
+			if ( is_wp_error($unpushed) || $dirty > 0 || $unpushed > 0 ) {
+				return $this->build_worktree_metadata_reconciliation_skip($base_row, array(
+					'reason_code' => 'unsafe_dead_bootstrap_repair',
+					'reason'      => 'no-op bootstrap target is dirty, unpushed, or unverifiable; leaving bootstrap incomplete',
+					'dirty'       => (int) $dirty,
+					'unpushed'    => is_wp_error($unpushed) ? null : (int) $unpushed,
+				));
+			}
+		}
 
 		$proposed = $metadata;
 		$proposed['observed_at']                                 = gmdate('c');
@@ -1581,6 +1605,17 @@ trait WorkspaceMetadataReconciliation {
 					$skipped[] = $this->build_reconcile_apply_skip($row, $current, 'plan_not_current', 'bootstrap ownership changed after the dead-coordinator repair was planned');
 					continue;
 				}
+				if ( 'succeeded' === ( $row['bootstrap_outcome'] ?? null ) ) {
+					$path             = (string) ( $current['path'] ?? '' );
+					$current_detected = is_dir($path) && is_readable($path) ? WorktreeBootstrapper::detect($path) : array( 'unreadable' => true );
+					$current_noop     = empty($current_detected['unreadable']) && empty($current_detected['submodules']) && array() === (array) ( $current_detected['package_roots'] ?? array() ) && array() === (array) ( $current_detected['composer_roots'] ?? array() );
+					$dirty            = $current_noop ? $this->probe_worktree_dirty_count($path, self::CLEANUP_GIT_PROBE_TIMEOUT) : null;
+					$unpushed         = $current_noop && ! is_wp_error($dirty) ? $this->count_unpushed_commits($path) : null;
+					if ( ! $current_noop || is_wp_error($dirty) || is_wp_error($unpushed) || $dirty > 0 || $unpushed > 0 ) {
+						$skipped[] = $this->build_reconcile_apply_skip($row, $current, 'plan_not_current', 'no-op bootstrap safety changed after the dead-coordinator repair was planned');
+						continue;
+					}
+				}
 			}
 
 			$metadata   = (array) ( $row['proposed_metadata'] ?? array() );
@@ -1627,7 +1662,16 @@ trait WorkspaceMetadataReconciliation {
 
 			$metadata['reconciled_at']      = gmdate('c');
 			$metadata['reconciled_sources'] = $source_map;
-			WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+			$stored = WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+			if ( is_wp_error($stored) || ! $stored ) {
+				$skipped[] = $this->build_reconcile_apply_skip(
+					$row,
+					$current,
+					'metadata_persist_failed',
+					is_wp_error($stored) ? $stored->get_error_message() : 'metadata persistence returned an unsuccessful result'
+				);
+				continue;
+			}
 
 			$written[] = array(
 				'handle'   => $handle,
