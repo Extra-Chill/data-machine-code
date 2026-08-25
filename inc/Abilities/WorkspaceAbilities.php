@@ -4027,6 +4027,16 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitAdd( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			$paths = $input['paths'] ?? array();
+			if ( ! is_array( $paths ) ) {
+				$paths = array();
+			}
+
+			return $workspace->git_add( $input['name'] ?? '', $paths, ! empty( $input['allow_primary_mutation'] ) );
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$paths = $input['paths'] ?? array();
 			return ( new RemoteWorkspaceBackend() )->git_add(
@@ -4035,7 +4045,6 @@ class WorkspaceAbilities {
 			);
 		}
 
-		$workspace = new Workspace();
 		$paths     = $input['paths'] ?? array();
 
 		if ( ! is_array( $paths ) ) {
@@ -4069,6 +4078,15 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitCommit( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			return $workspace->git_commit(
+				$input['name'] ?? '',
+				$input['message'] ?? '',
+				! empty( $input['allow_dangerous_primary_mutation'] )
+			);
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->git_commit(
 				$input['name'] ?? '',
@@ -4077,7 +4095,6 @@ class WorkspaceAbilities {
 			return self::decorate_remote_workspace_result( 'git_commit', $result );
 		}
 
-		$workspace = new Workspace();
 		return $workspace->git_commit(
 			$input['name'] ?? '',
 			$input['message'] ?? '',
@@ -4092,6 +4109,18 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitPush( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			return $workspace->git_push(
+				$input['name'] ?? '',
+				$input['remote'] ?? 'origin',
+				$input['branch'] ?? null,
+				! empty( $input['allow_dangerous_primary_mutation'] ),
+				! empty( $input['force_with_lease'] ),
+				$input['expected_sha'] ?? null
+			);
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->git_push(
 				$input['name'] ?? '',
@@ -4101,7 +4130,6 @@ class WorkspaceAbilities {
 			return self::decorate_remote_workspace_result( 'git_push', $result );
 		}
 
-		$workspace = new Workspace();
 		return $workspace->git_push(
 			$input['name'] ?? '',
 			$input['remote'] ?? 'origin',

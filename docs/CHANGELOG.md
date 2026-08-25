@@ -2,6 +2,16 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.12] - 2026-08-25
+
+### Fixed
+- prefer local workspace git routing
+
+## [0.69.11] - 2026-08-25
+
+### Fixed
+- allow repository-free worktree list
+
 ## [0.69.10] - 2026-08-25
 
 ### Fixed
