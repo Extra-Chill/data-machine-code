@@ -199,7 +199,7 @@ namespace {
 	startup_bounds_assert(! is_wp_error($produced_show), 'WorkspaceAbilities::showRepo did not produce the bounded local result.');
 	$produced_capacity = $produced_show['workspace_capacity'] ?? null;
 	startup_bounds_assert(is_array($produced_capacity), 'WorkspaceAbilities::showRepo did not emit workspace_capacity.');
-	foreach ( array( 'workspace_path', 'filesystem_free_bytes', 'filesystem_total_bytes', 'worktree_count', 'status', 'warnings', 'trigger_reasons', 'typed_trigger_reasons', 'creation_allowed' ) as $field ) {
+	foreach ( array( 'workspace_path', 'filesystem_free_bytes', 'filesystem_total_bytes', 'worktree_count', 'status', 'warnings', 'trigger_reasons', 'typed_trigger_reasons', 'creation_allowed', 'diagnostic_id', 'advisory_fingerprint', 'evidence_reference', 'recovery_actions' ) as $field ) {
 		startup_bounds_assert(array_key_exists($field, $produced_capacity), sprintf('WorkspaceAbilities::showRepo emitted an incomplete workspace_capacity: missing %s.', $field));
 	}
 	startup_bounds_assert($workspace === $produced_capacity['workspace_path'], 'WorkspaceAbilities::showRepo emitted capacity for the wrong workspace.');
@@ -207,27 +207,33 @@ namespace {
 	startup_bounds_assert('warning' === $produced_capacity['status'], 'WorkspaceAbilities::showRepo did not preserve the fixture capacity status.');
 	startup_bounds_assert(in_array('worktree_count_warning_threshold', $produced_capacity['trigger_reasons'], true), 'WorkspaceAbilities::showRepo did not emit the worktree capacity trigger.');
 	$produced_reasons = \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons($produced_capacity);
+	$capacity_renderer = new \ReflectionMethod($command, 'render_workspace_capacity_advisory');
 	WP_CLI::$output = array();
 	$warning_options_before = $GLOBALS['dmc_test_get_option_calls'];
 	$warning_started = microtime(true);
-	$command->show(array( 'target' ), array());
+	$capacity_renderer->invoke($command, $produced_capacity);
 	$warning_elapsed = microtime(true) - $warning_started;
 	$warning_output = implode("\n", WP_CLI::$output);
-	$rendered_capacity = array_values(array_filter(WP_CLI::$output, static fn ( string $line ): bool => str_starts_with($line, 'Disk budget: ')));
-	startup_bounds_assert(1 === count($rendered_capacity), 'Workspace show did not render its workspace capacity summary.');
-	startup_bounds_assert(str_contains($rendered_capacity[0], 'workspace=' . $produced_capacity['workspace_path']), 'Workspace show capacity summary lost the producer workspace path.');
-	startup_bounds_assert(str_contains($rendered_capacity[0], sprintf('%d worktree-like dirs, status=%s.', $produced_capacity['worktree_count'], $produced_capacity['status'])), 'Workspace show capacity summary lost the producer count or status.');
+	$rendered_capacity = array_values(array_filter(WP_CLI::$output, static fn ( string $line ): bool => str_starts_with($line, 'Capacity advisory [')));
+	startup_bounds_assert(1 === count($rendered_capacity), 'Workspace show did not render one compact workspace capacity advisory.');
+	startup_bounds_assert(str_contains($rendered_capacity[0], (string) $produced_capacity['evidence_reference']), 'Workspace show compact advisory lost the producer evidence reference.');
+	startup_bounds_assert(str_contains($rendered_capacity[0], 'worktree_count_warning_threshold') && str_contains($rendered_capacity[0], 'admission allowed'), 'Workspace show compact advisory lost the trigger or admission state.');
+	startup_bounds_assert(! str_contains($warning_output, 'Disk budget: ') && ! str_contains($warning_output, 'Recovery for the listed capacity warning(s)'), 'Default warning output expanded full capacity evidence or recovery prose.');
 	foreach ( $produced_reasons as $reason ) {
-		startup_bounds_assert(in_array($reason, WP_CLI::$output, true), 'Workspace show did not render a capacity trigger reason produced by WorkspaceAbilities::showRepo.');
+		startup_bounds_assert(! in_array($reason, WP_CLI::$output, true), 'Default workspace show expanded a capacity trigger reason instead of the compact advisory.');
 	}
-	startup_bounds_assert(str_contains($warning_output, 'Recovery for the listed capacity warning(s) (all commands are non-destructive):'), 'Warning targeted show did not render the shared recovery suggestion.');
 	startup_bounds_assert($warning_options_before === $GLOBALS['dmc_test_get_option_calls'], 'Warning targeted show bootstrapped hygiene inventory or remote state.');
 	startup_bounds_assert($warning_elapsed < 3.0, sprintf('Warning targeted show exceeded its startup bound: %.3fs.', $warning_elapsed));
 	startup_bounds_assert(! str_contains($warning_output, '--force'), 'Warning targeted show suggested bypassing capacity protection.');
-	startup_bounds_assert(str_contains($warning_output, 'workspace hygiene --include-sizes --size-limit=100'), 'Warning targeted show did not emit bounded size inspection.');
 	startup_bounds_assert(str_contains($warning_output, 'workspace hygiene --format=json'), 'Warning targeted show did not emit the generic hygiene next step.');
 	startup_bounds_assert(! str_contains($warning_output, 'workspace worktree cleanup'), 'Warning targeted show inferred cleanup work without observed lane state.');
 	startup_bounds_assert(! str_contains($warning_output, 'workspace worktree locks'), 'Warning targeted show inferred stale locks without observed lane state.');
+
+	WP_CLI::$output = array();
+	$capacity_renderer->invoke($command, $produced_capacity, true);
+	$full_warning_output = implode("\n", WP_CLI::$output);
+	startup_bounds_assert(str_contains($full_warning_output, 'Disk budget: ') && str_contains($full_warning_output, 'Recovery for the listed capacity warning(s)'), 'Workspace show --full did not retain complete warning evidence and recovery.');
+	startup_bounds_assert(str_contains($full_warning_output, 'workspace hygiene --include-sizes --size-limit=100'), 'Workspace show --full did not retain bounded size inspection.');
 
 	$GLOBALS['dmc_test_disk_free_bytes'] = (float) ( 5 * 1024 * 1024 * 1024 );
 	WP_CLI::$output = array();

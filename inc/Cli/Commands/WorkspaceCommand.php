@@ -745,6 +745,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--include-status]
 	 * : Include per-row Git remote, branch, and primary freshness probes.
 	 *
+	 * [--full]
+	 * : Render full disk/inode capacity evidence and recovery details instead of one compact advisory.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -835,11 +838,13 @@ class WorkspaceCommand extends BaseCommand {
 			}
 			if ( isset( $assoc_args['repo'] ) ) {
 				WP_CLI::log( sprintf( 'No repos matching "%s" in workspace (%s).', (string) $assoc_args['repo'], $result['path'] ?? '' ) );
+				$this->render_workspace_capacity_advisory( (array) ( $result['workspace_capacity'] ?? array() ), ! empty( $assoc_args['full'] ) );
 				return;
 			}
 
 			WP_CLI::log( sprintf( 'No repos in workspace (%s).', $result['path'] ?? '' ) );
 			WP_CLI::log( 'Clone one with: wp datamachine-code workspace clone <url>' );
+			$this->render_workspace_capacity_advisory( (array) ( $result['workspace_capacity'] ?? array() ), ! empty( $assoc_args['full'] ) );
 			return;
 		}
 
@@ -887,6 +892,9 @@ class WorkspaceCommand extends BaseCommand {
 			$assoc_args,
 			'name'
 		);
+		if ( 'table' === ( $assoc_args['format'] ?? 'table' ) ) {
+			$this->render_workspace_capacity_advisory( (array) ( $result['workspace_capacity'] ?? array() ), ! empty( $assoc_args['full'] ) );
+		}
 	}
 
 	/**
@@ -1044,10 +1052,11 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return void
 	 */
 	private function render_workspace_list_summary( array $result, array $assoc_args ): void {
-		$summary                     = is_array( $result['summary'] ?? null ) ? $result['summary'] : array();
-		$summary['returned']         = (int) ( $result['returned'] ?? 0 );
-		$summary['next_cursor']      = $result['next_cursor'] ?? null;
-		$summary['status_requested'] = ! empty( $result['status_requested'] );
+		$summary                       = is_array( $result['summary'] ?? null ) ? $result['summary'] : array();
+		$summary['returned']           = (int) ( $result['returned'] ?? 0 );
+		$summary['next_cursor']        = $result['next_cursor'] ?? null;
+		$summary['status_requested']   = ! empty( $result['status_requested'] );
+		$summary['workspace_capacity'] = $result['workspace_capacity'] ?? null;
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
@@ -1125,6 +1134,7 @@ class WorkspaceCommand extends BaseCommand {
 		if ( ! empty( $summary['triage_command'] ) ) {
 			WP_CLI::log( sprintf( 'Triage: %s', $summary['triage_command'] ) );
 		}
+		$this->render_workspace_capacity_advisory( (array) ( $result['workspace_capacity'] ?? array() ), ! empty( $assoc_args['full'] ) );
 	}
 
 	/**
@@ -3338,6 +3348,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * <name>
 	 * : Repository directory name.
 	 *
+	 * [--full]
+	 * : Render full disk/inode capacity evidence and recovery details instead of one compact advisory.
+	 *
 	 * [--refresh]
 	 * : Fetch the tracked remote under a bounded timeout before classifying primary freshness.
 	 *
@@ -3403,14 +3416,6 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log( sprintf( 'Branch:   %s', $result['branch'] ?? '-' ) );
 		WP_CLI::log( sprintf( 'Remote:   %s', $result['remote'] ?? '-' ) );
 		WP_CLI::log( sprintf( 'Latest:   %s', $result['commit'] ?? '-' ) );
-		if ( is_array( $result['workspace_capacity'] ?? null ) ) {
-			$capacity = $result['workspace_capacity'];
-			WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $capacity ) );
-			foreach ( \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons( $capacity ) as $reason ) {
-				WP_CLI::warning( $reason );
-			}
-			$this->render_workspace_capacity_recovery( Workspace::workspace_hygiene_recovery_suggestion( $capacity ) );
-		}
 		if ( empty( $result['is_worktree'] ) && is_array( $result['primary_freshness'] ?? null ) ) {
 			$freshness = $result['primary_freshness'];
 			WP_CLI::log( sprintf( 'Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' ) ) );
@@ -3434,6 +3439,28 @@ class WorkspaceCommand extends BaseCommand {
 
 		$dirty = $result['dirty'] ?? 0;
 		WP_CLI::log( sprintf( 'Dirty:    %s', ( 0 === $dirty ) ? 'no' : "yes ({$dirty} files)" ) );
+		$this->render_workspace_capacity_advisory( (array) ( $result['workspace_capacity'] ?? array() ), ! empty( $assoc_args['full'] ) );
+	}
+
+	/** Render one compact advisory by default while keeping blocking evidence immediate. */
+	private function render_workspace_capacity_advisory( array $capacity, bool $full = false ): void {
+		if ( array() === $capacity || array() === (array) ( $capacity['trigger_reasons'] ?? array() ) ) {
+			return;
+		}
+		$blocking = empty( $capacity['creation_allowed'] ) || ! empty( $capacity['force_override_required'] );
+		if ( ! $full && ! $blocking ) {
+			$advisory = \DataMachineCode\Workspace\WorktreeDiskBudget::format_advisory( $capacity );
+			if ( '' !== $advisory ) {
+				WP_CLI::warning( $advisory );
+			}
+			return;
+		}
+
+		WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $capacity ) );
+		foreach ( \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons( $capacity ) as $reason ) {
+			WP_CLI::warning( $reason );
+		}
+		$this->render_workspace_capacity_recovery( Workspace::workspace_hygiene_recovery_suggestion( $capacity ) );
 	}
 
 	/**
@@ -5981,10 +6008,7 @@ class WorkspaceCommand extends BaseCommand {
 				WP_CLI::success( $result['message'] ?? 'Worktree created.' );
 				if ( isset( $result['disk_budget'] ) && is_array( $result['disk_budget'] ) ) {
 					$budget = $result['disk_budget'];
-					WP_CLI::log( \DataMachineCode\Workspace\WorktreeDiskBudget::format_summary( $budget ) );
-					foreach ( (array) ( $budget['warnings'] ?? array() ) as $warning ) {
-						WP_CLI::warning( $warning );
-					}
+					$this->render_workspace_capacity_advisory( $budget );
 					if ( ! empty( $budget['force_override_applied'] ) ) {
 						WP_CLI::warning( 'Disk budget override applied because --force was explicit.' );
 					}

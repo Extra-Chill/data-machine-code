@@ -162,8 +162,12 @@ class WorkspaceAbilities {
 							'returned'         => array( 'type' => 'integer' ),
 							'next_cursor'      => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
-							'summary'          => array( 'type' => 'object' ),
-							'repos'            => array(
+							'summary'            => array( 'type' => 'object' ),
+							'workspace_capacity' => array(
+								'type'        => 'object',
+								'description' => 'One command-level, lossless workspace capacity envelope with a stable diagnostic ID, advisory fingerprint, evidence reference, and recovery actions.',
+							),
+							'repos'              => array(
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
@@ -3439,7 +3443,13 @@ class WorkspaceAbilities {
 				$options[ $key ] = $input[ $key ];
 			}
 		}
-		return $workspace->list_repos( $repo, $type, $options );
+		$result = $workspace->list_repos( $repo, $type, $options );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$result['workspace_capacity'] = WorktreeDiskBudget::inspect($workspace->get_path());
+
+		return $result;
 	}
 
 	/**
