@@ -574,14 +574,19 @@ trait WorkspaceHygieneReport {
 		$examined           = 0;
 		$partial            = false;
 		$next_entry         = null;
+		$stop_for_expired_budget = static function ( string $entry ) use ( $budget, &$partial, &$next_entry ): bool {
+			if ( null === $budget || ! $budget->expired() ) {
+				return false;
+			}
+			$partial    = true;
+			$next_entry = $entry;
+			return true;
+		};
 		foreach ( $entries as $entry ) {
 			if ( '.' === $entry || '..' === $entry || str_starts_with( (string) $entry, '.' ) ) {
 				continue;
 			}
-			$budget_expired = null !== $budget && $budget->expired();
-			if ( $budget_expired ) {
-				$partial    = true;
-				$next_entry = (string) $entry;
+			if ( $stop_for_expired_budget( (string) $entry ) ) {
 				break;
 			}
 			++$examined;
@@ -594,10 +599,7 @@ trait WorkspaceHygieneReport {
 			$parsed      = $this->parse_handle($entry);
 			if ( 1 === $examined || 0 === $examined % 25 ) {
 				$this->emit_workspace_hygiene_progress($progress, 'filesystem_inventory', (string) $parsed['repo'], 'Inspecting workspace entry ' . $entry . '.');
-				$budget_expired = null !== $budget && $budget->expired();
-				if ( $budget_expired ) {
-					$partial    = true;
-					$next_entry = (string) $entry;
+				if ( $stop_for_expired_budget( (string) $entry ) ) {
 					break;
 				}
 			}
