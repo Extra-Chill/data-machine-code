@@ -3312,6 +3312,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * <name>
 	 * : Repository directory name.
 	 *
+	 * [--refresh]
+	 * : Fetch the tracked remote under a bounded timeout before classifying primary freshness.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -3343,7 +3346,12 @@ class WorkspaceCommand extends BaseCommand {
 
 		// This targeted read is also the lightweight startup path used before the
 		// Abilities API runtime has been bootstrapped.
-		$result = WorkspaceAbilities::showRepo( array( 'name' => $args[0] ) );
+		$result = WorkspaceAbilities::showRepo(
+			array(
+				'name'    => $args[0],
+				'refresh' => ! empty( $assoc_args['refresh'] ),
+			)
+		);
 
 		if ( is_wp_error( $result ) ) {
 			if ( 'json' === $format ) {
@@ -3380,9 +3388,19 @@ class WorkspaceCommand extends BaseCommand {
 		if ( empty( $result['is_worktree'] ) && is_array( $result['primary_freshness'] ?? null ) ) {
 			$freshness = $result['primary_freshness'];
 			WP_CLI::log( sprintf( 'Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' ) ) );
+			WP_CLI::log( sprintf( 'Verification: %s', (string) ( $freshness['verification_scope'] ?? 'local_tracking' ) ) );
 			WP_CLI::log( sprintf( 'Upstream: %s', (string) ( $freshness['upstream'] ?? '-' ) ) );
 			WP_CLI::log( sprintf( 'Behind:   %s', null === ( $freshness['behind'] ?? null ) ? '-' : (string) $freshness['behind'] ) );
 			WP_CLI::log( sprintf( 'Ahead:    %s', null === ( $freshness['ahead'] ?? null ) ? '-' : (string) $freshness['ahead'] ) );
+			WP_CLI::log( sprintf( 'Tracking observed: %s', (string) ( $freshness['tracking_ref_observed_at'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Network attempted: %s', ! empty( $freshness['network_verification_attempted'] ) ? 'yes' : 'no' ) );
+			WP_CLI::log( sprintf( 'Remote verified: %s', (string) ( $freshness['remote_verified_at'] ?? '-' ) ) );
+			if ( is_array( $freshness['verification_error'] ?? null ) ) {
+				WP_CLI::warning( sprintf( 'Remote verification failed (%s): %s', (string) ( $freshness['verification_error']['code'] ?? 'unknown' ), (string) ( $freshness['verification_error']['message'] ?? '' ) ) );
+			}
+			if ( 'local_tracking' === ( $freshness['verification_scope'] ?? null ) && ! empty( $freshness['verification_command'] ) ) {
+				WP_CLI::log( sprintf( 'Verify:   %s', (string) $freshness['verification_command'] ) );
+			}
 			if ( ! empty( $freshness['suggested_command'] ) ) {
 				WP_CLI::log( sprintf( 'Refresh:  %s', (string) $freshness['suggested_command'] ) );
 			}

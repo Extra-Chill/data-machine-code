@@ -242,6 +242,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` for primary checkout or `<repo>@<branch-slug>` for a worktree.',
 							),
+							'refresh' => array(
+								'type'        => 'boolean',
+								'description' => 'Fetch the tracked remote under a bounded timeout before classifying primary freshness. Worktrees are unchanged.',
+							),
 						),
 						'required'   => array( 'name' ),
 					),
@@ -3442,7 +3446,7 @@ class WorkspaceAbilities {
 	public static function showRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$handle    = (string) ( $input['name'] ?? '' );
-		$local     = $workspace->show_repo( $handle );
+		$local     = $workspace->show_repo( $handle, ! empty( $input['refresh'] ) );
 		if ( ! is_wp_error( $local ) && empty( $local['is_context'] ) ) {
 			return $local;
 		}
@@ -3696,7 +3700,12 @@ class WorkspaceAbilities {
 			'properties' => array(
 				'status'            => array(
 					'type'        => 'string',
-					'description' => 'One of current, stale, diverged, ahead, detached, no_upstream, or unknown.',
+					'enum'        => array( 'local_tracking_current', 'remote_verified_current', 'stale', 'diverged', 'ahead', 'detached', 'no_upstream', 'unknown' ),
+					'description' => 'Freshness classification. Zero cached divergence is local_tracking_current unless a successful bounded fetch establishes remote_verified_current.',
+				),
+				'verification_scope' => array(
+					'type' => 'string',
+					'enum' => array( 'local_tracking', 'remote_verified' ),
 				),
 				'branch'            => array( 'type' => array( 'string', 'null' ) ),
 				'upstream'          => array( 'type' => array( 'string', 'null' ) ),
@@ -3705,6 +3714,19 @@ class WorkspaceAbilities {
 				'detached'          => array( 'type' => 'boolean' ),
 				'local_refs'        => array( 'type' => 'boolean' ),
 				'fetch_checked'     => array( 'type' => 'boolean' ),
+				'network_verification_attempted' => array( 'type' => 'boolean' ),
+				'tracking_ref_observed_at'       => array( 'type' => array( 'string', 'null' ) ),
+				'remote_verified_at'             => array( 'type' => array( 'string', 'null' ) ),
+				'verification_timeout_seconds'   => array( 'type' => array( 'integer', 'null' ) ),
+				'verification_error'             => array(
+					'type'       => array( 'object', 'null' ),
+					'properties' => array(
+						'code'      => array( 'type' => 'string' ),
+						'message'   => array( 'type' => 'string' ),
+						'timed_out' => array( 'type' => 'boolean' ),
+					),
+				),
+				'verification_command' => array( 'type' => 'string' ),
 				'suggested_command' => array( 'type' => array( 'string', 'null' ) ),
 			),
 		);

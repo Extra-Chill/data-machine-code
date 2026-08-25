@@ -86,6 +86,18 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 	if ( ! isset($worktree_list_schema['task_ref'], $worktree_list_schema['owner_run_ref']) ) {
 		throw new RuntimeException('Worktree-list ability omitted task and owner filters.');
 	}
+	$show_ability    = (array) wp_get_ability('datamachine-code/workspace-show');
+	$show_input      = (array) ( $show_ability['input_schema']['properties'] ?? array() );
+	$show_freshness  = (array) ( $show_ability['output_schema']['properties']['primary_freshness'] ?? array() );
+	$freshness_props = (array) ( $show_freshness['properties'] ?? array() );
+	if ( ! isset($show_input['refresh']) || array( 'local_tracking_current', 'remote_verified_current', 'stale', 'diverged', 'ahead', 'detached', 'no_upstream', 'unknown' ) !== (array) ( $freshness_props['status']['enum'] ?? array() ) ) {
+		throw new RuntimeException('Workspace-show ability omitted its qualified refresh input or freshness statuses.');
+	}
+	foreach ( array( 'verification_scope', 'network_verification_attempted', 'tracking_ref_observed_at', 'remote_verified_at', 'verification_timeout_seconds', 'verification_error', 'verification_command' ) as $field ) {
+		if ( ! isset($freshness_props[ $field ]) ) {
+			throw new RuntimeException(sprintf('Workspace-show freshness schema omitted %s.', $field));
+		}
+	}
 	$proof_fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'remote_default_advertised_sha', 'verified_at', 'digest' );
 	$add_freshness = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['properties']['handoff_freshness'] ?? array() );
 	$add_proof = (array) ( $add_freshness['properties']['proof'] ?? array() );
