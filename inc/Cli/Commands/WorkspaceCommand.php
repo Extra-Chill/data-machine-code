@@ -4998,16 +4998,7 @@ class WorkspaceCommand extends BaseCommand {
 			);
 			if ( is_wp_error( $result ) ) {
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-					$this->renderer()->json(
-						array(
-							'success' => false,
-							'error'   => array(
-								'code'    => $result->get_error_code(),
-								'message' => $result->get_error_message(),
-								'data'    => $result->get_error_data(),
-							),
-						)
-					);
+					$this->renderer()->json($this->renderer()->error_envelope($result));
 					WP_CLI::halt( 1 );
 				}
 				$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );
@@ -5461,16 +5452,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		if ( is_wp_error( $result ) ) {
 			if ( in_array( $operation, array( 'add', 'get', 'list', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
-				$this->renderer()->json(
-					array(
-						'success' => false,
-						'error'   => array(
-							'code'    => $result->get_error_code(),
-							'message' => $result->get_error_message(),
-							'data'    => $result->get_error_data(),
-						),
-					)
-				);
+				$this->renderer()->json($this->renderer()->error_envelope($result));
 				WP_CLI::halt( 1 );
 			}
 			$this->render_workspace_error( $result, (string) ( $assoc_args['format'] ?? 'table' ) );

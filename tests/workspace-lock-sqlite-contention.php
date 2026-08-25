@@ -69,7 +69,7 @@ function lock_sqlite_wait(string $path): void { $deadline = microtime(true) + 5;
 
 function lock_sqlite_worker(array $args): void {
 	[$mode, $database, $workspace, $repo, $max_wait_ms] = $args;
-	$GLOBALS['filters'] = array('datamachine_code_sqlite_busy_retry_max_wait_ms' => (int) $max_wait_ms);
+	$GLOBALS['filters'] = 'default' === $max_wait_ms ? array() : array('datamachine_code_sqlite_busy_retry_max_wait_ms' => (int) $max_wait_ms);
 	$pdo = new PDO('sqlite:' . $database);
 	$pdo->exec('PRAGMA busy_timeout = 0');
 	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo, 'decorated-acquire' !== $mode);
@@ -82,6 +82,11 @@ function lock_sqlite_worker(array $args): void {
 			return 'allocated';
 		}, 2);
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+
+	if ('hygiene' === $mode) {
+		fwrite(STDOUT, json_encode(array('success' => WorkspaceMutationLock::status($workspace))));
 		return;
 	}
 
@@ -177,12 +182,16 @@ try {
 	$setup = new PDO('sqlite:' . $database);
 	$setup->exec('CREATE TABLE wp_datamachine_code_locks (id INTEGER PRIMARY KEY, lock_key TEXT, purpose TEXT, scope TEXT, owner TEXT, run_id TEXT, job_id INTEGER, status TEXT, acquired_at TEXT, heartbeat_at TEXT, expires_at TEXT, released_at TEXT, metadata_json TEXT)');
 
-	// Eight independent allocations must all survive a short shared writer lock.
+	// A hygiene reader and independent allocations must all survive a short
+	// shared writer transaction without leaking adapter output.
 	$setup->exec('BEGIN EXCLUSIVE');
+	$hygiene = lock_sqlite_start(array('hygiene', $database, $workspace, 'hygiene', 'default'));
 	$workers = array();
-	foreach (range(1, 8) as $number) { $workers[] = lock_sqlite_start(array('allocation', $database, $workspace, 'repo-' . $number, '2000')); }
-	usleep(150000);
+	foreach (range(1, 8) as $number) { $workers[] = lock_sqlite_start(array('allocation', $database, $workspace, 'repo-' . $number, 'default')); }
+	usleep(1200000);
 	$setup->exec('COMMIT');
+	$hygiene_result = lock_sqlite_finish($hygiene);
+	lock_sqlite_assert(true === ($hygiene_result['success']['database']['available'] ?? null), 'Concurrent hygiene did not recover after the bounded writer transaction.');
 	foreach ($workers as $number => $worker) {
 		$result = lock_sqlite_finish($worker);
 		lock_sqlite_assert('allocated' === ($result['success'] ?? null), 'Brief multi-process allocation contention did not serialize successfully.');
@@ -196,6 +205,7 @@ try {
 	$acquire = lock_sqlite_finish(lock_sqlite_start(array('acquire', $database, $workspace, 'acquire-exhausted', '100')));
 	lock_sqlite_assert((microtime(true) - $started) < 2, 'Exhausted acquisition exceeded its bounded retry envelope.');
 	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($acquire['error'] ?? null) && true === ($acquire['data']['retryable'] ?? null) && 'workspace_lock_register' === ($acquire['data']['operation'] ?? null), 'Exhausted acquisition did not retain canonical contention diagnostics.');
+	lock_sqlite_assert('workspace_lock_register' === ($acquire['data']['blocker_phase'] ?? null), 'Exhausted acquisition omitted its blocker phase.');
 	lock_sqlite_assert(100 === ($acquire['data']['max_wait_ms'] ?? null) && ($acquire['data']['waited_ms'] ?? 0) >= 100, 'Exhausted acquisition did not report its configured retry bound.');
 	$raw = fopen($workspace . '/.locks/worktree-acquire-exhausted.lock', 'c');
 	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Failed DB acquisition retained the authoritative OS flock.');

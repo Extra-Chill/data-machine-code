@@ -19,12 +19,18 @@ final class SqliteBusyRetry {
 	 * Retry only a database write which reports a transient SQLite busy/locked failure.
 	 *
 	 * @param callable():mixed $operation DB-only mutation callback.
+	 * @param array<string,int> $options   Optional retry bounds.
 	 * @return mixed|\WP_Error
 	 */
-	public static function run( string $operation_name, callable $operation ): mixed {
+	public static function run( string $operation_name, callable $operation, array $options = array() ): mixed {
 		global $wpdb;
 
-		$max_wait_ms     = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', self::DEFAULT_MAX_WAIT_MS);
+		if ( ! self::is_sqlite($wpdb) && ( ! is_object($wpdb) || ! method_exists($wpdb, 'suppress_errors') ) ) {
+			return $operation();
+		}
+
+		$default_max_wait_ms = isset($options['max_wait_ms']) ? max(1, (int) $options['max_wait_ms']) : self::DEFAULT_MAX_WAIT_MS;
+		$max_wait_ms     = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', $default_max_wait_ms);
 		$initial_wait_ms = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_initial_wait_ms', self::DEFAULT_INITIAL_WAIT_MS);
 		$max_delay_ms    = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_delay_ms', self::DEFAULT_MAX_DELAY_MS);
 		$started_at      = hrtime(true);
@@ -33,6 +39,8 @@ final class SqliteBusyRetry {
 		if ( is_object($wpdb) && method_exists($wpdb, 'suppress_errors') ) {
 			$restore_errors = (bool) $wpdb->suppress_errors(true);
 		}
+		$output_level = ob_get_level();
+		ob_start();
 
 		try {
 			do {
@@ -63,6 +71,7 @@ final class SqliteBusyRetry {
 							'retryable'           => true,
 							'backend'             => 'sqlite',
 							'operation'           => $operation_name,
+							'blocker_phase'       => $operation_name,
 							'attempts'            => $attempts,
 							'waited_ms'           => $elapsed_ms,
 							'max_wait_ms'         => $max_wait_ms,
@@ -78,6 +87,9 @@ final class SqliteBusyRetry {
 				usleep( (int) min($delay_ms + $jitter_ms, max(1, $max_wait_ms - $elapsed_ms)) * 1000);
 			} while ( true );
 		} finally {
+			while ( ob_get_level() > $output_level ) {
+				ob_end_clean();
+			}
 			if ( null !== $restore_errors ) {
 				$wpdb->suppress_errors($restore_errors);
 			}
