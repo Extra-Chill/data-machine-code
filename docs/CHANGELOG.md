@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.7] - 2026-08-25
+
+### Fixed
+- centralize allocation retry receipts
+- preserve worktree add retry intent
+
 ## [0.70.6] - 2026-08-25
 
 ### Fixed
