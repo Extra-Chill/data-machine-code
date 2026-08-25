@@ -2,6 +2,17 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.9] - 2026-08-25
+
+### Fixed
+- backfill standalone tracker identity
+- normalize default task URL ports
+- emit task lookup errors as JSON
+- reject task overflow before probes
+- normalize task URL authority
+- canonicalize task worktree lookup
+- filter worktrees by task ownership
+
 ## [0.69.8] - 2026-08-24
 
 ### Changed
