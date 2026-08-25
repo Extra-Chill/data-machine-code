@@ -15,6 +15,7 @@ $filesystem_probe = (string) ( $argv[2] ?? '' );
 $git_command      = (string) ( $argv[3] ?? 'git' );
 $probe_group_pid  = 0;
 $probe_process    = null;
+$probe_timings_ms = array();
 
 // ProcessRunner normally creates this group. Establish it here as well so its
 // direct-process fallback can interrupt this worker without orphaning a probe.
@@ -86,22 +87,26 @@ $run_probe = static function ( string $command, bool $merge_stderr = false ) use
 };
 
 fwrite(STDERR, "DMC_BOUNDARY:filesystem:is_dir\n");
+$filesystem_started = microtime(true);
 if ( '' !== $filesystem_probe ) {
 	$result = $run_probe($filesystem_probe . ' ' . escapeshellarg($workspace_path));
 	$exists = 0 === $result['exit'] && '1' === trim(implode("\n", $result['output']));
 } else {
 	$exists = is_dir($workspace_path);
 }
+$probe_timings_ms['filesystem'] = (int) round(( microtime(true) - $filesystem_started ) * 1000);
 if ( ! $exists ) {
-	fwrite(STDOUT, (string) json_encode(array( 'exists' => false ), JSON_UNESCAPED_SLASHES));
+	fwrite(STDOUT, (string) json_encode(array( 'exists' => false, 'probe_timings_ms' => $probe_timings_ms ), JSON_UNESCAPED_SLASHES));
 	exit(0);
 }
 
 /** @return string|null */
-$git_probe = static function ( string $operation, string $args ) use ( $workspace_path, $git_command, $run_probe ): ?string {
+$git_probe = static function ( string $operation, string $args ) use ( $workspace_path, $git_command, $run_probe, &$probe_timings_ms ): ?string {
 	fwrite(STDERR, 'DMC_BOUNDARY:git:' . $operation . "\n");
+	$started = microtime(true);
 	$command = $git_command . ' --no-optional-locks -C ' . escapeshellarg($workspace_path) . ' ' . $args;
 	$result  = $run_probe($command, true);
+	$probe_timings_ms[ $operation ] = (int) round(( microtime(true) - $started ) * 1000);
 	if ( 0 !== $result['exit'] ) {
 		return null;
 	}
@@ -123,13 +128,14 @@ fwrite(
 	STDOUT,
 	(string) json_encode(
 		array(
-			'exists'        => true,
-			'branch'        => '' !== (string) $branch ? $branch : null,
-			'remote'        => '' !== (string) $remote ? $remote : null,
-			'commit'        => '' !== (string) $commit ? $commit : null,
-			'dirty'         => $dirty,
-			'branch_status' => $branch_status,
+			'exists'                   => true,
+			'branch'                   => '' !== (string) $branch ? $branch : null,
+			'remote'                   => '' !== (string) $remote ? $remote : null,
+			'commit'                   => '' !== (string) $commit ? $commit : null,
+			'dirty'                    => $dirty,
+			'branch_status'            => $branch_status,
 			'tracking_ref_observed_at' => $tracking_ref_observed_at,
+			'probe_timings_ms'         => $probe_timings_ms,
 		),
 		JSON_UNESCAPED_SLASHES
 	)

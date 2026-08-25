@@ -1001,7 +1001,11 @@ final class WorktreeDiskBudget {
 	}
 
 	/**
-	 * Count worktree-like directories cheaply without consulting every primary.
+	 * Count managed worktree names without probing every workspace entry.
+	 *
+	 * Workspace lifecycle owns the `<repo>@<slug>` directory convention. Counting
+	 * its names from the root snapshot avoids one remote-filesystem stat per
+	 * unrelated worktree while preserving the existing aggregate evidence.
 	 *
 	 * @param  string $workspace_path Workspace root path.
 	 * @return int
@@ -1018,11 +1022,7 @@ final class WorktreeDiskBudget {
 
 		$count = 0;
 		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry || ! str_contains($entry, '@') ) {
-				continue;
-			}
-
-			if ( is_dir($workspace_path . '/' . $entry) ) {
+			if ( '.' !== $entry && '..' !== $entry && str_contains($entry, '@') ) {
 				++$count;
 			}
 		}

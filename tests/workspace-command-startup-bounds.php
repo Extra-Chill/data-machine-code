@@ -7,6 +7,13 @@ namespace DataMachine\Cli {
 }
 
 namespace DataMachineCode\Workspace {
+	function is_dir( string $path ): bool {
+		if ( ! empty($GLOBALS['dmc_test_record_workspace_is_dir']) ) {
+			$GLOBALS['dmc_test_workspace_is_dir_paths'][] = $path;
+		}
+		return \is_dir($path);
+	}
+
 	function disk_free_space( string $path ): float|false {
 		return $GLOBALS['dmc_test_disk_free_bytes'] ?? \disk_free_space($path);
 	}
@@ -50,12 +57,15 @@ namespace {
 
 	/** @var array<string,array<int,array{priority:int,callback:callable}>> */
 	$GLOBALS['dmc_test_actions'] = array();
+	$GLOBALS['dmc_test_emitted_actions'] = array();
 	$GLOBALS['dmc_test_get_option_calls'] = 0;
 	$GLOBALS['dmc_test_mutation_calls'] = 0;
 	$GLOBALS['dmc_test_options'] = array();
 	$GLOBALS['dmc_test_filters'] = array();
 	$GLOBALS['dmc_test_disk_free_bytes'] = null;
 	$GLOBALS['dmc_test_disk_total_bytes'] = null;
+	$GLOBALS['dmc_test_record_workspace_is_dir'] = false;
+	$GLOBALS['dmc_test_workspace_is_dir_paths'] = array();
 
 	function startup_bounds_assert( bool $condition, string $message ): void {
 		if ( ! $condition ) {
@@ -91,6 +101,7 @@ namespace {
 		return $value;
 	}
 	function do_action( string $hook, mixed ...$args ): void {
+		$GLOBALS['dmc_test_emitted_actions'][ $hook ][] = $args;
 		$callbacks = $GLOBALS['dmc_test_actions'][ $hook ] ?? array();
 		usort($callbacks, static fn ( array $left, array $right ): int => $left['priority'] <=> $right['priority']);
 		foreach ( $callbacks as $entry ) {
@@ -190,12 +201,20 @@ namespace {
 	// Make capacity pressure deterministic while retaining the actual CLI ->
 	// WorkspaceAbilities -> Workspace show path. The warning/refusal output may
 	// only consume this already-measured capacity result, not bootstrap hygiene.
-	for ( $index = 0; $index < 101; ++$index ) {
+	for ( $index = 0; $index < 176; ++$index ) {
 		mkdir($workspace . '/unrelated@' . str_pad((string) $index, 4, '0', STR_PAD_LEFT));
 	}
 	$GLOBALS['dmc_test_disk_total_bytes'] = (float) ( 100 * 1024 * 1024 * 1024 );
 	$GLOBALS['dmc_test_disk_free_bytes']  = (float) ( 15 * 1024 * 1024 * 1024 );
+	$git_probe_log = $workspace . '/target-git-probes';
+	$git_probe     = $workspace . '/target-git-probe.sh';
+	file_put_contents($git_probe, "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> " . escapeshellarg($git_probe_log) . "\nexec git \"\$@\"\n");
+	chmod($git_probe, 0755);
+	$GLOBALS['dmc_test_filters']['datamachine_code_workspace_target_git_command'] = escapeshellarg($git_probe);
+	$GLOBALS['dmc_test_record_workspace_is_dir'] = true;
 	$produced_show = \DataMachineCode\Abilities\WorkspaceAbilities::showRepo(array( 'name' => 'target' ));
+	$GLOBALS['dmc_test_record_workspace_is_dir'] = false;
+	unset($GLOBALS['dmc_test_filters']['datamachine_code_workspace_target_git_command']);
 	startup_bounds_assert(! is_wp_error($produced_show), 'WorkspaceAbilities::showRepo did not produce the bounded local result.');
 	$produced_capacity = $produced_show['workspace_capacity'] ?? null;
 	startup_bounds_assert(is_array($produced_capacity), 'WorkspaceAbilities::showRepo did not emit workspace_capacity.');
@@ -203,7 +222,24 @@ namespace {
 		startup_bounds_assert(array_key_exists($field, $produced_capacity), sprintf('WorkspaceAbilities::showRepo emitted an incomplete workspace_capacity: missing %s.', $field));
 	}
 	startup_bounds_assert($workspace === $produced_capacity['workspace_path'], 'WorkspaceAbilities::showRepo emitted capacity for the wrong workspace.');
-	startup_bounds_assert(101 === $produced_capacity['worktree_count'], 'WorkspaceAbilities::showRepo did not measure the bounded worktree fixture.');
+	startup_bounds_assert(176 === $produced_capacity['worktree_count'], 'WorkspaceAbilities::showRepo did not preserve the large-workspace capacity count.');
+	$unrelated_probes = array_filter(
+		$GLOBALS['dmc_test_workspace_is_dir_paths'],
+		static fn ( string $path ): bool => str_starts_with($path, $workspace . '/unrelated@')
+	);
+	startup_bounds_assert(array() === array_values($unrelated_probes), 'Targeted show enumerated unrelated worktree paths during capacity inspection.');
+	$git_probes = file($git_probe_log, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: array();
+	startup_bounds_assert(4 === count($git_probes), 'Targeted show did not retain its four bounded local Git probes.');
+	foreach ( $git_probes as $git_probe_args ) {
+		startup_bounds_assert(str_starts_with($git_probe_args, '--no-optional-locks -C ' . $workspace . '/target '), 'Targeted show ran Git against an unrelated checkout.');
+	}
+	$profiles = $GLOBALS['dmc_test_emitted_actions']['datamachine_code_workspace_show_profiled'] ?? array();
+	$profile  = end($profiles)[0] ?? null;
+	startup_bounds_assert(is_array($profile) && 'target' === ($profile['handle'] ?? null), 'Targeted show did not emit its phase timing profile.');
+	startup_bounds_assert(
+		array( 'registry_lookup', 'capacity', 'git_status', 'remote_freshness', 'optional_enrichments', 'total' ) === array_keys((array) ($profile['timings_ms'] ?? array())),
+		'Targeted show timing profile did not retain every required phase.'
+	);
 	startup_bounds_assert('warning' === $produced_capacity['status'], 'WorkspaceAbilities::showRepo did not preserve the fixture capacity status.');
 	startup_bounds_assert(in_array('worktree_count_warning_threshold', $produced_capacity['trigger_reasons'], true), 'WorkspaceAbilities::showRepo did not emit the worktree capacity trigger.');
 	$produced_reasons = \DataMachineCode\Workspace\WorktreeDiskBudget::format_trigger_reasons($produced_capacity);
