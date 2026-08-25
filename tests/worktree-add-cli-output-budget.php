@@ -119,5 +119,32 @@ namespace {
 	worktree_add_cli_assert(false === ( $failure['success'] ?? true ) && 'worktree_disk_budget_exceeded' === ( $failure['error']['code'] ?? null ), 'Refused worktree-add JSON lost its typed diagnostic code.');
 	worktree_add_cli_assert(1 === ( $failure['error']['data']['disk_budget']['projected_free_bytes'] ?? null ), 'Refused worktree-add JSON lost its detailed diagnostic evidence.');
 
+	WP_CLI::$lines = array();
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(
+		new WP_Error(
+			'workspace_sqlite_lock_contention',
+			'SQLite remained locked while updating workspace ownership.',
+			array(
+				'operation'     => 'workspace_lock_register',
+				'blocker_phase' => 'workspace_lock_register',
+				'request_id'    => 'request-sqlite',
+				'retryable'     => true,
+				'wpdb_error'    => '<div>SQLSTATE[HY000]: database is locked</div>',
+				'debug'         => array( 'backtrace' => '/local/site/wp-content/plugins/sqlite.php:123' ),
+			)
+		)
+	);
+	try {
+		$command->__worktree_operation('add', array( 'repo', 'contended-output' ), array( 'format' => 'json' ));
+		throw new \RuntimeException('Contended worktree-add JSON did not halt.');
+	} catch (Worktree_Add_Cli_Halt $halt) {
+		worktree_add_cli_assert(1 === $halt->status, 'Contended worktree-add JSON returned the wrong exit status.');
+	}
+	$contended_output = implode("\n", WP_CLI::$lines);
+	$contended = json_decode($contended_output, true, 512, JSON_THROW_ON_ERROR);
+	worktree_add_cli_assert('workspace_sqlite_lock_contention' === ($contended['error']['code'] ?? null), 'Public CLI envelope lost typed SQLite contention.');
+	worktree_add_cli_assert('workspace_lock_register' === ($contended['error']['data']['blocker_phase'] ?? null) && 'request-sqlite' === ($contended['error']['data']['request_id'] ?? null), 'Public CLI envelope lost blocker or request identity.');
+	worktree_add_cli_assert(!str_contains(strtolower($contended_output), 'sqlstate') && !str_contains($contended_output, '<div>') && !str_contains($contended_output, '/local/site'), 'Public CLI envelope leaked WordPress database diagnostics.');
+
 	echo "worktree-add-cli-output-budget: ok\n";
 }
