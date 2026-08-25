@@ -11,6 +11,7 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\CommandSpec;
 use DataMachineCode\Support\ProcessRunner;
+use DataMachineCode\Support\WallClockBudget;
 
 defined('ABSPATH') || exit;
 
@@ -77,11 +78,13 @@ final class WorktreeDiskBudget {
 		$total_bytes = is_dir($workspace_path) ? disk_total_space($workspace_path) : false; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_disk_total_space
 		$free_bytes  = is_float($free_bytes) ? (int) $free_bytes : null;
 		$total_bytes = is_float($total_bytes) ? (int) $total_bytes : null;
-		$worktrees   = self::count_worktree_like_dirs($workspace_path);
+		$worktrees   = isset($options['worktree_count']) && is_numeric($options['worktree_count'])
+			? max(0, (int) $options['worktree_count'])
+			: self::count_worktree_like_dirs($workspace_path);
 		$diagnostics = self::collect_volume_diagnostics($workspace_path, $options);
 		$inodes      = array_key_exists('inode_metrics', $options)
 			? self::normalize_inode_metrics($options['inode_metrics'])
-			: self::measure_inode_capacity($workspace_path);
+			: self::measure_inode_capacity($workspace_path, $options['wall_clock_budget'] ?? null);
 
 		return self::evaluate(
 			array_merge(
@@ -812,7 +815,7 @@ final class WorktreeDiskBudget {
 	 * @param callable|null $runner Deterministic test seam receiving argv and probe.
 	 * @return array{total_inodes:int|null,free_inodes:int|null,probe:string}
 	 */
-	public static function probe_inode_capacity( string $workspace_path, ?callable $runner = null ): array {
+	public static function probe_inode_capacity( string $workspace_path, ?callable $runner = null, ?WallClockBudget $budget = null ): array {
 		if ( ! is_dir($workspace_path) ) {
 			return self::normalize_inode_metrics(null);
 		}
@@ -821,6 +824,10 @@ final class WorktreeDiskBudget {
 			'bsd_df_i' => array( 'df', '-P', '-i', $workspace_path ),
 		);
 		foreach ( $probes as $probe => $argv ) {
+			$timeout = null === $budget ? 2 : $budget->probe_timeout_seconds(2);
+			if ( 0 === $timeout ) {
+				break;
+			}
 			if ( null !== $runner ) {
 				$result = $runner($argv, $probe);
 			} else {
@@ -829,7 +836,7 @@ final class WorktreeDiskBudget {
 					continue;
 				}
 				$result = ProcessRunner::run($command, array(
-					'timeout_seconds'  => 2,
+					'timeout_seconds'  => $timeout,
 					'output_cap_bytes' => 256,
 					'error_as_result'  => true,
 				));
@@ -884,8 +891,8 @@ final class WorktreeDiskBudget {
 		);
 	}
 
-	private static function measure_inode_capacity( string $workspace_path ): array {
-		return self::probe_inode_capacity($workspace_path);
+	private static function measure_inode_capacity( string $workspace_path, mixed $budget = null ): array {
+		return self::probe_inode_capacity($workspace_path, null, $budget instanceof WallClockBudget ? $budget : null);
 	}
 
 	/**

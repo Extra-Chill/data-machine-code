@@ -3169,6 +3169,19 @@ class WorkspaceCommand extends BaseCommand {
 			'include_sizes'           => ! empty( $assoc_args['include-sizes'] ),
 			'include_worktree_status' => ! empty( $assoc_args['include-worktree-status'] ),
 			'refresh_inventory'       => ! empty( $assoc_args['refresh-inventory'] ),
+			'progress_callback'       => static function ( array $event ) use ( $assoc_args ): void {
+				$message = sprintf(
+					'Workspace hygiene: repo=%s phase=%s %s',
+					'' !== (string) ( $event['repository'] ?? '' ) ? (string) $event['repository'] : 'workspace',
+					(string) ( $event['phase'] ?? 'working' ),
+					(string) ( $event['message'] ?? '' )
+				);
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+					WP_CLI::warning($message);
+					return;
+				}
+				WP_CLI::log($message);
+			},
 		);
 		if ( isset( $assoc_args['size-limit'] ) ) {
 			$input['size_limit'] = (int) $assoc_args['size-limit'];
@@ -6404,6 +6417,7 @@ class WorkspaceCommand extends BaseCommand {
 		$cleanup          = (array) ( $report['cleanup'] ?? array() );
 		$cleanup_summary  = (array) ( $cleanup['summary'] ?? array() );
 		$recovery         = (array) ( $report['recovery'] ?? array() );
+		$locks_complete   = empty($locks['partial']) && 'budget_exhausted' !== ( $locks['state'] ?? null );
 		$inode_total      = null === ( $disk['filesystem_total_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_total_inodes'] );
 		$inode_used       = null === ( $disk['filesystem_used_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_used_inodes'] );
 		$inode_free       = null === ( $disk['filesystem_free_inodes'] ?? null ) ? 'unknown' : number_format( (int) $disk['filesystem_free_inodes'] );
@@ -6413,6 +6427,10 @@ class WorkspaceCommand extends BaseCommand {
 		WP_CLI::log( 'Workspace hygiene:' );
 		$this->format_items(
 			array(
+				array(
+					'metric' => 'report_complete',
+					'value'  => empty( $report['partial'] ) ? 'yes' : 'no; see component completeness and diagnostics',
+				),
 				array(
 					'metric' => 'inventory_rows',
 					'value'  => (string) ( $inventory['total_rows'] ?? 0 ),
@@ -6527,23 +6545,23 @@ class WorkspaceCommand extends BaseCommand {
 				),
 				array(
 					'metric' => 'active_locks',
-					'value'  => (string) ( $locks['active'] ?? 0 ),
+					'value'  => $locks_complete ? (string) ( $locks['active'] ?? 0 ) : 'unknown',
 				),
 				array(
 					'metric' => 'stale_locks',
-					'value'  => (string) ( $locks['stale'] ?? 0 ),
+					'value'  => $locks_complete ? (string) ( $locks['stale'] ?? 0 ) : 'unknown',
 				),
 				array(
 					'metric' => 'db_lock_rows',
-					'value'  => (string) ( $database_locks['total'] ?? 0 ),
+					'value'  => $locks_complete ? (string) ( $database_locks['total'] ?? 0 ) : 'unknown',
 				),
 				array(
 					'metric' => 'filesystem_lock_files',
-					'value'  => (string) ( $filesystem_locks['total'] ?? 0 ),
+					'value'  => $locks_complete ? (string) ( $filesystem_locks['total'] ?? 0 ) : 'unknown',
 				),
 				array(
 					'metric' => 'cleanup_candidates',
-					'value'  => (string) ( $cleanup_summary['would_remove'] ?? 0 ),
+					'value'  => ! empty($cleanup['included']) && empty($cleanup['partial']) ? (string) ( $cleanup_summary['would_remove'] ?? 0 ) : 'unknown',
 				),
 			),
 			array( 'metric', 'value' ),

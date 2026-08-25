@@ -604,7 +604,16 @@ class WorktreeInventoryRepository {
 	 * @return array<string,mixed>
 	 */
 	public function freshness(): array {
-		$rows       = $this->list();
+		return $this->freshness_from_rows($this->list());
+	}
+
+	/**
+	 * Summarize an inventory snapshot already read by the caller.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Inventory rows.
+	 * @return array<string,mixed>
+	 */
+	public function freshness_from_rows( array $rows ): array {
 		$total      = count($rows);
 		$missing    = 0;
 		$last_probe = null;

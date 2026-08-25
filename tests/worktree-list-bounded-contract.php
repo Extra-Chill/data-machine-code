@@ -177,6 +177,11 @@ namespace {
 		$harness->timeout_inventory_probe = false;
 		bounded_worktree_assert(is_wp_error($timed_out_inventory) && 'worktree_list_probe_timeout' === $timed_out_inventory->get_error_code(), 'A timed-out filtered inventory probe must return a typed error.');
 		bounded_worktree_assert(5 === ($timed_out_inventory->get_error_data()['timeout_seconds'] ?? null) && 'worktree_inventory' === ($timed_out_inventory->get_error_data()['phase'] ?? null) && true === ($timed_out_inventory->get_error_data()['cleanup']['verified'] ?? null), 'A timed-out inventory probe must retain its budget, phase, and cleanup evidence.');
+		$harness->timeout_inventory_probe = true;
+		$shared_timeout = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'all' => true, 'wall_clock_budget' => \DataMachineCode\Support\WallClockBudget::from_seconds(5) ));
+		$harness->timeout_inventory_probe = false;
+		bounded_worktree_assert(! is_wp_error($shared_timeout) && true === ($shared_timeout['partial'] ?? false), 'A repository timeout under the shared hygiene budget must preserve a typed partial envelope.');
+		bounded_worktree_assert('repo' === ($shared_timeout['diagnostics']['inventory_probe_failures'][0]['repo'] ?? null) && 'repository_probe_timeout' === ($shared_timeout['diagnostics']['partial_reason'] ?? null), 'Shared hygiene timeout evidence must identify the failed repository without changing targeted list errors.');
 		$missing = $harness->worktree_list(null, null, array( 'handle' => 'repo@missing', 'include_status' => false, 'include_disk' => false, 'limit' => 50 ));
 		bounded_worktree_assert(0 === $missing['total'] && 0 === $missing['returned'] && null === $missing['next_cursor'] && array() === $missing['summary']['repos'], 'Missing handles must return the advertised empty envelope shape.');
 
@@ -188,6 +193,14 @@ namespace {
 		$harness->advance_probe_clock = false;
 		bounded_worktree_assert(true === ($slow_partial['partial'] ?? false) && 339 === ($slow_partial['total'] ?? null), 'Slow requested probes must return a typed partial envelope without losing the complete 339-row inventory total.');
 		bounded_worktree_assert('status' === ($slow_partial['diagnostics']['phase'] ?? null) && 'budget_exhausted_status' === ($slow_partial['continuation']['reason'] ?? null), 'Slow probe exhaustion must identify its stage and return continuation evidence.');
+		$harness->advance_probe_clock = true;
+		$harness->probe_clock         = 0.0;
+		$progress                     = array();
+		$shared_budget                = \DataMachineCode\Support\WallClockBudget::from_seconds(1, '1s', fn(): float => $harness->probe_clock);
+		$all_status_partial           = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'all' => true, 'wall_clock_budget' => $shared_budget, 'progress_callback' => static function ( array $event ) use ( &$progress ): void { $progress[] = $event; } ));
+		$harness->advance_probe_clock = false;
+		bounded_worktree_assert(true === ($all_status_partial['partial'] ?? false) && 339 === ($all_status_partial['total'] ?? null), 'A shared hygiene budget must bound explicitly requested all-row status hydration without discarding the complete cheap inventory.');
+		bounded_worktree_assert('worktree_inventory' === ($progress[0]['phase'] ?? null) && 'repo' === ($progress[0]['repository'] ?? null) && 'status' === ($progress[1]['phase'] ?? null), 'All-row status progress must name the repository and phase before each expensive probe.');
 		$all = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true ));
 		bounded_worktree_assert(339 === $all['returned'] && null === $all['next_cursor'], 'Explicit all must retain exhaustive inventory access.');
 		$all_with_cursor = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true, 'cursor' => $first['next_cursor'] ));
