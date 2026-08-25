@@ -72,6 +72,7 @@ use DataMachineCode\Support\GitHubRemote;
 defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/WorkspaceHandle.php';
+require_once __DIR__ . '/TaskUrl.php';
 
 class WorktreeContextInjector {
 
@@ -132,7 +133,7 @@ class WorktreeContextInjector {
 			$parts    = explode('=', $requirement, 2);
 			$field    = $parts[0];
 			$expected = $parts[1] ?? null;
-			if ( null === $expected ? '' === trim((string) ($intent[ $field ] ?? '')) : $expected !== ( $intent[ $field ] ?? null ) ) {
+			if ( null === $expected ? null === self::normalize_scalar_metadata_value($intent[ $field ] ?? null) : $expected !== ( $intent[ $field ] ?? null ) ) {
 				$missing[] = $requirement;
 			}
 		}
@@ -189,6 +190,9 @@ class WorktreeContextInjector {
 	 */
 	private const MEMORY_FILES = array( 'MEMORY.md', 'USER.md', 'RULES.md' );
 
+	/** @var callable|null Deterministic process-owner probe seam for focused tests. */
+	private static $bootstrap_owner_probe = null;
+
 	/**
 	 * Filterable registry hook for worktree context projection targets.
 	 */
@@ -221,6 +225,7 @@ class WorktreeContextInjector {
 		$created_at = gmdate('c');
 
 		$metadata = array(
+			'allocation_id'    => bin2hex(random_bytes(16)),
 			'created_at'       => $created_at,
 			'observed_at'      => $created_at,
 			'last_seen_at'     => $created_at,
@@ -251,6 +256,19 @@ class WorktreeContextInjector {
 		return array_filter($metadata, fn( $value ) => null !== $value);
 	}
 
+	/** Return current ownership in the same typed shape persisted at allocation. */
+	public static function current_ownership_identity(): array {
+		$identity = array(
+			'origin_site_url' => function_exists('home_url') ? self::normalize_scalar_metadata_value(home_url()) : null,
+			'origin_agent'    => self::resolve_origin_agent(),
+			'origin_session'  => self::resolve_origin_session(),
+		);
+
+		return function_exists('apply_filters')
+			? (array) apply_filters('datamachine_code_worktree_current_ownership_identity', $identity)
+			: $identity;
+	}
+
 	/** Normalize the optional purpose-owned disposable worktree contract. */
 	public static function normalize_disposable_intent( array $intent ): array {
 		return array_filter(array(
@@ -261,21 +279,59 @@ class WorktreeContextInjector {
 	}
 
 	public static function normalize_cleanup_policy( mixed $policy ): ?string {
-		$policy = strtolower(trim((string) $policy));
+		$policy = self::normalize_scalar_metadata_value($policy);
+		if ( null === $policy ) {
+			return null;
+		}
+		$policy = strtolower($policy);
 		return in_array($policy, self::VALID_CLEANUP_POLICIES, true) ? $policy : null;
+	}
+
+	/** Normalize a scalar persisted metadata value without coercing arrays. */
+	public static function normalize_scalar_metadata_value( mixed $value ): ?string {
+		if ( ! is_scalar($value) ) {
+			return null;
+		}
+		$value = trim((string) $value);
+		return '' === $value ? null : $value;
 	}
 
 	/** True only for a creator-recorded successful disposable terminal outcome. */
 	public static function has_owner_terminal_disposable_cleanup_signal( array $metadata ): bool {
 		return self::CLEANUP_POLICY_REMOVE_ON_SUCCESS === ( $metadata['cleanup_policy'] ?? null )
-			&& '' !== trim((string) ( $metadata['purpose'] ?? '' ))
-			&& '' !== trim((string) ( $metadata['owner_run_ref'] ?? '' ))
-			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null );
+			&& null !== self::normalize_scalar_metadata_value($metadata['purpose'] ?? null)
+			&& null !== self::normalize_scalar_metadata_value($metadata['owner_run_ref'] ?? null)
+			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null )
+			&& self::terminal_evidence_matches_current_ownership($metadata, 'owner_terminal_at', 'owner_terminal_owner_run_ref');
+	}
+
+	/** Remove terminal authority when a clean worktree starts a new lifecycle. */
+	public static function reactivate_for_reuse( array $metadata, array $active_metadata ): array {
+		foreach ( array(
+			'finalized_at',
+			'finalized_state',
+			'finalized_owner_run_ref',
+			'cleanup_eligible_at',
+			'owner_terminal_outcome',
+			'owner_terminal_at',
+			'owner_terminal_owner_run_ref',
+			'auto_finalized_by',
+			'auto_finalized_signal',
+			'auto_finalized_reason',
+			'cleanup_eligibility_evidence',
+			'pr_ref',
+			'pr_url',
+			'pr_number',
+			'pr_repo',
+		) as $field ) {
+			unset($metadata[ $field ]);
+		}
+
+		return array_merge($metadata, $active_metadata);
 	}
 
 	private static function optional_intent_value( mixed $value ): ?string {
-		$value = trim((string) $value);
-		return '' === $value ? null : $value;
+		return self::normalize_scalar_metadata_value($value);
 	}
 
 	/**
@@ -319,18 +375,31 @@ class WorktreeContextInjector {
 	 * @param  array<string,mixed>|null $metadata Worktree lifecycle metadata.
 	 * @param  int|null                 $now      Override "now" for tests. Unix timestamp.
 	 * @param  int                      $ttl      Heartbeat TTL in seconds.
-	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[]}
+	 * @return array{liveness:string,reason:string,heartbeat_age_seconds:?int,last_seen_at:?string,heartbeat_ttl_seconds:int,review_after:?string,attribution:string,missing_ownership_fields:string[],malformed_ownership_fields:string[]}
 	 */
 	public static function classify_liveness( ?array $metadata, ?int $now = null, int $ttl = self::DEFAULT_HEARTBEAT_TTL_SECONDS ): array {
 		$ttl = max(0, $ttl);
 		$ownership_fields = array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' );
-		$missing_ownership_fields = array_values(array_filter($ownership_fields, static fn( string $field ): bool => ! self::ownership_value_is_present($metadata[ $field ] ?? null)));
-		$attribution = array() === $missing_ownership_fields ? 'attributable' : 'unattributed';
+		$missing_ownership_fields = array();
+		$malformed_ownership_fields = array();
+		foreach ( $ownership_fields as $field ) {
+			$value = $metadata[ $field ] ?? null;
+			if ( ! self::ownership_value_is_present($value) ) {
+				$missing_ownership_fields[] = $field;
+				continue;
+			}
+			if ( ! self::is_valid_ownership_value($field, $value) ) {
+				$malformed_ownership_fields[] = $field;
+				$missing_ownership_fields[]   = $field;
+			}
+		}
+		$attribution = array() !== $malformed_ownership_fields ? 'malformed' : ( array() === $missing_ownership_fields ? 'attributable' : 'unattributed' );
 		$evidence = array(
 			'heartbeat_ttl_seconds' => $ttl,
 			'review_after' => null,
 			'attribution' => $attribution,
 			'missing_ownership_fields' => $missing_ownership_fields,
+			'malformed_ownership_fields' => $malformed_ownership_fields,
 		);
 		if ( ! is_array($metadata) || empty($metadata) ) {
 			return array_merge(array(
@@ -413,6 +482,9 @@ class WorktreeContextInjector {
 			}
 			return false;
 		}
+		if ( is_object($value) ) {
+			return array() !== (array) $value;
+		}
 
 		return is_scalar($value) && '' !== trim((string) $value);
 	}
@@ -490,24 +562,29 @@ class WorktreeContextInjector {
 		$user     = 'unknown';
 
 		if ( is_array($metadata) ) {
-			$origin_site = trim( (string) ( $metadata['origin_site'] ?? $metadata['site_name'] ?? '' ));
+			$origin_site_value = $metadata['origin_site'] ?? $metadata['site_name'] ?? '';
+			$origin_site       = is_scalar($origin_site_value) ? trim((string) $origin_site_value) : '';
 			if ( '' !== $origin_site ) {
 				$site = $origin_site;
 			}
 
-			$origin_site_url = trim( (string) ( $metadata['origin_site_url'] ?? $metadata['site_url'] ?? '' ));
+			$origin_site_url_value = $metadata['origin_site_url'] ?? $metadata['site_url'] ?? '';
+			$origin_site_url       = is_scalar($origin_site_url_value) ? trim((string) $origin_site_url_value) : '';
 			if ( '' !== $origin_site_url ) {
 				$site_url = $origin_site_url;
 			}
 
-			$origin_agent = trim( (string) ( $metadata['origin_agent'] ?? $metadata['agent_slug'] ?? '' ));
+			$origin_agent_value = $metadata['origin_agent'] ?? $metadata['agent_slug'] ?? '';
+			$origin_agent       = is_scalar($origin_agent_value) ? trim((string) $origin_agent_value) : '';
 			if ( '' !== $origin_agent ) {
 				$agent = $origin_agent;
 			}
 
 			$origin_user = is_array($metadata['origin_user'] ?? null) ? $metadata['origin_user'] : array();
-			$display     = trim( (string) ( $origin_user['display_name'] ?? '' ));
-			$login       = trim( (string) ( $origin_user['login'] ?? '' ));
+			$display_value = $origin_user['display_name'] ?? '';
+			$login_value   = $origin_user['login'] ?? '';
+			$display       = is_scalar($display_value) ? trim((string) $display_value) : '';
+			$login         = is_scalar($login_value) ? trim((string) $login_value) : '';
 			if ( '' !== $login ) {
 				$user = $login;
 			} elseif ( '' !== $display ) {
@@ -521,6 +598,26 @@ class WorktreeContextInjector {
 			'agent'    => $agent,
 			'user'     => $user,
 		);
+	}
+
+	/**
+	 * Determine whether a persisted ownership field has a producer-valid value.
+	 *
+	 * Scalars retain compatibility with legacy metadata. Structured user and
+	 * session values preserve recursively-normalized runtime envelopes, while
+	 * scalar-only ownership fields reject array claims.
+	 *
+	 * @param mixed $value Persisted ownership value.
+	 */
+	private static function is_valid_ownership_value( string $field, $value ): bool {
+		if ( is_scalar($value) ) {
+			return '' !== trim((string) $value);
+		}
+		if ( ! is_array($value) ) {
+			return false;
+		}
+		return in_array($field, array( 'origin_session', 'origin_user' ), true)
+			&& self::ownership_value_is_present($value);
 	}
 
 	/**
@@ -875,6 +972,10 @@ class WorktreeContextInjector {
 			'lifecycle_state' => $normalized,
 			'finalized_at'    => gmdate('c'),
 		);
+		$finalized_owner_run_ref = self::normalize_scalar_metadata_value($existing['owner_run_ref'] ?? null);
+		if ( null !== $finalized_owner_run_ref ) {
+			$metadata['finalized_owner_run_ref'] = $finalized_owner_run_ref;
+		}
 
 		$pr_metadata = self::parse_pr_reference($pr);
 		if ( ! empty($pr_metadata) ) {
@@ -885,6 +986,9 @@ class WorktreeContextInjector {
 		if ( '' !== $owner_terminal_outcome ) {
 			$metadata['owner_terminal_outcome'] = $owner_terminal_outcome;
 			$metadata['owner_terminal_at']      = $metadata['finalized_at'];
+			if ( null !== $finalized_owner_run_ref ) {
+				$metadata['owner_terminal_owner_run_ref'] = $finalized_owner_run_ref;
+			}
 		}
 
 		if ( self::should_mark_cleanup_eligible($normalized, $pr_metadata) || self::has_owner_terminal_disposable_cleanup_signal(array_merge($existing, $metadata)) ) {
@@ -932,7 +1036,9 @@ class WorktreeContextInjector {
 		}
 
 		$finalized_state = isset($metadata['finalized_state']) ? self::normalize_state( (string) $metadata['finalized_state']) : null;
-		return null !== $finalized_state && self::should_mark_cleanup_eligible($finalized_state, self::extract_pr_metadata($metadata));
+		return null !== $finalized_state
+			&& self::terminal_evidence_matches_current_ownership($metadata, 'finalized_at', 'finalized_owner_run_ref')
+			&& self::should_mark_cleanup_eligible($finalized_state, self::extract_pr_metadata($metadata));
 	}
 
 	/**
@@ -994,9 +1100,124 @@ class WorktreeContextInjector {
 		);
 	}
 
+	/** Return dependency demand reserved by materialized worktrees still bootstrapping. */
+	public static function bootstrap_capacity_reservations(): array {
+		if ( ! function_exists('get_option') ) {
+			return array( 'bytes' => 0, 'inodes' => 0, 'handles' => array() );
+		}
+		// Capacity admission must not reuse an earlier request's option snapshot
+		// after another process has committed a reservation.
+		if ( function_exists('wp_cache_delete') ) {
+			wp_cache_delete(self::METADATA_OPTION, 'options');
+		}
+		$all = get_option(self::METADATA_OPTION, array());
+		$bytes = 0;
+		$inodes = 0;
+		$handles = array();
+		foreach ( is_array($all) ? $all : array() as $handle => $metadata ) {
+			$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
+			$reservation = is_array($bootstrap['capacity_reservation'] ?? null) ? $bootstrap['capacity_reservation'] : null;
+			$coordinator = self::bootstrap_owner_state($bootstrap['coordinator'] ?? $bootstrap['owner'] ?? null);
+			$child = isset($bootstrap['active_child']) ? self::bootstrap_owner_state($bootstrap['active_child']) : array( 'state' => 'stale' );
+			if ( ! is_array($reservation) || 'running' !== ($bootstrap['outcome'] ?? null) || ( 'stale' === $coordinator['state'] && 'stale' === $child['state'] ) ) {
+				continue;
+			}
+			$bytes += max(0, (int) ($reservation['bytes'] ?? 0));
+			$inodes += max(0, (int) ($reservation['inodes'] ?? 0));
+			$handles[] = (string) $handle;
+		}
+		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles );
+	}
+
+	/** Capture a PID and OS-issued process identity for bootstrap ownership. */
+	public static function bootstrap_owner( ?int $pid = null ): array {
+		$pid = $pid ?? getmypid();
+		$probe = self::bootstrap_process_probe((int) $pid);
+		return array( 'pid' => max(0, (int) $pid), 'identity' => $probe['identity'] ?? null, 'recorded_at' => gmdate('c') );
+	}
+
+	/** Resolve whether a recorded bootstrap owner is active, stale, or unverifiable. */
+	public static function bootstrap_owner_state( mixed $owner ): array {
+		if ( ! is_array($owner) || empty($owner['pid']) || ! is_array($owner['identity'] ?? null) ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_identity_missing' );
+		}
+		$probe = self::bootstrap_process_probe((int) $owner['pid']);
+		if ( 'active' !== ($probe['state'] ?? null) ) {
+			return array( 'state' => $probe['state'] ?? 'unverifiable', 'reason' => $probe['reason'] ?? 'owner_probe_unavailable' );
+		}
+		if ( $owner['identity'] !== ($probe['identity'] ?? null) ) {
+			return array( 'state' => 'stale', 'reason' => 'owner_identity_mismatch', 'observed_identity' => $probe['identity'] ?? null );
+		}
+		if ( 'ps' === ($owner['identity']['platform'] ?? null) ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_identity_coarse' );
+		}
+		return array( 'state' => 'active', 'reason' => 'owner_process_matches' );
+	}
+
+	/** Install a deterministic owner probe for focused tests. */
+	public static function set_bootstrap_owner_probe_for_test( ?callable $probe ): void {
+		self::$bootstrap_owner_probe = $probe;
+	}
+
+	/** Read a platform process identity without treating failed probes as dead owners. */
+	private static function bootstrap_process_probe( int $pid ): array {
+		if ( $pid <= 0 ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_pid_invalid' );
+		}
+		if ( null !== self::$bootstrap_owner_probe ) {
+			return (self::$bootstrap_owner_probe)($pid);
+		}
+		$stat_path = '/proc/' . $pid . '/stat';
+		if ( is_dir('/proc') ) {
+			if ( ! file_exists($stat_path) ) {
+				return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+			}
+			if ( ! is_readable($stat_path) ) {
+				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' );
+			}
+			$stat = @file_get_contents($stat_path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_get_contents -- Linux process identity probe.
+			if ( ! is_string($stat) || false === ( $close = strrpos($stat, ')') ) ) {
+				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+			}
+			$fields = preg_split('/\\s+/', trim(substr($stat, $close + 1)));
+			if ( is_array($fields) && isset($fields[19]) ) {
+				return array( 'state' => 'active', 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => (string) $fields[19] ) );
+			}
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+		}
+		if ( function_exists('posix_kill') && ! posix_kill($pid, 0) ) {
+			$errno = function_exists('posix_get_last_error') ? posix_get_last_error() : 0;
+			if ( defined('POSIX_ESRCH') && POSIX_ESRCH === $errno ) {
+				return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+			}
+			if ( defined('POSIX_EPERM') && POSIX_EPERM === $errno ) {
+				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' );
+			}
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unavailable' );
+		}
+		$output = array();
+		$status = 1;
+		@exec('ps -o lstart= -o command= -p ' . $pid . ' 2>/dev/null', $output, $status); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Portable process identity probe.
+		$line = trim(implode('', $output));
+		if ( 0 !== $status ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unavailable' );
+		}
+		if ( 1 !== preg_match('/^(.{24})\\s+(.+)$/', $line, $matches) ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+		}
+		$command = preg_replace('/\\s+/', ' ', trim($matches[2]));
+		if ( ! is_string($command) || '' === $command ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
+		}
+		return array( 'state' => 'active', 'identity' => array( 'platform' => 'ps', 'started_at' => trim($matches[1]), 'command' => $command, 'command_sha256' => hash('sha256', $command) ) );
+	}
+
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */
 	public static function has_explicit_cleanup_eligibility( array $metadata ): bool {
 		if ( empty($metadata['cleanup_eligible_at']) || false === strtotime( (string) $metadata['cleanup_eligible_at'] ) || empty($metadata['finalized_at']) || false === strtotime( (string) $metadata['finalized_at'] ) ) {
+			return false;
+		}
+		if ( ! self::terminal_evidence_matches_current_ownership($metadata, 'finalized_at', 'finalized_owner_run_ref') ) {
 			return false;
 		}
 
@@ -1006,6 +1227,33 @@ class WorktreeContextInjector {
 		}
 
 		return array() !== self::extract_pr_metadata($metadata);
+	}
+
+	/** Reject terminal evidence recorded by an owner superseded by a later claim. */
+	private static function terminal_evidence_matches_current_ownership( array $metadata, string $timestamp_field, string $owner_field ): bool {
+		$terminal_owner = self::normalize_scalar_metadata_value($metadata[ $owner_field ] ?? null);
+		$current_owner  = self::normalize_scalar_metadata_value($metadata['owner_run_ref'] ?? null);
+		if ( null !== $terminal_owner && $terminal_owner !== $current_owner ) {
+			return false;
+		}
+
+		$latest_claim = 0;
+		foreach ( (array) ( $metadata['ownership_lineage'] ?? array() ) as $transition ) {
+			if ( ! is_array($transition) || ! array_key_exists('claimed_at', $transition) ) {
+				continue;
+			}
+			$claimed_at = is_scalar($transition['claimed_at']) ? strtotime((string) $transition['claimed_at']) : false;
+			if ( false === $claimed_at ) {
+				return false;
+			}
+			$latest_claim = max($latest_claim, $claimed_at);
+		}
+		if ( 0 === $latest_claim ) {
+			return true;
+		}
+
+		$terminal_at = is_scalar($metadata[ $timestamp_field ] ?? null) ? strtotime((string) $metadata[ $timestamp_field ]) : false;
+		return false !== $terminal_at && $terminal_at >= $latest_claim;
 	}
 
 	/**
@@ -1489,19 +1737,23 @@ class WorktreeContextInjector {
 	public static function store_lifecycle_metadata( string $handle, array $metadata ): bool|\WP_Error {
 		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
 			$existing = self::get_inventory_metadata($handle) ?? array();
-			return self::upsert_inventory_metadata($handle, array_merge($existing, $metadata));
+			$stored = array_merge($existing, $metadata);
+			$result = self::upsert_inventory_metadata($handle, $stored);
+			return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
 		}
 
+		$fresh_metadata  = self::get_metadata_fresh($handle) ?? array();
 		$stored_metadata = array();
 		$updated         = SqliteBusyRetry::run(
 			'worktree_lifecycle_metadata_option',
-			static function () use ( $handle, $metadata, &$stored_metadata ): bool {
+			static function () use ( $handle, $metadata, $fresh_metadata, &$stored_metadata ): bool {
 				$all = get_option( self::METADATA_OPTION, array() );
 				if ( ! is_array( $all ) ) {
 					$all = array();
 				}
 
-				$existing        = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : self::get_inventory_metadata( $handle ) ?? array();
+				$option_metadata = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? (array) $all[ $handle ] : array();
+				$existing        = self::merge_lifecycle_metadata_sources($option_metadata, $fresh_metadata);
 				$stored_metadata = array_merge( $existing, $metadata );
 				$all[ $handle ]  = $stored_metadata;
 
@@ -1515,7 +1767,62 @@ class WorktreeContextInjector {
 			return $updated;
 		}
 
-		return self::upsert_inventory_metadata($handle, $stored_metadata);
+		$result = self::upsert_inventory_metadata($handle, $stored_metadata);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored_metadata);
+	}
+
+	/** Whether standalone identity already carries the persisted task tracker. */
+	public static function standalone_worktree_tracker_is_current( array $metadata ): bool {
+		$target = self::standalone_worktree_tracker_target($metadata);
+		if ( null === $target ) {
+			return true;
+		}
+		$payload = @file_get_contents($target['path']);
+		$stored  = is_string($payload) ? json_decode($payload, true) : null;
+		return is_array($stored)
+			&& $target['task_url'] === TaskUrl::canonicalize($stored['task_url'] ?? null)
+			&& $target['task_ref'] === self::normalize_task_ref($stored['task_ref'] ?? null);
+	}
+
+	/** Persist the task tracker beside linked-worktree Git metadata. */
+	public static function store_standalone_worktree_tracker( array $metadata ): bool|\WP_Error {
+		$target = self::standalone_worktree_tracker_target($metadata);
+		if ( null === $target ) {
+			return true;
+		}
+		$payload = array(
+			'schema'   => 'datamachine-code/worktree-tracker/v1',
+			'task_url' => $target['task_url'],
+			'task_ref' => $target['task_ref'],
+		);
+		$encoded = function_exists('wp_json_encode')
+			? wp_json_encode($payload)
+			: json_encode($payload, JSON_UNESCAPED_SLASHES);
+		if ( ! is_string($encoded) || false === @file_put_contents($target['path'], $encoded, LOCK_EX) ) {
+			return new \WP_Error('worktree_standalone_tracker_persist_failed', 'Could not persist standalone worktree tracker identity.', array( 'path' => $target['path'] ));
+		}
+		return true;
+	}
+
+	/** @return array{path:string,task_url:?string,task_ref:?string}|null */
+	private static function standalone_worktree_tracker_target( array $metadata ): ?array {
+		$task     = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
+		$task_url = TaskUrl::canonicalize($task['task_url'] ?? null);
+		$task_ref = self::normalize_task_ref($task['task_ref'] ?? null);
+		$path     = is_string($metadata['path'] ?? null) ? rtrim((string) $metadata['path'], '/') : '';
+		$pointer  = '' !== $path && is_file($path . '/.git') ? trim((string) @file_get_contents($path . '/.git')) : '';
+		if ( ( null === $task_url && null === $task_ref ) || ! str_starts_with($pointer, 'gitdir:') ) {
+			return null;
+		}
+		$git_dir = trim(substr($pointer, strlen('gitdir:')));
+		$git_dir = str_starts_with($git_dir, '/') ? $git_dir : $path . '/' . $git_dir;
+		$git_dir = realpath($git_dir);
+		return false === $git_dir ? null : array( 'path' => $git_dir . '/datamachine-code-task.json', 'task_url' => $task_url, 'task_ref' => $task_ref );
+	}
+
+	private static function normalize_task_ref( mixed $task_ref ): ?string {
+		$task_ref = self::normalize_scalar_metadata_value($task_ref);
+		return null !== $task_ref && ! preg_match('/\s/', $task_ref) ? strtolower($task_ref) : null;
 	}
 
 	/** Persist the exact creation contract before Git materializes a worktree. */
@@ -1572,7 +1879,8 @@ class WorktreeContextInjector {
 		if ( is_wp_error($promoted) ) {
 			return $promoted;
 		}
-		return self::upsert_inventory_metadata($handle, $metadata);
+		$result = self::upsert_inventory_metadata($handle, $metadata);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($metadata);
 	}
 
 	/** Remove an unpromoted journal when its Git mutation is rolled back. */
@@ -1613,7 +1921,8 @@ class WorktreeContextInjector {
 		if ( is_wp_error($updated) ) {
 			return $updated;
 		}
-		return self::upsert_inventory_metadata($handle, $metadata);
+		$result = self::upsert_inventory_metadata($handle, $metadata);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($metadata);
 	}
 
 	/**
@@ -1631,7 +1940,7 @@ class WorktreeContextInjector {
 				'origin_site'      => '' !== (string) ( $payload['site_name'] ?? '' ) ? (string) $payload['site_name'] : (string) ( $payload['site_url'] ?? '' ),
 				'origin_site_url'  => (string) ( $payload['site_url'] ?? '' ),
 				'origin_site_name' => (string) ( $payload['site_name'] ?? '' ),
-				'origin_agent'     => (string) ( $payload['agent_slug'] ?? '' ),
+				'origin_agent'     => self::normalize_scalar_metadata_value($payload['agent_slug'] ?? null) ?? '',
 				'abspath'          => (string) ( $payload['abspath'] ?? '' ),
 				'created_at'       => (string) ( $payload['timestamp'] ?? gmdate('c') ),
 			)
@@ -1787,13 +2096,9 @@ class WorktreeContextInjector {
 				$task_url = trim($env_task_url);
 			}
 		}
-		$task_url_parts = false;
-		if ( '' !== $task_url ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- This class also runs in standalone bootstrap contexts without WordPress loaded.
-			$task_url_parts = function_exists('wp_parse_url') ? wp_parse_url($task_url) : parse_url($task_url);
-		}
-		if ( is_array($task_url_parts) && isset($task_url_parts['host'], $task_url_parts['scheme']) && in_array(strtolower( (string) $task_url_parts['scheme']), array( 'http', 'https' ), true) ) {
-			$task['task_url'] = $task_url;
+		$canonical_task_url = TaskUrl::canonicalize($task_url);
+		if ( null !== $canonical_task_url ) {
+			$task['task_url'] = $canonical_task_url;
 		}
 
 		$task_ref = isset($args['task_ref']) && '' !== trim( (string) $args['task_ref']) ? trim( (string) $args['task_ref']) : '';
@@ -1809,6 +2114,11 @@ class WorktreeContextInjector {
 		}
 
 		return empty($task) ? null : $task;
+	}
+
+	/** Match Homeboy task URL identity: trim, discard query/fragment, trim slash, preserve casing. */
+	public static function canonical_task_url( mixed $task_url ): ?string {
+		return TaskUrl::canonicalize($task_url);
 	}
 
 	/**
@@ -1863,13 +2173,12 @@ class WorktreeContextInjector {
 			return $inventory_metadata;
 		}
 
-		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) );
-		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) );
-		$inventory_seen = false !== $inventory_seen ? $inventory_seen : 0;
-		$option_seen    = false !== $option_seen ? $option_seen : 0;
-		return $option_seen > $inventory_seen
-			? array_merge($inventory_metadata, $option_metadata)
-			: array_merge($option_metadata, $inventory_metadata);
+		return self::merge_lifecycle_metadata_sources($option_metadata, $inventory_metadata);
+	}
+
+	/** Inventory is the committed record; retain option-only fields for legacy rows. */
+	private static function merge_lifecycle_metadata_sources( array $option_metadata, array $inventory_metadata ): array {
+		return array_merge($option_metadata, $inventory_metadata);
 	}
 
 	/**

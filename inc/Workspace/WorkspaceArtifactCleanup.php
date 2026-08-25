@@ -47,7 +47,7 @@ trait WorkspaceArtifactCleanup {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_cleanup_artifacts( array $opts = array() ): array|\WP_Error {
-		$scope                           = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
+		$scope = $this->normalize_worktree_operation_scope(isset($opts['repo']) ? (string) $opts['repo'] : '');
 		if ( is_wp_error($scope) ) {
 			return $scope;
 		}
@@ -188,7 +188,7 @@ trait WorkspaceArtifactCleanup {
 			}
 		}
 
-		$summary = $this->build_worktree_artifact_cleanup_summary($candidates, array(), $skipped);
+		$summary          = $this->build_worktree_artifact_cleanup_summary($candidates, array(), $skipped);
 		$summary['scope'] = $scope;
 		if ( null !== $pagination ) {
 			$summary['pagination'] = $pagination;
@@ -225,8 +225,8 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		$capacity_before = $this->artifact_capacity_snapshot();
-		$removed = array();
-		$partial = array();
+		$removed         = array();
+		$partial         = array();
 		foreach ( $candidates as $candidate ) {
 			$removed_artifacts = array();
 			$artifacts         = array_values( (array) ( $candidate['artifacts'] ?? array() ));
@@ -287,10 +287,15 @@ trait WorkspaceArtifactCleanup {
 			$removed[] = array_merge($candidate, array( 'artifacts' => $removed_artifacts ));
 		}
 
-		$removed       = $this->observe_artifact_reclamation_rows($removed);
-		$partial       = $this->observe_artifact_reclamation_rows($partial);
+		$removed                            = $this->observe_artifact_reclamation_rows($removed);
+		$partial                            = $this->observe_artifact_reclamation_rows($partial);
 		$apply_summary                      = $this->build_worktree_artifact_cleanup_summary($candidates, $removed, $skipped, $partial);
-		$apply_summary['capacity_evidence'] = $this->artifact_capacity_evidence($capacity_before, $this->artifact_capacity_snapshot(), (int) ( $apply_summary['predicted_allocated_reclaim_bytes'] ?? 0 ));
+		$apply_summary['capacity_evidence'] = $this->artifact_capacity_evidence(
+			$capacity_before,
+			$this->artifact_capacity_snapshot(),
+			(int) ( $apply_summary['predicted_allocated_reclaim_bytes'] ?? 0 ),
+			(int) ( $apply_summary['durable_reclaimed_bytes'] ?? 0 )
+		);
 		$apply_summary['scope']             = $scope;
 		if ( null !== $pagination ) {
 			$apply_summary['pagination'] = $pagination;
@@ -634,13 +639,13 @@ trait WorkspaceArtifactCleanup {
 
 			$candidate = array_merge(
 				$base_row, array(
-					'artifacts'           => $artifacts,
-					'artifact_count'      => count($artifacts),
-					'artifact_apparent_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['apparent_bytes'] ?? 0 ), $artifacts)),
+					'artifacts'                => $artifacts,
+					'artifact_count'           => count($artifacts),
+					'artifact_apparent_bytes'  => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['apparent_bytes'] ?? 0 ), $artifacts)),
 					'artifact_allocated_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts)),
-					'artifact_size_bytes' => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts)),
-					'reason_code'         => 'profile_artifacts',
-					'reason'              => 'profile-derived reconstructable artifacts can be removed',
+					'artifact_size_bytes'      => array_sum(array_map(fn( $artifact ) => (int) ( $artifact['allocated_bytes'] ?? $artifact['size_bytes'] ?? 0 ), $artifacts)),
+					'reason_code'              => 'profile_artifacts',
+					'reason'                   => 'profile-derived reconstructable artifacts can be removed',
 				)
 			);
 			if ( ! $safety_probes ) {
@@ -768,10 +773,10 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		return array(
-			'reason_code'       => 'uncertain' === $status ? 'active_process_probe_uncertain' : 'active_process_probe_unavailable',
-			'protecting_reason' => 'active_process_probe_' . $status,
-			'reason'            => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
-			'process_probe'     => $probe,
+			'reason_code'               => 'uncertain' === $status ? 'active_process_probe_uncertain' : 'active_process_probe_unavailable',
+			'protecting_reason'         => 'active_process_probe_' . $status,
+			'reason'                    => 'active process use could not be authoritatively excluded; safe cleanup is failing closed',
+			'process_probe'             => $probe,
 			'process_probe_diagnostics' => $this->process_probe_skip_diagnostics($probe, $worktree_path, $handle),
 		);
 	}
@@ -785,8 +790,8 @@ trait WorkspaceArtifactCleanup {
 	 * @return array<string,mixed>
 	 */
 	private function process_probe_skip_diagnostics( array $probe, string $worktree_path, string $handle ): array {
-		$diagnostics = (array) ( $probe['diagnostics'] ?? array() );
-		$status      = (string) ( $probe['status'] ?? 'unavailable' );
+		$diagnostics    = (array) ( $probe['diagnostics'] ?? array() );
+		$status         = (string) ( $probe['status'] ?? 'unavailable' );
 		$error          = (string) ( $diagnostics['reason'] ?? '' );
 		$provider       = (string) ( $diagnostics['provider'] ?? ( isset($diagnostics['process_root']) ? 'procfs' : 'unknown' ) );
 		$classification = 'ambiguous_evidence';
@@ -806,7 +811,7 @@ trait WorkspaceArtifactCleanup {
 			'classification'       => $classification,
 			'error'                => $this->process_probe_error_code($error),
 			'candidate_path'       => $worktree_path,
-			'inspected_path_count' => max(0, (int) ( $diagnostics['path_records'] ?? count((array) ( $probe['records'] ?? array() )) )),
+			'inspected_path_count' => max(0, (int) ( $diagnostics['path_records'] ?? count( (array) ( $probe['records'] ?? array() ) ) )),
 			'retry_command'        => $this->process_probe_retry_command($handle),
 			'guidance'             => 'Restore complete process-path visibility, then retry this candidate with a bounded non-destructive artifact cleanup dry run using safety probes and --limit=1. Cleanup remains blocked until a complete no-match probe succeeds.',
 		);
@@ -867,14 +872,14 @@ trait WorkspaceArtifactCleanup {
 		}
 
 		$snapshot = $this->artifact_process_path_records($fresh);
-		$matches  = $this->match_artifact_process_records((array) ( $snapshot['records'] ?? array() ), $roots);
+		$matches  = $this->match_artifact_process_records( (array) ( $snapshot['records'] ?? array() ), $roots );
 
 		// A truncated host-wide lsof result cannot clear a candidate. On providers
 		// that support path-scoped inspection, retry only this candidate so unrelated
 		// sibling builds cannot poison its evidence.
 		if ( array() === $matches && 'uncertain' === (string) ( $snapshot['status'] ?? '' ) ) {
-			$scoped = $this->artifact_process_path_probe()->snapshot_for_paths($roots);
-			$matches = $this->match_artifact_process_records((array) ( $scoped['records'] ?? array() ), $roots);
+			$scoped  = $this->artifact_process_path_probe()->snapshot_for_paths($roots);
+			$matches = $this->match_artifact_process_records( (array) ( $scoped['records'] ?? array() ), $roots );
 			if ( 'available' === (string) ( $scoped['status'] ?? '' ) || array() !== $matches ) {
 				$snapshot = $scoped;
 			}
@@ -947,8 +952,8 @@ trait WorkspaceArtifactCleanup {
 				'status'      => 'unavailable',
 				'records'     => array(),
 				'diagnostics' => array(
-					'reason' => 'process_filesystem_unavailable',
-					'path'   => $proc_root,
+					'reason'   => 'process_filesystem_unavailable',
+					'path'     => $proc_root,
 					'provider' => 'procfs',
 				),
 			);
@@ -961,8 +966,8 @@ trait WorkspaceArtifactCleanup {
 				'status'      => 'unavailable',
 				'records'     => array(),
 				'diagnostics' => array(
-					'reason' => 'process_filesystem_unreadable',
-					'path'   => $proc_root,
+					'reason'   => 'process_filesystem_unreadable',
+					'path'     => $proc_root,
 					'provider' => 'procfs',
 				),
 			);
@@ -1238,21 +1243,22 @@ trait WorkspaceArtifactCleanup {
 		arsort($artifact_by_repo);
 
 		return array(
-			'would_remove_worktrees'      => count($candidates),
-			'would_remove_artifacts'      => $would_count,
-			'removed_worktrees'           => count($removed),
-			'partially_removed_worktrees' => count($partial),
-			'removed_artifacts'           => $removed_count,
-			'skipped'                     => count($skipped),
-			'skipped_by_reason'           => $skipped_by_reason,
-			'artifact_count'              => 0 === $removed_count ? $would_count : $removed_count,
-			'artifact_size_bytes'         => 0 === $removed_count ? $would_bytes : $removed_bytes,
-			'artifact_byte_semantics'     => 'allocated_bytes; clone_or_hardlink_sensitive estimates are not guaranteed reclaimable capacity',
+			'would_remove_worktrees'            => count($candidates),
+			'would_remove_artifacts'            => $would_count,
+			'removed_worktrees'                 => count($removed),
+			'partially_removed_worktrees'       => count($partial),
+			'removed_artifacts'                 => $removed_count,
+			'skipped'                           => count($skipped),
+			'skipped_by_reason'                 => $skipped_by_reason,
+			'artifact_count'                    => 0 === $removed_count ? $would_count : $removed_count,
+			'artifact_size_bytes'               => 0 === $removed_count ? $would_bytes : $removed_bytes,
+			'artifact_byte_semantics'           => 'allocated_bytes; clone_or_hardlink_sensitive estimates are not guaranteed reclaimable capacity',
+			'reclamation_telemetry_semantics'   => 'durable_reclaimed_bytes is scoped durable cleanup recovery; filesystem_free_bytes_delta is signed host telemetry that may include concurrent activity; observed_reclaimed_bytes is deprecated compatibility telemetry',
 			'predicted_allocated_reclaim_bytes' => 0 === $removed_count ? $would_bytes : $removed_bytes,
-			'removed_size_bytes'          => $removed_bytes,
-			'durable_reclaimed_bytes'     => $durable_bytes,
-			'rebuilt_artifact_bytes'      => $rebuilt_bytes,
-			'artifact_size_by_repo'       => $artifact_by_repo,
+			'removed_size_bytes'                => $removed_bytes,
+			'durable_reclaimed_bytes'           => $durable_bytes,
+			'rebuilt_artifact_bytes'            => $rebuilt_bytes,
+			'artifact_size_by_repo'             => $artifact_by_repo,
 		);
 	}
 
@@ -1263,15 +1269,24 @@ trait WorkspaceArtifactCleanup {
 	}
 
 	/** @return array<string,mixed> */
-	private function artifact_capacity_evidence( array $before, array $after, int $predicted_allocated_reclaim_bytes ): array {
+	private function artifact_capacity_evidence( array $before, array $after, int $predicted_allocated_reclaim_bytes, int $durable_reclaimed_bytes ): array {
 		$before_free = is_numeric($before['filesystem_free_bytes'] ?? null) ? (int) $before['filesystem_free_bytes'] : null;
 		$after_free  = is_numeric($after['filesystem_free_bytes'] ?? null) ? (int) $after['filesystem_free_bytes'] : null;
+		$free_delta  = null === $before_free || null === $after_free ? null : $after_free - $before_free;
 		return array(
-			'before' => $before,
-			'after' => $after,
-			'predicted_allocated_reclaim_bytes' => max(0, $predicted_allocated_reclaim_bytes),
-			'observed_reclaimed_bytes' => null === $before_free || null === $after_free ? null : max(0, $after_free - $before_free),
-			'observation_basis' => 'filesystem_free_bytes_before_after',
+			'before'                                => $before,
+			'after'                                 => $after,
+			'filesystem_free_bytes_before'          => $before_free,
+			'filesystem_free_bytes_after'           => $after_free,
+			'filesystem_free_bytes_delta'           => $free_delta,
+			'filesystem_free_bytes_delta_semantics' => 'host_filesystem_noisy_concurrent_telemetry_not_scoped_cleanup_proof',
+			'predicted_allocated_reclaim_bytes'     => max(0, $predicted_allocated_reclaim_bytes),
+			'durable_reclaimed_bytes'               => max(0, $durable_reclaimed_bytes),
+			'durable_reclaimed_bytes_semantics'     => 'scoped_artifact_paths_absent_at_cleanup_completion',
+			'observed_reclaimed_bytes'              => null === $free_delta ? null : max(0, $free_delta),
+			'observed_reclaimed_bytes_deprecated'   => true,
+			'observed_reclaimed_bytes_semantics'    => 'deprecated_nonnegative_projection_of_filesystem_free_bytes_delta',
+			'observation_basis'                     => 'filesystem_free_bytes_before_after',
 		);
 	}
 

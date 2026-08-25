@@ -138,9 +138,9 @@ namespace {
 			return $method->invoke($this, $candidate, false, false, false, $reviewed_lifecycle_snapshot);
 		}
 
-		public function apply_reviewed( array $candidate ): array {
+		public function apply_reviewed( array $candidate, bool $discard_unpushed = false ): array {
 			$method = new ReflectionMethod($this, 'apply_worktree_cleanup_plan_candidates');
-			return $method->invoke($this, array( $candidate ), false, microtime(true));
+			return $method->invoke($this, array( $candidate ), false, microtime(true), false, self::CLEANUP_GIT_REMOVE_TIMEOUT, $discard_unpushed);
 		}
 
 		public function remove_artifact( string $worktree_path, string $relative ): array|WP_Error {
@@ -329,6 +329,39 @@ namespace {
 	$became_live          = $harness->revalidate_current($base_candidate, $became_live_metadata);
 	retention_apply_protections_assert('live_worktree' === ( $became_live['skipped']['reason_code'] ?? null ), 'a worktree that becomes live after planning is protected during apply revalidation');
 	retention_apply_protections_assert('heartbeat_fresh' === ( $became_live['skipped']['liveness_reason'] ?? null ), 'apply-time protection surfaces fresh liveness evidence');
+
+	$owner_a_finalized_at = gmdate('c', time() - 172800);
+	$owner_a_candidate    = $base_candidate;
+	$owner_a_candidate['metadata'] = array_merge($owner_a_candidate['metadata'], array(
+		'purpose'                         => 'coding-session',
+		'owner_run_ref'                   => 'owner-a',
+		'cleanup_policy'                  => WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS,
+		'owner_terminal_outcome'          => 'success',
+		'owner_terminal_at'               => $owner_a_finalized_at,
+		'owner_terminal_owner_run_ref'    => 'owner-a',
+		'finalized_at'                    => $owner_a_finalized_at,
+		'finalized_state'                 => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+		'finalized_owner_run_ref'         => 'owner-a',
+		'cleanup_eligible_at'             => $owner_a_finalized_at,
+	));
+	$owner_b_claimed_at = gmdate('c', time() - 90000);
+	$owner_b_active     = array_merge($owner_a_candidate['metadata'], array(
+		'lifecycle_state'  => WorktreeContextInjector::STATE_ACTIVE,
+		'last_seen_at'     => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1),
+		'owner_run_ref'    => 'owner-b',
+		'ownership_lineage' => array(array(
+			'claimed_at'             => $owner_b_claimed_at,
+			'previous_owner_run_ref' => 'owner-a',
+			'new_owner_run_ref'      => 'owner-b',
+		)),
+	));
+	$GLOBALS['retention_apply_metadata'][ $owner_a_candidate['handle'] ] = $owner_b_active;
+	retention_apply_protections_assert(! WorktreeContextInjector::has_cleanup_signal($owner_b_active), 'owner A finalization must not remain a cleanup signal after owner B claims the worktree');
+	$harness->unpushed_count = 2;
+	$ownership_reuse_apply   = $harness->apply_reviewed($owner_a_candidate, true);
+	retention_apply_protections_assert('active_lifecycle' === ( $ownership_reuse_apply['skipped'][0]['reason_code'] ?? null ), 'owner A terminal evidence must not authorize cleanup after owner B claims the worktree');
+	retention_apply_protections_assert(is_dir($work) && is_dir($primary . '/.git/worktrees/fix-retention-safety'), 'cleanup must preserve the active unpushed worktree and its branch metadata after ownership reuse');
+	$harness->unpushed_count = 0;
 
 	$metadata_file = $root . '/metadata.json';
 	$ready         = $root . '/reactivator-ready';

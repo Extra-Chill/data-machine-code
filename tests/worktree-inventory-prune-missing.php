@@ -25,6 +25,7 @@ if ( ! defined('ABSPATH') ) {
 }
 
 require_once dirname(__DIR__) . '/inc/Support/JsonCodec.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 require_once dirname(__DIR__) . '/inc/Storage/WorktreeInventoryRepository.php';
 
 use DataMachineCode\Storage\WorktreeInventoryRepository;

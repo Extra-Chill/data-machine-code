@@ -8,7 +8,7 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
-require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.php';
+require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.inc';
 
 $temp_root      = realpath(sys_get_temp_dir()) ?: sys_get_temp_dir();
 $workspace_root = rtrim($temp_root, '/') . '/datamachine-code-worktree-add-' . getmypid() . '-' . bin2hex(random_bytes(8));
@@ -72,6 +72,9 @@ function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed
 	$callback = $GLOBALS['datamachine_code_test_filters'][ $hook_name ] ?? null;
 	if ( is_callable($callback) ) {
 		return $callback($value, ...$args);
+	}
+	if ( 'datamachine_worktree_disk_budget_thresholds' === $hook_name ) {
+		return array_merge((array) $value, array( 'refuse_free_bytes' => 0, 'refuse_free_percent' => 0, 'refuse_free_inodes' => 0, 'refuse_free_inode_percent' => 0 ));
 	}
 
 	return $value;
@@ -181,6 +184,9 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function get_row( string $sql, string $output = ARRAY_A ): ?array {
 		++$this->get_row_calls;
+		if ( preg_match('/\bhandle\s*=\s*([^\s]+)\s+LIMIT/i', $sql, $matches) && isset($this->rows[ stripslashes($matches[1]) ]) ) {
+			return $this->rows[ stripslashes($matches[1]) ];
+		}
 		foreach ( $this->rows as $handle => $row ) {
 			if ( str_contains($sql, (string) $handle) ) {
 				return $row;
@@ -192,7 +198,7 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function prepare( string $query, mixed ...$args ): string {
 		foreach ( $args as $arg ) {
-			$query = preg_replace('/%s/', addslashes((string) $arg), $query, 1) ?? $query;
+			$query = preg_replace('/%[is]/', addslashes((string) $arg), $query, 1) ?? $query;
 		}
 		return $query;
 	}
@@ -275,7 +281,6 @@ function interrupted_creation_intent( string $branch, string $base_head, array $
 function create_primary_checkout( string $workspace_root ): void {
 	$source = $workspace_root . '/source';
 	$origin = $workspace_root . '/origin.git';
-	mkdir($workspace_root, 0777, true);
 	mkdir($source, 0777, true);
 	run_command('git init -b main', $source);
 	run_command('git config user.email test@example.test', $source);
@@ -286,7 +291,12 @@ function create_primary_checkout( string $workspace_root ): void {
 	run_command('git init --bare ' . escapeshellarg($origin));
 	run_command('git remote add origin ' . escapeshellarg($origin), $source);
 	run_command('git push -u origin main', $source);
+	// The handoff proof verifies the remote's live HEAD advertisement, not this
+	// clone's cached origin/HEAD ref. Make the fixture's remote contract explicit.
+	run_command('git symbolic-ref HEAD refs/heads/main', $origin);
 	run_command('git clone ' . escapeshellarg($origin) . ' ' . escapeshellarg($workspace_root . '/homeboy'));
+	run_command('git config user.email test@example.test', $workspace_root . '/homeboy');
+	run_command('git config user.name "DMC Test"', $workspace_root . '/homeboy');
 	run_command('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $workspace_root . '/homeboy');
 }
 
@@ -316,6 +326,9 @@ try {
 	run_command('git add plan-remote-change.txt && git commit -m plan-remote-change && git push', $source_path);
 	$stale_apply = $workspace->worktree_apply_plan($stale_plan);
 	assert_true(is_wp_error($stale_apply) && 'stale_worktree_plan' === $stale_apply->get_error_code() && ! is_dir($workspace_root . '/homeboy@planned-stale'), 'remote change did not fail closed as a stale plan');
+	$GLOBALS['datamachine_code_test_options']['github_credential_profiles'] = array(
+		array( 'id' => 'enterprise', 'host' => 'github.example.com' ),
+	);
 	$remote_backend = new RemoteWorkspaceBackend();
 	$public_remote = $remote_backend->clone_repo('https://github.com/example/public-project.git', 'public-project');
 	assert_true(! is_wp_error($public_remote), 'public GitHub remote registration failed');
@@ -348,9 +361,21 @@ try {
 	mkdir($source_path . '/upstream-package', 0777, true);
 	file_put_contents($source_path . '/upstream-package/composer.lock', '{}');
 	run_command('git add upstream-package/composer.lock && git commit -m upstream-dependency && git push', $source_path);
-	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true);
+	$rebase_progress = array();
+	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true, array(), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$rebase_progress ): void {
+		$rebase_progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($rebased_admission), is_wp_error($rebased_admission) ? $rebased_admission->get_error_message() : 'stale branch rebase admission failed');
 	assert_true(true === ( $rebased_admission['rebase_succeeded'] ?? false ), 'stale branch was not rebased onto its advanced upstream');
+	$post_create_validation = array_search('post_create_validation', $rebase_progress, true);
+	$staleness_probe = array_search('staleness_probe', $rebase_progress, true);
+	$rebase_start = array_search('rebase', $rebase_progress, true);
+	$default_branch_probe = array_search('default_branch_probe', $rebase_progress, true);
+	$post_rebase_demand = array_search('post_rebase_demand_planning', $rebase_progress, true);
+	$post_rebase_capacity = array_search('post_rebase_capacity_inspection', $rebase_progress, true);
+	$post_rebase_reclaim = array_search('post_rebase_artifact_reclamation', $rebase_progress, true);
+	$bootstrap_start = array_search('bootstrap_start', $rebase_progress, true);
+	assert_true(false !== $post_create_validation && false !== $staleness_probe && false !== $rebase_start && false !== $default_branch_probe && false !== $post_rebase_demand && false !== $post_rebase_capacity && false !== $post_rebase_reclaim && false !== $bootstrap_start && $post_create_validation < $staleness_probe && $staleness_probe < $rebase_start && $rebase_start < $default_branch_probe && $default_branch_probe < $post_rebase_demand && $post_rebase_demand < $post_rebase_capacity && $post_rebase_capacity < $post_rebase_reclaim && $post_rebase_reclaim < $bootstrap_start, 'real rebase/bootstrap creation did not report post-create validation, slow probes, post-rebase admission, and bootstrap in order');
 	assert_true(1 === ( $rebased_admission['post_rebase_disk_budget']['demand_plan']['counts']['composer_roots'] ?? 0 ), 'post-rebase admission did not reserve the dependency root introduced only by upstream');
 	assert_true('post_materialization_target_tree_conservative' === ( $rebased_admission['post_rebase_disk_budget']['demand_source'] ?? '' ), 'post-rebase admission did not report its effective target-tree demand source');
 	run_command(
@@ -443,6 +468,7 @@ try {
 	assert_true(! is_wp_error($admitted_dry_run), is_wp_error($admitted_dry_run) ? $admitted_dry_run->get_error_message() : 'admitted capacity remediation dry-run failed');
 	assert_true(true === ( $admitted_dry_run['dry_run'] ?? false ), 'admitted capacity remediation request did not report dry-run.');
 	assert_true(false === ( $admitted_dry_run['created'] ?? true ), 'admitted capacity remediation dry-run created a worktree.');
+	assert_true('not_applicable' === ( $admitted_dry_run['handoff_freshness']['status'] ?? null ) && 'non_allocation_dry_run' === ( $admitted_dry_run['handoff_freshness']['reason'] ?? null ), 'capacity remediation dry-run did not report its non-allocation handoff status.');
 	assert_true(! is_dir($workspace_root . '/homeboy@capacity-remediation-admitted-dry-run'), 'admitted capacity remediation dry-run materialized a worktree directory.');
 	assert_true($dry_run_remote_refs === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path), 'capacity remediation dry-run fetched or changed remote refs.');
 	assert_true($dry_run_lock_rows === $wpdb->lock_rows, 'capacity remediation dry-run wrote lock-store lifecycle rows.');
@@ -501,10 +527,53 @@ try {
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-tracker-required'), 'strict tracker refusal left a worktree directory behind');
 
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
-	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true);
+	$progress = array();
+	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
+		$progress[] = $event;
+	});
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
+	$handoff_freshness = (array) ( $result['handoff_freshness'] ?? array() );
+	$handoff_proof = (array) ( $handoff_freshness['proof'] ?? array() );
+	assert_true('verified' === ( $handoff_freshness['status'] ?? null ), 'new allocation did not issue a verified handoff freshness contract');
+	assert_true(3 === ( $handoff_proof['version'] ?? null ) && 'homeboy@audit-primitives-20260616' === ( $handoff_proof['handle'] ?? '' ) && ! empty($handoff_proof['worktree_sha']) && ! empty($handoff_proof['resolved_base_sha']) && ! empty($handoff_proof['resolved_base_ref']) && ! empty($handoff_proof['remote_default_sha']) && ( $handoff_proof['remote_default_sha'] ?? null ) === ( $handoff_proof['remote_default_advertised_sha'] ?? null ) && ! empty($handoff_proof['remote_default_ref']) && ! empty($handoff_proof['verified_at']), 'new allocation did not issue a complete advertised-remote handoff proof');
+	$persisted_handoff_proof = (array) ( \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata('homeboy@audit-primitives-20260616')['handoff_freshness_proof'] ?? array() );
+	assert_true($handoff_proof === $persisted_handoff_proof, 'full-bootstrap allocation did not persist the returned remotely verified handoff proof');
+	$current_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	assert_true(! is_wp_error($current_handoff) && 'current' === ( $current_handoff['status'] ?? null ), 'fresh handoff proof did not revalidate as current');
+	$reordered_handoff = $handoff_proof;
+	krsort($reordered_handoff, SORT_STRING);
+	$reordered_result = $workspace->worktree_handoff_revalidate((string) $result['handle'], $reordered_handoff);
+	assert_true(! is_wp_error($reordered_result) && 'current' === ( $reordered_result['status'] ?? null ), 'semantically identical reordered handoff proof was refused');
+	$handoff_lock = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire($workspace_root, 'homeboy', 0);
+	assert_true(! is_wp_error($handoff_lock), 'handoff contention fixture could not acquire the repository lock');
+	try {
+		$handoff_contention = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	} finally {
+		$handoff_lock->release();
+	}
+	assert_true(! is_wp_error($handoff_contention) && 'contention' === ( $handoff_contention['status'] ?? null ), 'handoff revalidation did not return typed contention');
+	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $workspace_root . '/homeboy');
+	$handoff_fetch_failed = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	$handoff_fetch_status = is_wp_error($handoff_fetch_failed) ? $handoff_fetch_failed->get_error_code() : (string) ( $handoff_fetch_failed['status'] ?? 'missing' );
+	assert_true(! is_wp_error($handoff_fetch_failed) && 'fetch_failed' === $handoff_fetch_status, 'handoff revalidation did not return typed fetch failure; got ' . $handoff_fetch_status);
+	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/origin.git'), $workspace_root . '/homeboy');
+	$tampered_handoff = $handoff_proof;
+	$tampered_handoff['worktree_sha'] = str_repeat('0', 40);
+	$tampered_result = $workspace->worktree_handoff_revalidate((string) $result['handle'], $tampered_handoff);
+	assert_true(is_wp_error($tampered_result) && 'untrusted_worktree_handoff_proof' === $tampered_result->get_error_code(), 'tampered handoff proof was accepted');
+	run_command('git checkout main', $source_path);
+	file_put_contents($source_path . '/handoff-remote-advance.txt', "advance\n");
+	run_command('git add handoff-remote-advance.txt && git commit -m handoff-remote-advance && git push', $source_path);
+	$drifted_handoff = $workspace->worktree_handoff_revalidate((string) $result['handle'], $handoff_proof);
+	assert_true(! is_wp_error($drifted_handoff) && 'drift' === ( $drifted_handoff['status'] ?? null ) && isset($drifted_handoff['drift']['remote_default_sha']), 'remote advance did not produce typed handoff drift');
+	$replayed_drift = $workspace->worktree_handoff_revalidate((string) $result['handle'], (array) ( $drifted_handoff['proof'] ?? array() ));
+	assert_true(is_wp_error($replayed_drift) && 'untrusted_worktree_handoff_proof' === $replayed_drift->get_error_code(), 'a drift response could be replayed as a trusted proof');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
+	$progress_phases = array_column($progress, 'phase');
+	assert_true(array( 'repo_preflight', 'lock_request', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'lock_request', 'capacity_admitted', 'lock_request', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata', 'lock_request' ) === $progress_phases, 'worktree add did not emit ordered phase and lock-request progress through creation, inventory persistence, and handoff');
+	$lock_requests = array_values(array_filter($progress, static fn( array $event ): bool => 'lock_request' === ($event['phase'] ?? null)));
+	assert_true(4 === count($lock_requests) && array() === array_filter($lock_requests, static fn( array $event ): bool => empty($event['request_id']) || empty($event['scope']) || empty($event['queue_position'])), 'worktree add lock progress omitted durable request identity, scope, or queue position');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
@@ -522,6 +591,78 @@ try {
 	assert_true(! is_wp_error($environment_tracker), is_wp_error($environment_tracker) ? $environment_tracker->get_error_message() : 'environment tracker fallback failed');
 	assert_true('https://example.test/issues/environment' === ( $wpdb->rows['homeboy@audit-primitives-environment-tracker']['task_url'] ?? '' ), 'environment tracker metadata was not persisted');
 	putenv('DATAMACHINE_TASK_URL');
+
+	$attach_fixture = $workspace->worktree_add('homeboy', 'attach-tracker', 'origin/main', false, false, false, false, true);
+	assert_true(! is_wp_error($attach_fixture), is_wp_error($attach_fixture) ? $attach_fixture->get_error_message() : 'tracker attachment fixture creation failed');
+	$attach_handle = 'homeboy@attach-tracker';
+	$owner_identity = array(
+		'origin_site_url' => 'https://example.test',
+		'origin_agent'    => 'fixture-agent',
+		'origin_session'  => array( 'primary_id' => 'fixture-session', 'ids' => array( 'fixture' => array( 'session_id' => 'fixture-session' ) ) ),
+	);
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity'] = static fn( array $identity ): array => $owner_identity;
+	$owner_stored = WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
+	assert_true(true === $owner_stored, 'tracker attachment fixture ownership could not be persisted');
+	$before_attach = WorktreeContextInjector::get_metadata_fresh($attach_handle);
+	$before_head     = trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path']));
+	$before_branch   = trim(run_command('git branch --show-current', (string) $attach_fixture['path']));
+	$before_status   = run_command('git status --porcelain', (string) $attach_fixture['path']);
+	$attach_git_dir  = trim(run_command('git rev-parse --git-dir', (string) $attach_fixture['path']));
+	$attach_git_dir  = str_starts_with($attach_git_dir, '/') ? $attach_git_dir : (string) $attach_fixture['path'] . '/' . $attach_git_dir;
+	$tracker_path    = (string) realpath($attach_git_dir) . '/datamachine-code-task.json';
+	$before_tracker  = is_file($tracker_path) ? file_get_contents($tracker_path) : null;
+	$before_row      = $wpdb->rows[ $attach_handle ];
+	$before_options  = $GLOBALS['datamachine_code_test_options'];
+	$conflicting_provider_tracker = wp_json_encode(array( 'schema' => 'datamachine-code/worktree-tracker/v1', 'task_url' => 'https://github.com/Example/Homeboy/issues/999', 'task_ref' => null ));
+	file_put_contents($tracker_path, $conflicting_provider_tracker);
+	$provider_conflict_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$provider_conflict_apply   = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($provider_conflict_preview) && is_wp_error($provider_conflict_apply) && 'worktree_tracker_conflict' === $provider_conflict_preview->get_error_code() && $provider_conflict_preview->get_error_code() === $provider_conflict_apply->get_error_code(), 'conflicting standalone tracker ownership was not rejected consistently');
+	assert_true($conflicting_provider_tracker === file_get_contents($tracker_path) && $before_attach === WorktreeContextInjector::get_metadata_fresh($attach_handle), 'conflicting standalone tracker rejection changed provider or lifecycle ownership');
+	unlink($tracker_path);
+	$before_locks = $wpdb->lock_rows;
+	$preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ), true);
+	assert_true(! is_wp_error($preview) && true === ( $preview['dry_run'] ?? false ) && 'eligible' === ( $preview['status'] ?? null ), is_wp_error($preview) ? $preview->get_error_message() : 'clean tracker attachment preview was not eligible');
+	assert_true($attach_handle === ( $preview['handle'] ?? null ) && (string) $attach_fixture['path'] === ( $preview['path'] ?? null ) && $before_branch === ( $preview['branch'] ?? null ) && $before_head === ( $preview['worktree_sha'] ?? null ), 'attachment preview omitted exact handle, path, branch, or HEAD identity');
+	assert_true('https://github.com/Example/Homeboy/issues/1221' === ( $preview['task_identity'] ?? null ) && ( $preview['tracker'] ?? null ) === array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), 'attachment preview omitted canonical task identity');
+	assert_true($before_attach === WorktreeContextInjector::get_metadata_fresh($attach_handle) && $before_row === $wpdb->rows[ $attach_handle ] && $before_options === $GLOBALS['datamachine_code_test_options'], 'attachment preview mutated lifecycle metadata');
+	assert_true($before_locks === $wpdb->lock_rows, 'attachment preview acquired a mutation lock');
+	assert_true($before_head === trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path'])) && $before_branch === trim(run_command('git branch --show-current', (string) $attach_fixture['path'])) && $before_status === run_command('git status --porcelain', (string) $attach_fixture['path']), 'attachment preview changed Git state');
+	assert_true($before_tracker === ( is_file($tracker_path) ? file_get_contents($tracker_path) : null ), 'attachment preview wrote standalone Git tracker metadata');
+	$attached = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ));
+	assert_true(! is_wp_error($attached) && 'attached' === ( $attached['status'] ?? null ), is_wp_error($attached) ? $attached->get_error_message() : 'clean tracker attachment was not admitted');
+	assert_true($preview['allocation_identity'] === $attached['allocation_identity'] && $preview['tracker'] === $attached['tracker'], 'eligible preview and apply did not bind the same allocation and task predicates');
+	assert_true('https://github.com/Example/Homeboy/issues/1221' === ( $attached['provider_resolution']['task_url'] ?? null ), 'attachment did not return a fresh canonical provider resolution');
+	assert_true($before_head === trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path'])), 'tracker attachment changed HEAD');
+	$after_attach = WorktreeContextInjector::get_metadata_fresh($attach_handle);
+	foreach ( array( 'lifecycle_state', 'branch', 'reuse_contract', 'provisioning' ) as $preserved_field ) {
+		assert_true(($before_attach[ $preserved_field ] ?? null) === ($after_attach[ $preserved_field ] ?? null), 'tracker attachment changed preserved metadata field ' . $preserved_field);
+	}
+	file_put_contents($tracker_path, wp_json_encode(array( 'schema' => 'datamachine-code/worktree-tracker/v1', 'task_url' => 'https://github.com/Example/Homeboy/issues/999', 'task_ref' => null )));
+	$stale_provider_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$stale_provider_apply   = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($stale_provider_preview) && is_wp_error($stale_provider_apply) && 'worktree_tracker_provider_mismatch' === $stale_provider_preview->get_error_code() && $stale_provider_preview->get_error_code() === $stale_provider_apply->get_error_code(), 'stale standalone tracker projection did not fail preview and apply consistently');
+	assert_true(true === WorktreeContextInjector::store_standalone_worktree_tracker($after_attach), 'standalone tracker fixture could not be restored after stale projection coverage');
+	$replay_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	assert_true(! is_wp_error($replay_preview) && 'already_attached' === ( $replay_preview['status'] ?? null ), 'same-tracker preview was not typed as already_attached');
+	$replayed = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(! is_wp_error($replayed) && 'already_attached' === ( $replayed['status'] ?? null ) && ! empty($replayed['receipt']['proof_id']), 'same-tracker replay was not idempotent with a fresh proof');
+	$conflict_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_ref' => 'example/homeboy#1222' ), true);
+	$conflict = $workspace->worktree_attach_tracker($attach_handle, array( 'task_ref' => 'example/homeboy#1222' ));
+	assert_true(is_wp_error($conflict_preview) && is_wp_error($conflict) && $conflict_preview->get_error_code() === $conflict->get_error_code() && 'worktree_tracker_conflict' === $conflict->get_error_code(), 'preview/apply conflict predicates diverged');
+	file_put_contents((string) $attach_fixture['path'] . '/dirty-attachment.txt', "dirty\n");
+	$dirty_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$dirty_attachment = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($dirty_preview) && is_wp_error($dirty_attachment) && $dirty_preview->get_error_code() === $dirty_attachment->get_error_code() && 'worktree_dirty' === $dirty_attachment->get_error_code(), 'preview/apply cleanliness predicates diverged');
+	unlink((string) $attach_fixture['path'] . '/dirty-attachment.txt');
+	$foreign_owner = $owner_identity;
+	$foreign_owner['origin_session']['primary_id'] = 'foreign-session';
+	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $foreign_owner);
+	$foreign_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$foreign_attachment = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($foreign_preview) && is_wp_error($foreign_attachment) && $foreign_preview->get_error_code() === $foreign_attachment->get_error_code() && 'worktree_tracker_owner_mismatch' === $foreign_attachment->get_error_code(), 'preview/apply owner predicates diverged');
+	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity']);
 
 	$reusable = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($reusable), is_wp_error($reusable) ? $reusable->get_error_message() : 'reuse fixture creation failed');
@@ -577,6 +718,7 @@ try {
 	file_put_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker', "preserved bootstrap\n");
 	$recycled = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
 	assert_true(! is_wp_error($recycled) && true === ( $recycled['recycled'] ?? false ), is_wp_error($recycled) ? $recycled->get_error_message() : 'terminal recycle did not succeed');
+	assert_true('verified' === ( $recycled['handoff_freshness']['status'] ?? null ) && ! empty($recycled['handoff_freshness']['proof']), 'terminal recycle did not issue a verified handoff proof');
 	assert_true('terminal_exact_handle' === ( $recycled['recycle']['reason_code'] ?? null ) && 'https://example.test/issues/recycle-old' === ( $recycled['recycle']['lineage']['previous_task']['task_url'] ?? null ) && 'https://example.test/issues/recycle-new' === ( $recycled['recycle']['lineage']['new_task']['task_url'] ?? null ), 'terminal recycle did not return durable task lineage');
 	assert_true('https://example.test/issues/recycle-new' === ( $wpdb->rows[$recycle_handle]['task_url'] ?? '' ) && 'https://example.test/issues/recycle-old' === ( $recycled['metadata']['recycle_lineage'][0]['previous_task']['task_url'] ?? null ), 'terminal recycle did not persist task lineage');
 	assert_true('preserved context' === trim((string) file_get_contents($recycle_fixture['path'] . '/.recycle-context')) && 'preserved bootstrap' === trim((string) file_get_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker')) && 'preserved' === ( $recycled['recycle']['context'] ?? null ) && 'preserved' === ( $recycled['recycle']['bootstrap'] ?? null ), 'terminal recycle did not preserve compatible context/bootstrap assets');
@@ -619,7 +761,21 @@ try {
 	assert_true(is_wp_error($disposable_mismatch) && 'disposable_intent_mismatch' === ( $disposable_mismatch->get_error_data()['reuse']['reason_code'] ?? '' ), 'incompatible disposable reuse did not return typed intent evidence');
 	$disposable_finalized = $workspace->worktree_finalize('homeboy@purpose-owned-disposable', 'active', null, 'success');
 	assert_true(! is_wp_error($disposable_finalized) && 'cleanup_eligible' === ( $disposable_finalized['lifecycle_state'] ?? '' ), 'successful owner terminal outcome did not make disposable worktree cleanup eligible');
+	assert_true('run-991' === ( $disposable_finalized['metadata']['finalized_owner_run_ref'] ?? null ) && 'run-991' === ( $disposable_finalized['metadata']['owner_terminal_owner_run_ref'] ?? null ), 'terminal finalization did not bind its cleanup authority to the current owner');
 	assert_true(strtotime((string) ( $disposable_finalized['metadata']['last_seen_at'] ?? '' )) < strtotime((string) ( $disposable_finalized['metadata']['finalized_at'] ?? '' )), 'terminal finalization must not refresh heartbeat activity');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle'] = static fn(): bool => true;
+	$disposable_show = WorkspaceAbilities::showRepo(array( 'name' => 'homeboy@purpose-owned-disposable' ));
+	assert_true(! is_wp_error($disposable_show) && $disposable['path'] === ( $disposable_show['path'] ?? null ), 'workspace show did not keep the finalized local worktree on the canonical local route');
+	$disposable_status = WorkspaceAbilities::gitStatus(array( 'name' => 'homeboy@purpose-owned-disposable' ));
+	assert_true(! is_wp_error($disposable_status) && $disposable['path'] === ( $disposable_status['path'] ?? null ), 'workspace git status did not keep the finalized local worktree on the canonical local route');
+	$disposable_push = WorkspaceAbilities::gitPush(array(
+		'name'   => 'homeboy@purpose-owned-disposable',
+		'remote' => 'origin',
+		'branch' => 'purpose-owned-disposable',
+	));
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle']);
+	assert_true(! is_wp_error($disposable_push), is_wp_error($disposable_push) ? $disposable_push->get_error_message() : 'workspace git push refused a present finalized local worktree');
+	assert_true('homeboy' === ( $disposable_push['workspace_repo'] ?? null ) && array_key_exists('force_with_lease', $disposable_push) && 'Remote workspace branch already updated via GitHub API.' !== ( $disposable_push['message'] ?? '' ), 'workspace git push did not use the canonical local route for a finalized worktree');
 	$reuse_created_at  = $wpdb->rows[$reuse_handle]['created_at'] ?? null;
 	$owner_conflict_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($owner_conflict_plan) && 'owner_conflict' === ( $owner_conflict_plan['disposition'] ?? null ), 'live owner conflict was not planned');
@@ -633,24 +789,64 @@ try {
 	assert_true(! is_wp_error($reused), is_wp_error($reused) ? $reused->get_error_message() : 'clean compatible worktree was not reused');
 	assert_true(true === ( $reused['reused'] ?? false ) && 'exact_compatible_handle' === ( $reused['reuse']['reason_code'] ?? null ), 'exact reuse did not return accepted evidence');
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
+	assert_true('verified' === ( $reused['handoff_freshness']['status'] ?? null ) && ! empty($reused['handoff_freshness']['proof']), 'exact reuse did not issue a verified handoff proof');
+	$late_reuse = new ReflectionMethod($workspace, 'worktree_add_with_capacity_lock');
+	$late_reuse_lock = \DataMachineCode\Workspace\WorkspaceMutationLock::acquire($workspace_root, 'homeboy', 0);
+	assert_true(! is_wp_error($late_reuse_lock), 'late capacity reuse fixture could not acquire the repository lock');
+	try {
+		$late_reuse_contended = $late_reuse->invoke($workspace, 'homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, array(), 'idempotent-reuse', $reuse_handle, (string) $reused['path'], $primary_path, 'reuse_compatible', false, false, microtime(true) + 0.1, 1, microtime(true), array());
+	} finally {
+		$late_reuse_lock->release();
+	}
+	assert_true(is_wp_error($late_reuse_contended) && 'workspace_repo_busy' === $late_reuse_contended->get_error_code(), 'late capacity admission reuse bypassed the repository lock');
+	$late_reuse_result = $late_reuse->invoke($workspace, 'homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, array(), 'idempotent-reuse', $reuse_handle, (string) $reused['path'], $primary_path, 'reuse_compatible', false, false, microtime(true) + 30, 30, microtime(true), array());
+	assert_true(! is_wp_error($late_reuse_result) && true === ( $late_reuse_result['reused'] ?? false ) && 'verified' === ( $late_reuse_result['handoff_freshness']['status'] ?? null ) && ! empty($late_reuse_result['handoff_freshness']['proof']), 'late capacity admission reuse did not take the repo-locked proof path');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
 	$claim_fixture = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ));
 	assert_true(! is_wp_error($claim_fixture), is_wp_error($claim_fixture) ? $claim_fixture->get_error_message() : 'claim fixture creation failed');
 	run_command('git push -u origin claim-expired', $claim_fixture['path']);
 	$claim_handle = 'homeboy@claim-expired';
-	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c'), 'origin_agent' => '', 'origin_session' => '', 'origin_user' => '', 'owner_run_ref' => '' ));
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1), 'origin_agent' => (object) array( 'id' => 'invalid' ), 'origin_session' => 'session', 'origin_user' => 'user', 'owner_run_ref' => 'old-run' ));
 	$claim_intent = array( 'purpose' => 'recovered-owner', 'owner_run_ref' => 'claim-run-1', 'cleanup_policy' => 'remove_on_success' );
+	$malformed_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
+	assert_true(is_wp_error($malformed_claim) && 'malformed_ownership_metadata' === ( $malformed_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 'malformed' === ( $malformed_claim->get_error_data()['reuse']['liveness_evidence']['attribution'] ?? null ) && array( 'origin_agent' ) === ( $malformed_claim->get_error_data()['reuse']['liveness_evidence']['malformed_ownership_fields'] ?? null ), 'claim expired refused malformed ownership metadata');
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c'), 'origin_agent' => '', 'origin_session' => '', 'origin_user' => '', 'owner_run_ref' => '' ));
 	$fresh_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
 	assert_true(is_wp_error($fresh_claim) && 'fresh_unattributed_heartbeat' === ( $fresh_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 0 <= (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_age_seconds'] ?? -1 ) && WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS === (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_ttl_seconds'] ?? 0 ) && array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ) === ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['missing_ownership_fields'] ?? null ), 'fresh unattributed heartbeat did not refuse with complete deterministic evidence');
-	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1) ));
+	$owner_a_finalized_at = gmdate('c', time() - 3600);
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array(
+		'last_seen_at'                    => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1),
+		'lifecycle_state'                 => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+		'purpose'                         => 'previous-owner',
+		'owner_run_ref'                   => 'old-run',
+		'cleanup_policy'                  => WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS,
+		'owner_terminal_outcome'          => 'success',
+		'owner_terminal_at'               => $owner_a_finalized_at,
+		'owner_terminal_owner_run_ref'    => 'old-run',
+		'finalized_at'                    => $owner_a_finalized_at,
+		'finalized_state'                 => WorktreeContextInjector::STATE_ACTIVE,
+		'finalized_owner_run_ref'         => 'old-run',
+		'cleanup_eligible_at'             => $owner_a_finalized_at,
+	));
 	$claimed = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
-	assert_true(! is_wp_error($claimed) && true === ( $claimed['claimed'] ?? false ) && 'expired_unattributed_heartbeat' === ( $claimed['claim']['reason_code'] ?? null ) && 'claim-run-1' === ( $claimed['metadata']['owner_run_ref'] ?? null ) && '' === ( $claimed['metadata']['ownership_lineage'][0]['previous_owner_run_ref'] ?? 'not-empty' ), is_wp_error($claimed) ? $claimed->get_error_message() : 'expired anonymous heartbeat was not safely claimed with ownership lineage');
+	assert_true(! is_wp_error($claimed) && true === ( $claimed['claimed'] ?? false ) && 'terminal_exact_handle' === ( $claimed['claim']['reason_code'] ?? null ) && WorktreeContextInjector::STATE_ACTIVE === ( $claimed['metadata']['lifecycle_state'] ?? null ) && 'claim-run-1' === ( $claimed['metadata']['owner_run_ref'] ?? null ) && 'old-run' === ( $claimed['metadata']['ownership_lineage'][0]['previous_owner_run_ref'] ?? null ), is_wp_error($claimed) ? $claimed->get_error_message() : 'owner B could not claim owner A terminal worktree with ownership lineage');
+	foreach ( array( 'owner_terminal_outcome', 'owner_terminal_at', 'owner_terminal_owner_run_ref', 'finalized_at', 'finalized_state', 'finalized_owner_run_ref', 'cleanup_eligible_at' ) as $terminal_field ) {
+		assert_true(! array_key_exists($terminal_field, $claimed['metadata']), sprintf('ownership claim retained stale terminal field %s', $terminal_field));
+	}
 	// Simulate a caller being terminated after checkout materialization and after
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.
-	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$bootstrap_progress = array();
+	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$bootstrap_progress ): void {
+		$bootstrap_progress[] = $event['phase'] ?? null;
+	});
 	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
+	assert_true('verified' === ( $interrupted_bootstrap['handoff_freshness']['status'] ?? null ) && ! empty($interrupted_bootstrap['handoff_freshness']['proof']) && 'succeeded' === ( $interrupted_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), 'completed bootstrap allocation did not receive a verified handoff proof');
+	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
+	$bootstrap_complete = array_search('bootstrap_complete', $bootstrap_progress, true);
+	$inventory_metadata = array_search('inventory_metadata', $bootstrap_progress, true);
+	assert_true(false !== $bootstrap_start && false !== $bootstrap_complete && false !== $inventory_metadata && $inventory_metadata < $bootstrap_start && $bootstrap_start < $bootstrap_complete, 'worktree add did not persist inventory before the deferred bootstrap completed');
 	$interrupted_bootstrap_handle = 'homeboy@interrupted-bootstrap';
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array(
 		'provisioning' => array(
@@ -662,10 +858,59 @@ try {
 	assert_true(false === ( $incomplete_get['worktrees'][0]['readiness']['ready'] ?? true ) && 'bootstrap_running' === ( $incomplete_get['worktrees'][0]['readiness']['reason'] ?? '' ) && str_contains((string) ($incomplete_get['worktrees'][0]['readiness']['resume_command'] ?? ''), 'worktree add homeboy interrupted-bootstrap'), 'interrupted bootstrap did not survive as explicit incomplete readiness evidence');
 	$incomplete_show = $workspace->show_repo($interrupted_bootstrap_handle);
 	assert_true(false === ( $incomplete_show['readiness']['ready'] ?? true ) && 'incomplete' === ( $incomplete_show['readiness']['status'] ?? '' ), 'workspace show did not project incomplete bootstrap readiness');
-	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	$interrupted_metadata['last_seen_at'] = gmdate('c', time() - 90000);
+	$interrupted_metadata['provisioning']['bootstrap']['capacity_reservation'] = array( 'bytes' => 10, 'inodes' => 1 );
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'live' ) ));
+	$interrupted_metadata['provisioning']['bootstrap']['owner'] = WorktreeContextInjector::bootstrap_owner();
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	$live_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(is_wp_error($live_bootstrap) && 'worktree_bootstrap_in_progress' === $live_bootstrap->get_error_code(), 'live bootstrap owner did not reject concurrent resume');
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = $interrupted_metadata['provisioning']['bootstrap']['owner'];
+	$interrupted_metadata['provisioning']['bootstrap']['active_child'] = array( 'pid' => 4242, 'identity' => array( 'platform' => 'test', 'pid' => 4242, 'token' => 'child' ) );
+	unset($interrupted_metadata['provisioning']['bootstrap']['owner']);
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => 4242 === $pid ? array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => 4242, 'token' => 'child' ) ) : array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$child_live_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(is_wp_error($child_live_bootstrap) && 'worktree_bootstrap_in_progress' === $child_live_bootstrap->get_error_code(), 'dead coordinator with live child did not reject resume');
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	unset($interrupted_metadata['provisioning']['bootstrap']['active_child']);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'live' ) ));
+	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = WorktreeContextInjector::bootstrap_owner();
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' ));
+	$unverifiable_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(is_wp_error($unverifiable_bootstrap) && 'worktree_bootstrap_owner_unverifiable' === $unverifiable_bootstrap->get_error_code() && 'owner_probe_denied' === ($unverifiable_bootstrap->get_error_data()['coordinator']['reason'] ?? null), 'unverifiable bootstrap owner did not fail closed with typed evidence');
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'replacement' ) ));
 	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
-	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'exact retry did not resume interrupted bootstrap');
+	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ) && empty($resumed_bootstrap['metadata']['provisioning']['bootstrap']['capacity_reservation']), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'verified PID identity mismatch did not reconcile and resume');
+	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
+	$interrupted_metadata['provisioning']['bootstrap']['outcome'] = 'running';
+	$interrupted_metadata['provisioning']['bootstrap']['capacity_reservation'] = array( 'bytes' => 10, 'inodes' => 1 );
+	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = array( 'pid' => 999999, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '1' ) );
+	unset($interrupted_metadata['provisioning']['bootstrap']['active_child'], $interrupted_metadata['provisioning']['bootstrap']['owner']);
+	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
+	$dead_owner_resume = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	assert_true(! is_wp_error($dead_owner_resume) && true === ($dead_owner_resume['resumed'] ?? false) && 'succeeded' === ($dead_owner_resume['metadata']['provisioning']['bootstrap']['outcome'] ?? null), is_wp_error($dead_owner_resume) ? $dead_owner_resume->get_error_message() : 'verified dead bootstrap owner did not reconcile and resume');
+	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(null);
 	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
+	$probe_timeout_workspace = new class extends Workspace {
+		protected function worktree_behind_count( string $repo_path, string $ref, string $upstream, int $timeout_seconds ): int|null|\WP_Error {
+			if ( 'post-create-probe-timeout' === $ref ) {
+				return new \WP_Error('git_command_timeout', 'Synthetic hanging post-create probe.', array( 'timeout' => $timeout_seconds ));
+			}
+			return parent::worktree_behind_count($repo_path, $ref, $upstream, $timeout_seconds);
+		}
+	};
+	$probe_timeout = $probe_timeout_workspace->worktree_add('homeboy', 'post-create-probe-timeout', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/post-create-probe-timeout' ));
+	$probe_timeout_handle = 'homeboy@post-create-probe-timeout';
+	$probe_timeout_path = $workspace_root . '/' . $probe_timeout_handle;
+	assert_true(is_wp_error($probe_timeout) && 'worktree_operation_timeout' === $probe_timeout->get_error_code() && 'default_branch_probe' === ( $probe_timeout->get_error_data()['phase'] ?? null ) && 'creation_journal_retained' === ( $probe_timeout->get_error_data()['recovery']['status'] ?? null ) && is_dir($probe_timeout_path) && null !== WorktreeContextInjector::get_creation_intent($probe_timeout_handle), 'timed-out post-create default-branch probe did not retain typed recovery state');
+	run_command('git worktree remove --force ' . escapeshellarg($probe_timeout_path), $primary_path);
+	run_command('git branch -D post-create-probe-timeout', $primary_path);
+	WorktreeContextInjector::forget_creation_intent($probe_timeout_handle, WorktreeContextInjector::get_creation_intent($probe_timeout_handle) ?? array());
 	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");
@@ -696,6 +941,7 @@ try {
 	$adopted = $workspace->worktree_add('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
 	assert_true(! is_wp_error($adopted) && true === ( $adopted['adopted'] ?? false ), is_wp_error($adopted) ? $adopted->get_error_message() : 'exact interrupted worktree was not adopted');
 	assert_true('interrupted_exact_handle' === ( $adopted['recovery']['reason_code'] ?? null ) && 'https://example.test/issues/interrupted-add' === ( $adopted['metadata']['origin_task']['task_url'] ?? null ) && 'origin/main' === ( $adopted['metadata']['reuse_contract']['base_ref'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted adoption did not promote and clear the exact journal contract');
+	assert_true('verified' === ( $adopted['handoff_freshness']['status'] ?? null ) && ! empty($adopted['handoff_freshness']['proof']), 'interrupted adoption did not issue a verified handoff proof');
 
 	$external_path = $workspace_root . '/homeboy@interrupted-add-external';
 	run_command('git worktree add -b interrupted-add-external ' . escapeshellarg($external_path) . ' origin/main', $primary_path);
@@ -752,9 +998,47 @@ try {
 	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'staged terminal finalization mutated lifecycle metadata');
 	run_command('git reset --hard HEAD', $result['path']);
 
+	// Exercise finalization against a high-cardinality clean checkout whose
+	// status duration deterministically exceeds the former five-second budget.
+	$large_fixture = $result['path'] . '/large-clean-fixture';
+	for ( $directory = 0; $directory < 50; ++$directory ) {
+		$fixture_directory = $large_fixture . '/' . str_pad((string) $directory, 2, '0', STR_PAD_LEFT);
+		mkdir($fixture_directory, 0777, true);
+		for ( $file = 0; $file < 100; ++$file ) {
+			file_put_contents($fixture_directory . '/' . str_pad((string) $file, 3, '0', STR_PAD_LEFT) . '.txt', "tracked\n");
+		}
+	}
+	run_command('git add large-clean-fixture && git commit -m large-clean-finalizer-fixture && git push', $result['path']);
+	assert_true('' === run_command('git status --porcelain', $result['path']), 'large finalizer fixture is not clean');
+	$finalizer_bin = $workspace_root . '/finalizer-bin';
+	mkdir($finalizer_bin, 0777, true);
+	$real_git = trim((string) shell_exec('command -v git'));
+	assert_true('' !== $real_git, 'finalizer fixture could not resolve git');
+	file_put_contents($finalizer_bin . '/git', "#!/bin/sh\nif [ \"\$3\" = status ]; then sleep \"\${DMC_FINALIZER_STATUS_DELAY:-0}\"; fi\nexec " . escapeshellarg($real_git) . " \"\$@\"\n");
+	chmod($finalizer_bin . '/git', 0755);
+	$original_path = getenv('PATH');
+	putenv('PATH=' . $finalizer_bin . ':' . ( false === $original_path ? '' : $original_path ));
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 1;
+	putenv('DMC_FINALIZER_STATUS_DELAY=10');
+	$started = microtime(true);
+	$finalizer_timeout = $workspace->worktree_finalize($handle, 'merged');
+	$elapsed = microtime(true) - $started;
+	assert_true(is_wp_error($finalizer_timeout) && 'worktree_finalize_dirty_probe_failed' === $finalizer_timeout->get_error_code(), 'stalled finalizer dirty probe did not return its typed phase error');
+	assert_true('dirty_probe' === ( $finalizer_timeout->get_error_data()['phase'] ?? null ), 'stalled finalizer dirty probe did not preserve its phase');
+	assert_true(1 === ( $finalizer_timeout->get_error_data()['timeout_seconds'] ?? null ), 'stalled finalizer dirty probe did not preserve its configured budget');
+	assert_true($elapsed < 3.0, sprintf('stalled finalizer dirty probe exceeded its configured bound: %.3fs', $elapsed));
+	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'timed-out finalizer dirty probe mutated lifecycle metadata');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 7;
+	putenv('DMC_FINALIZER_STATUS_DELAY=6');
+	$started = microtime(true);
 	$clean_finalization = $workspace->worktree_finalize($handle, 'merged');
-	assert_true(! is_wp_error($clean_finalization), 'clean terminal worktree finalization failed');
+	$elapsed = microtime(true) - $started;
+	putenv('DMC_FINALIZER_STATUS_DELAY');
+	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds']);
+	assert_true(! is_wp_error($clean_finalization), is_wp_error($clean_finalization) ? 'clean terminal worktree finalization failed: ' . $clean_finalization->get_error_code() . ' ' . $clean_finalization->get_error_message() : 'clean terminal worktree finalization failed');
 	assert_true('cleanup_eligible' === ( $clean_finalization['lifecycle_state'] ?? '' ), 'clean terminal finalization did not expose cleanup eligibility');
+	assert_true($elapsed >= 5.5 && $elapsed < 8.5, sprintf('large clean-worktree finalization did not honor its deterministic process budget: %.3fs', $elapsed));
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
@@ -894,6 +1178,11 @@ try {
 	assert_true(str_contains($adversarial_command, escapeshellarg($adversarial_branch)) && str_contains($adversarial_command, '--purpose=' . escapeshellarg($adversarial_intent['purpose'])) && str_contains($adversarial_command, '--owner-run-ref=' . escapeshellarg($adversarial_intent['owner_run_ref'])), 'replay command did not shell-escape adversarial values');
 	assert_true(! str_contains($adversarial_command, 'origin/not-a-ref;'), 'replay command retained the invalid explicit base');
 	assert_true(! file_exists($workspace_root . '/should-not-run'), 'replay command executed adversarial shell input while rendering');
+	$unsafe_tracker_retry = $workspace->worktree_add('homeboy', 'unsafe-tracker-retry', 'origin/not-a-ref', false, false, false, false, true, array( 'task_url' => 'https://token:must-not-leak@example.test/issues/1247' ));
+	assert_true(is_wp_error($unsafe_tracker_retry), 'credential-bearing missing-base request unexpectedly succeeded');
+	$unsafe_tracker_data  = (array) $unsafe_tracker_retry->get_error_data();
+	assert_true(array() === ( $unsafe_tracker_data['next_commands'] ?? null ), 'credential-bearing tracker identity retained a missing-base retry command');
+	assert_true(! str_contains($unsafe_tracker_retry->get_error_message() . wp_json_encode($unsafe_tracker_data), 'must-not-leak'), 'credential-bearing tracker identity leaked into missing-base remediation');
 
 	run_command('git checkout main', $source_path);
 	run_command('git branch -f trunk main && git push -f origin trunk', $source_path);
@@ -925,7 +1214,6 @@ try {
 	assert_true(is_wp_error($missing_metadata) && array_key_exists('detected_default_ref', $missing_metadata_data) && null === $missing_metadata_data['detected_default_ref'], 'unavailable remote metadata reported a default ref');
 	assert_true('unavailable' === ( $missing_metadata_data['default_ref_source'] ?? null ), 'unavailable remote metadata did not report its evidence state');
 	assert_true(array() === ( $missing_metadata_data['next_commands'] ?? null ), 'unavailable remote metadata returned an unsafe replay command');
-
 	$contention_wpdb = new Datamachine_Code_Test_Wpdb();
 	$contention_wpdb->sqlite = true;
 	$contention_wpdb->busy_replace = true;
@@ -937,8 +1225,113 @@ try {
 	assert_true('workspace_sqlite_lock_contention' === $contention->get_error_code(), 'SQLite contention did not return the structured error');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-sqlite-locked'), 'SQLite contention left a partial Git worktree behind');
 
+	// Force final handoff fetch success followed by remote-advertisement timeout.
+	// The returned continuation must never re-enter allocation or bootstrap.
+	run_command('git --git-dir=' . escapeshellarg($workspace_root . '/origin.git') . ' symbolic-ref HEAD refs/heads/main', $primary_path);
+	run_command('git config branch.main.remote origin && git config branch.main.merge refs/heads/main && git fetch origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $primary_path);
 	$GLOBALS['wpdb'] = new Datamachine_Code_Test_Wpdb();
-	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $workspace_root . '/homeboy');
+	$handoff_upload_pack = $workspace_root . '/handoff-upload-pack.sh';
+	$handoff_call_count  = $workspace_root . '/handoff-upload-pack-count';
+	$progress            = array();
+	$bootstrap_outcome_at_complete = null;
+	$timed_out_add       = $workspace->worktree_add(
+		'homeboy',
+		'handoff-partial-success',
+		'origin/main',
+		false,
+		true,
+		false,
+		false,
+		true,
+		array( 'task_url' => 'https://example.test/issues/handoff-partial-success' ),
+		false,
+		true,
+		array(),
+		'reuse_compatible',
+		false,
+		false,
+		static function ( array $event ) use ( &$progress, &$bootstrap_outcome_at_complete, $primary_path, $handoff_upload_pack, $handoff_call_count ): void {
+			$phase      = (string) ( $event['phase'] ?? '' );
+			$progress[] = $phase;
+			if ( 'bootstrap_complete' !== $phase ) {
+				return;
+			}
+			$bootstrap_outcome_at_complete = WorktreeContextInjector::get_metadata_fresh('homeboy@handoff-partial-success')['provisioning']['bootstrap']['outcome'] ?? null;
+			$script = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\n[ \"\$count\" -eq 1 ] && exec git upload-pack \"\$@\"\nsleep 10\n";
+			file_put_contents($handoff_upload_pack, $script);
+			chmod($handoff_upload_pack, 0700);
+			run_command('git config remote.origin.uploadpack ' . escapeshellarg($handoff_upload_pack), $primary_path);
+		}
+	);
+	$partial = is_wp_error($timed_out_add) ? (array) $timed_out_add->get_error_data() : array();
+	assert_true(is_wp_error($timed_out_add) && 'worktree_handoff_freshness_unverified' === $timed_out_add->get_error_code(), 'post-commit handoff timeout did not remain a fail-closed add result');
+	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
+	assert_true('worktree_handoff_revalidation_timeout' === ( $partial['handoff_freshness']['reason'] ?? null ) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff timeout lost its typed freshness cause or committed allocation');
+	assert_true(false === ( $partial['retry']['repeat_allocation'] ?? true ) && false === ( $partial['retry']['repeat_bootstrap'] ?? true ), 'post-commit handoff timeout did not prohibit allocation/bootstrap replay');
+	assert_true('succeeded' === $bootstrap_outcome_at_complete, 'no-op bootstrap completion became observable before terminal metadata was persisted');
+	$continuation = (array) ( $partial['continuation'] ?? array() );
+	$identity     = (array) ( $continuation['input']['allocation_identity'] ?? array() );
+	$handle       = (string) ( $partial['handle'] ?? '' );
+	assert_true('datamachine-code/workspace-worktree-handoff-resume' === ( $continuation['ability'] ?? null ) && true === ( $continuation['read_only'] ?? false ) && true === ( $continuation['idempotent'] ?? false ), 'partial success omitted its exact read-only continuation');
+	assert_true(str_contains((string) ( $continuation['command'] ?? '' ), 'worktree handoff-resume') && $handle === ( $continuation['input']['handle'] ?? null ), 'partial success continuation was not directly executable for the exact handle');
+
+	// Model an older copied runtime whose option snapshot missed the terminal
+	// inventory write, then perform the partial metadata write made after upgrade.
+	$stale_copied_metadata = WorktreeContextInjector::get_metadata_fresh($handle) ?? array();
+	$stale_copied_metadata['last_seen_at'] = gmdate('c', time() + 60);
+	$stale_copied_metadata['provisioning']['bootstrap']['outcome'] = 'running';
+	$stale_copied_metadata['provisioning']['bootstrap']['coordinator'] = array( 'pid' => 999999, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '1' ) );
+	$stale_copied_metadata['origin_task']['task_url'] = 'https://example.test/issues/stale-copied-runtime';
+	$GLOBALS['datamachine_code_test_options'][ WorktreeContextInjector::METADATA_OPTION ][ $handle ] = $stale_copied_metadata;
+	$upgrade_write = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'runtime_upgrade_checked_at' => gmdate('c') ));
+	$upgraded_metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true(! is_wp_error($upgrade_write) && 'succeeded' === ( $upgraded_metadata['provisioning']['bootstrap']['outcome'] ?? null ), 'copied-runtime partial metadata write replayed stale bootstrap state over terminal inventory metadata');
+	assert_true($identity === ( $upgraded_metadata['handoff_continuation_identity'] ?? null ), 'copied-runtime metadata repair replaced the exact allocation identity');
+	assert_true('https://example.test/issues/handoff-partial-success' === ( $upgraded_metadata['origin_task']['task_url'] ?? null ) && WorktreeContextInjector::standalone_worktree_tracker_is_current($upgraded_metadata), 'copied-runtime metadata write replaced authoritative task-tracker ownership');
+
+	$worktrees_before = run_command('git worktree list --porcelain', $primary_path);
+	$branches_before  = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path);
+	$rows_before      = $GLOBALS['wpdb']->rows;
+	$metadata_before  = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true('succeeded' === ( $metadata_before['provisioning']['bootstrap']['outcome'] ?? null ) && empty($metadata_before['provisioning']['bootstrap']['coordinator']), 'handoff identity was not calculated from terminal no-op bootstrap metadata');
+	assert_true(1 === count(array_filter($progress, static fn( string $phase ): bool => 'bootstrap_start' === $phase)), 'initial allocation did not execute bootstrap exactly once');
+
+	// Replace the timeout helper with an always-successful counting proxy. One
+	// call per continuation proves no repeated fetch before ls-remote.
+	$proxy = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\nexec git upload-pack \"\$@\"\n";
+	file_put_contents($handoff_upload_pack, $proxy);
+	file_put_contents($handoff_call_count, "0\n");
+	chmod($handoff_upload_pack, 0700);
+	$resumed_once  = $workspace->worktree_handoff_resume($handle, $identity);
+	$resumed_twice = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(! is_wp_error($resumed_once) && ! is_wp_error($resumed_twice) && 'current' === ( $resumed_once['status'] ?? null ) && true === ( $resumed_twice['read_only'] ?? false ), 'exact handoff continuation did not converge idempotently');
+	assert_true("2\n" === file_get_contents($handoff_call_count), 'handoff continuation repeated fetch instead of making one read-only remote advertisement call');
+	assert_true($worktrees_before === run_command('git worktree list --porcelain', $primary_path), 'handoff continuation duplicated or replaced a worktree allocation');
+	assert_true($branches_before === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path), 'handoff continuation created or collided with a branch');
+	assert_true($rows_before === $GLOBALS['wpdb']->rows, 'handoff continuation rewrote inventory state');
+	assert_true($metadata_before === WorktreeContextInjector::get_metadata_fresh($handle), 'handoff continuation rewrote lifecycle or bootstrap metadata');
+	$metadata_refresh = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'owner_run_ref' => 'refreshed-owner-run' ));
+	$refresh_required = $workspace->worktree_handoff_resume($handle, $identity);
+	$refreshed_data   = is_wp_error($refresh_required) ? (array) $refresh_required->get_error_data() : array();
+	$refreshed_identity = (array) ( $refreshed_data['continuation']['input']['allocation_identity'] ?? array() );
+	assert_true(! is_wp_error($metadata_refresh) && is_wp_error($refresh_required) && 'worktree_handoff_allocation_identity_refreshed' === $refresh_required->get_error_code(), 'safe metadata drift did not return a typed refreshed continuation');
+	assert_true(array() !== $refreshed_identity && $identity !== $refreshed_identity && $refreshed_identity === ( WorktreeContextInjector::get_metadata_fresh($handle)['handoff_continuation_identity'] ?? null ), 'refreshed continuation was not bound as the authoritative handoff identity');
+	$identity = $refreshed_identity;
+	$refreshed_resume = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(! is_wp_error($refreshed_resume) && 'current' === ( $refreshed_resume['status'] ?? null ), 'refreshed exact handoff continuation did not converge');
+
+	$path = (string) ( $partial['path'] ?? '' );
+	run_command('git switch -c handoff-collision', $path);
+	$branch_drift = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(is_wp_error($branch_drift) && 'worktree_handoff_allocation_drift' === $branch_drift->get_error_code() && true === ( $branch_drift->get_error_data()['mutation_committed'] ?? false ), 'branch collision produced an unsafe freshness claim');
+	run_command('git switch handoff-partial-success && git branch -D handoff-collision', $path);
+	file_put_contents($path . '/unsafe-untracked.txt', "unsafe\n");
+	$dirty_drift = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(is_wp_error($dirty_drift) && 'worktree_handoff_allocation_drift' === $dirty_drift->get_error_code(), 'dirty allocation produced an unsafe freshness claim');
+	unlink($path . '/unsafe-untracked.txt');
+	run_command('git config --unset remote.origin.uploadpack', $primary_path);
+
+	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $primary_path);
 	$fetch_failed_default = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails', 'origin/main', false, false, false, false, true);
 	assert_true(is_wp_error($fetch_failed_default), 'fetch failure reported success without explicit opt-in');
 	assert_true('worktree_freshness_unverified' === $fetch_failed_default->get_error_code(), 'unexpected fetch failure error code');
@@ -953,14 +1346,17 @@ try {
 	assert_true(! is_wp_error($fetch_failed_allowed), is_wp_error($fetch_failed_allowed) ? $fetch_failed_allowed->get_error_message() : 'fetch failure opt-in failed');
 	assert_true(! empty($fetch_failed_allowed['fetch_failed']), 'fetch failure opt-in did not surface fetch_failed');
 	assert_true(is_dir($fetch_failed_allowed['path']), 'fetch failure opt-in worktree path is not accessible');
-
 	remove_tree($workspace_root, $fixture);
 	fwrite(STDOUT, "worktree-add-lifecycle ok: fixture {$workspace_root}\n");
 } catch (Throwable $e) {
-	if ( is_dir($workspace_root) ) {
-		remove_tree($workspace_root, $fixture);
-		fwrite(STDERR, "worktree-add-lifecycle failure cleaned fixture {$workspace_root}\n");
-	}
 	fwrite(STDERR, $e->getMessage() . "\n");
+	if ( is_dir($workspace_root) ) {
+		try {
+			remove_tree($workspace_root, $fixture);
+			fwrite(STDERR, "worktree-add-lifecycle failure cleaned fixture {$workspace_root}\n");
+		} catch (Throwable $cleanup_error) {
+			fwrite(STDERR, "worktree-add-lifecycle cleanup failure after test failure: {$cleanup_error->getMessage()}\n");
+		}
+	}
 	exit(1);
 }

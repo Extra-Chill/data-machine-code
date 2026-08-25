@@ -27,7 +27,12 @@ namespace {
 		define('ABSPATH', __DIR__ . '/fixtures/');
 	}
 	function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false { return json_encode($value, $flags, $depth); }
-	final class WP_Error {}
+	final class WP_Error {
+		public function __construct( private string $code = '', private string $message = '', private array $data = array() ) {}
+		public function get_error_code(): string { return $this->code; }
+		public function get_error_message(): string { return $this->message; }
+		public function get_error_data(): array { return $this->data; }
+	}
 	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
 	final class WP_CLI {
 		public static string $output = '';
@@ -37,11 +42,16 @@ namespace {
 		public static function warning( string $message ): void {}
 		public static function success( string $message ): void {}
 		public static function error( string $message ): void { throw new \RuntimeException($message); }
+		public static function halt( int $status ): never { throw new Worktree_List_Cli_Halt($status); }
 	}
+	final class Worktree_List_Cli_Halt extends \RuntimeException { public function __construct( public int $status ) { parent::__construct('halt'); } }
 	final class WorktreeListAbility {
 		public array $inputs = array();
-		public function execute( array $input ): array {
+		public function execute( array $input ): array|WP_Error {
 			$this->inputs[] = $input;
+			if ( '{overflow}' === ( $input['task_ref'] ?? null ) && ! empty($input['all']) ) {
+				return new WP_Error('worktree_task_candidates_overflow', 'Task worktree lookup exceeded the complete bounded candidate limit.', array( 'status' => 409, 'task_ref' => '{overflow}', 'total' => 201, 'limit' => 200 ));
+			}
 			return array(
 				'success' => true,
 				'total' => 100,
@@ -97,9 +107,26 @@ namespace {
 	$envelope = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
 	pagination_compat_assert(100 === ($envelope['total'] ?? null) && 'next' === ($envelope['next_cursor'] ?? null), 'Envelope JSON must expose continuation metadata.');
 
+	WP_CLI::$output = '';
+	invoke_worktree_list($command, array( 'format' => 'json', 'envelope' => true, 'task-ref' => 'https://github.com/example/repo/issues/100', 'owner-run-ref' => 'cook/run/100' ));
+	pagination_compat_assert('https://github.com/example/repo/issues/100' === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['task_ref'] ?? null) && 'cook/run/100' === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['owner_run_ref'] ?? null), 'CLI did not forward task and owner filters to the worktree ability.');
+
+	WP_CLI::$output = '';
+	invoke_worktree_list($command, array( 'format' => 'json', 'task-ref' => '{task_url}', 'with-status' => true ));
+	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[3]['all'] ?? false) && true === ($GLOBALS['dmc_worktree_list_ability']->inputs[3]['include_status'] ?? false) && '{task_url}' === ($GLOBALS['dmc_worktree_list_ability']->inputs[3]['task_ref'] ?? null), 'wp-coding-agents resolve_task invocation must request the complete task-scoped safety rows.');
+	WP_CLI::$output = '';
+	try {
+		invoke_worktree_list($command, array( 'format' => 'json', 'task-ref' => '{overflow}', 'with-status' => true ));
+		throw new RuntimeException('Task overflow must halt the machine-readable CLI call.');
+	} catch (Worktree_List_Cli_Halt $halt) {
+		pagination_compat_assert(1 === $halt->status, 'Task overflow must return deterministic nonzero status.');
+	}
+	$overflow = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
+	pagination_compat_assert('worktree_task_candidates_overflow' === ($overflow['error']['code'] ?? null) && 201 === ($overflow['error']['data']['total'] ?? null) && 200 === ($overflow['error']['data']['limit'] ?? null) && '{overflow}' === ($overflow['error']['data']['task_ref'] ?? null), 'Task overflow JSON must preserve typed adapter evidence.');
+
 	invoke_worktree_list($command, array( 'format' => 'csv' ));
 	invoke_worktree_list($command, array( 'format' => 'yaml' ));
-	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[2]['all'] ?? false) && true === ($GLOBALS['dmc_worktree_list_ability']->inputs[3]['all'] ?? false), 'CSV and YAML must request exhaustive row streams.');
+	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[5]['all'] ?? false) && true === ($GLOBALS['dmc_worktree_list_ability']->inputs[6]['all'] ?? false), 'CSV and YAML must request exhaustive row streams.');
 
 	try {
 		invoke_worktree_list($command, array( 'format' => 'json', 'limit' => 10 ));

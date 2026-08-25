@@ -507,6 +507,7 @@ final class GitHubCredentialResolver {
 		return array(
 			'id'                  => $id,
 			'label'               => (string) ( $entry['label'] ?? $id ),
+			'host'                => (string) ( $entry['host'] ?? '' ),
 			'mode'                => strtolower( (string) ( $entry['mode'] ?? 'pat' )),
 			'pat'                 => (string) ( $entry['pat'] ?? '' ),
 			'app_id'              => (string) ( $entry['app_id'] ?? '' ),
@@ -522,6 +523,7 @@ final class GitHubCredentialResolver {
 		return array(
 			'id'                  => self::DEFAULT_PROFILE_ID,
 			'label'               => 'Default',
+			'host'                => '',
 			'mode'                => 'pat',
 			'pat'                 => '',
 			'app_id'              => '',
@@ -575,6 +577,7 @@ final class GitHubCredentialResolver {
 		return array(
 			'id'                          => (string) $profile['id'],
 			'label'                       => (string) ( $profile['label'] ?? $profile['id'] ),
+			'host'                        => (string) ( $profile['host'] ?? '' ),
 			'mode'                        => $mode,
 			'pat_configured'              => '' !== trim( (string) ( $profile['pat'] ?? '' )),
 			'app_id_configured'           => '' !== trim( (string) ( $profile['app_id'] ?? '' )),

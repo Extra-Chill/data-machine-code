@@ -33,13 +33,16 @@ trait WorkspaceRepositoryLifecycle {
 	/** Maximum per-repository summary rows returned with a workspace list. */
 	private const WORKSPACE_LIST_SUMMARY_REPO_LIMIT = 25;
 
+	/** Maximum wall-clock time spent discovering a bounded inventory page. */
+	private const WORKSPACE_LIST_SCAN_BUDGET_SECONDS = 5.0;
+
 	/**
 	 * List repositories in the workspace.
 	 *
 	 * @param  string|null $repo Optional primary repository name to include.
 	 * @param  string|null $type Optional checkout type filter: primary or worktree.
 	 * @param  array{limit?:int,cursor?:string,all?:bool,include_status?:bool} $options List options.
-	 * @return array{success: bool, repos: array, path: string, total: int, returned: int, next_cursor: string|null, status_requested: bool, summary: array}|\WP_Error
+	 * @return array{success: bool, repos: array, path: string, total: int|null, returned: int, next_cursor: string|null, partial: bool, continuation: array, diagnostics: array, status_requested: bool, summary: array}|\WP_Error
 	 */
 	public function list_repos( ?string $repo = null, ?string $type = null, array $options = array() ): array|\WP_Error {
 		$path    = $this->workspace_path;
@@ -75,18 +78,24 @@ trait WorkspaceRepositoryLifecycle {
 				'total'            => 0,
 				'returned'         => 0,
 				'next_cursor'      => null,
+				'partial'          => false,
+				'continuation'     => array( 'available' => false, 'cursor' => null, 'reason' => null ),
+				'diagnostics'      => $this->workspace_list_diagnostics( 0, 0.0, false, null, null ),
 				'status_requested' => $include_status,
 				'summary'          => $this->workspace_list_summary($path),
 			);
 		}
 
-		$repos     = array();
-		$summary   = $this->workspace_list_summary($path);
-		$summary_repo_names = array();
-		$remaining = 0;
+		$repos                 = array();
+		$summary               = $this->workspace_list_summary($path);
+		$repository_summaries  = array();
+		$remaining             = 0;
+		$started_at            = microtime(true);
+		$scan_budget           = $all ? null : $this->workspace_list_scan_budget_seconds();
+		$budget_exhausted      = false;
 		foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $repo_info ) {
 			$this->workspace_list_count_summary($summary, $repo_info);
-			$this->workspace_list_insert_bounded_repo_name($summary_repo_names, (string) ( $repo_info['repo'] ?? $repo_info['name'] ?? 'unknown' ), self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
+			$this->workspace_list_count_repository_summary($repository_summaries, $repo_info);
 			if ( null === $cursor || strcmp($this->workspace_list_row_key($repo_info), $cursor) > 0 ) {
 				++$remaining;
 				if ( $all ) {
@@ -95,13 +104,19 @@ trait WorkspaceRepositoryLifecycle {
 					$this->workspace_list_insert_bounded_row($repos, $repo_info, $limit);
 				}
 			}
+			if ( null !== $scan_budget && microtime(true) - $started_at >= $scan_budget ) {
+				$budget_exhausted = true;
+				break;
+			}
 		}
 		if ( $all ) {
 			usort($repos, fn( array $left, array $right ): int => strcmp($this->workspace_list_row_key($left), $this->workspace_list_row_key($right)));
 		}
-		$summary['repos'] = $this->workspace_list_aggregate_repos($path, $repo_filter, $type_filter, $summary_repo_names);
-		$summary['repo_count'] = $this->workspace_list_count_repositories($path, $repo_filter, $type_filter, $summary_repo_names);
-		$this->workspace_list_finish_summary($summary);
+		ksort($repository_summaries);
+		$summary['repos'] = array_slice(array_values($repository_summaries), 0, self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT);
+		$observed_repository_count = count($repository_summaries);
+		$summary['repo_count'] = $budget_exhausted ? null : $observed_repository_count;
+		$this->workspace_list_finish_summary($summary, ! $budget_exhausted, $observed_repository_count);
 		if ( $include_status ) {
 			foreach ( $repos as &$repo_info ) {
 				if ( empty($repo_info['git']) || ! is_string($repo_info['path'] ?? null) ) {
@@ -122,17 +137,25 @@ trait WorkspaceRepositoryLifecycle {
 			unset($repo_info);
 		}
 		$next_cursor = null;
-		if ( ! $all && $remaining > count($repos) && ! empty($repos) ) {
+		if ( ! $all && ! $budget_exhausted && $remaining > count($repos) && ! empty($repos) ) {
 			$next_cursor = $this->encode_workspace_list_cursor($this->workspace_list_row_key($repos[ count($repos) - 1 ]), $repo_filter, $type_filter);
 		}
+		$elapsed = max(0.0, microtime(true) - $started_at);
 
 		return array(
 			'success'          => true,
 			'repos'            => $repos,
 			'path'             => $path,
-			'total'            => $summary['total'],
+			'total'            => $budget_exhausted ? null : $summary['total'],
 			'returned'         => count($repos),
 			'next_cursor'      => $next_cursor,
+			'partial'          => $budget_exhausted,
+			'continuation'     => array(
+				'available' => null !== $next_cursor,
+				'cursor'    => $next_cursor,
+				'reason'    => $budget_exhausted ? 'scan_budget_exhausted' : ( null === $next_cursor ? null : 'more_rows' ),
+			),
+			'diagnostics'      => $this->workspace_list_diagnostics(1, $elapsed, $budget_exhausted, $budget_exhausted ? 'scan_budget_exhausted' : null, $scan_budget),
 			'status_requested' => $include_status,
 			'summary'          => $summary,
 		);
@@ -165,16 +188,58 @@ trait WorkspaceRepositoryLifecycle {
 	}
 
 	/** @param array<string,mixed> $summary */
-	private function workspace_list_finish_summary( array &$summary ): void {
+	private function workspace_list_finish_summary( array &$summary, bool $complete, int $observed_repository_count ): void {
 		$summary['repos_returned'] = count($summary['repos']);
-		$summary['repos_omitted']  = $summary['repo_count'] - $summary['repos_returned'];
-		if ( $summary['non_git'] > 0 ) {
+		$summary['repos_omitted']  = $complete ? $summary['repo_count'] - $summary['repos_returned'] : null;
+		if ( ! $complete ) {
+			$summary['observed'] = array(
+				'total'      => $summary['total'],
+				'primary'    => $summary['primary'],
+				'worktree'   => $summary['worktree'],
+				'context'    => $summary['context'],
+				'non_git'    => $summary['non_git'],
+				'repo_count' => $observed_repository_count,
+			);
+			$summary['total'] = null;
+			$summary['primary'] = null;
+			$summary['worktree'] = null;
+			$summary['context'] = null;
+			$summary['non_git'] = null;
+		}
+		if ( ( $summary['observed']['non_git'] ?? $summary['non_git'] ) > 0 ) {
 			$summary['triage_command'] = 'wp datamachine-code workspace triage list --format=json';
 		}
 	}
 
+	/** @param array<string,array<string,int|string>> $repositories @param array<string,mixed> $row */
+	private function workspace_list_count_repository_summary( array &$repositories, array $row ): void {
+		$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
+		if ( ! isset($repositories[ $repo ]) ) {
+			$repositories[ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'context' => 0, 'total' => 0 );
+		}
+		$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
+		++$repositories[ $repo ][ $kind ];
+		++$repositories[ $repo ]['total'];
+	}
+
+	/** @return array<string,float|int|string|bool|null> */
+	private function workspace_list_diagnostics( int $scan_passes, float $elapsed, bool $budget_exhausted, ?string $reason, ?float $budget ): array {
+		return array(
+			'scan_passes'              => $scan_passes,
+			'scan_elapsed_seconds'     => $elapsed,
+			'scan_budget_seconds'      => $budget,
+			'budget_exhausted'         => $budget_exhausted,
+			'budget_exhaustion_reason' => $reason,
+		);
+	}
+
+	protected function workspace_list_scan_budget_seconds(): float {
+		return self::WORKSPACE_LIST_SCAN_BUDGET_SECONDS;
+	}
+
 	/** @return \Generator<int,array<string,mixed>> */
 	protected function workspace_list_rows( string $path, ?string $repo_filter, ?string $type_filter ): \Generator {
+		$this->workspace_list_scan_started();
 		if ( 'context' !== $type_filter ) {
 			foreach ( new \DirectoryIterator($path) as $entry ) {
 				$name = $entry->getFilename();
@@ -202,6 +267,8 @@ trait WorkspaceRepositoryLifecycle {
 		}
 	}
 
+	protected function workspace_list_scan_started(): void {}
+
 	/** @param array<int,array<string,mixed>> $rows @param array<string,mixed> $row */
 	protected function workspace_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
 		$key = $this->workspace_list_row_key($row);
@@ -212,66 +279,6 @@ trait WorkspaceRepositoryLifecycle {
 		if ( $position >= $limit && $limit === count($rows) ) { return; }
 		array_splice($rows, $position, 0, array( $row ));
 		if ( count($rows) > $limit ) { array_pop($rows); }
-	}
-
-	/** @param array<string,bool> $repos */
-	private function workspace_list_insert_bounded_repo_name( array &$repos, string $repo, int $limit ): void {
-		$repos[ $repo ] = true;
-		ksort($repos);
-		if ( count($repos) > $limit ) {
-			array_pop($repos);
-		}
-	}
-
-	/**
-	 * Aggregate selected repository names in a second streaming pass.
-	 *
-	 * @param array<string,bool> $repo_names
-	 * @return array<int,array<string,int|string>>
-	 */
-	private function workspace_list_aggregate_repos( string $path, ?string $repo_filter, ?string $type_filter, array $repo_names ): array {
-		$repos = array();
-		foreach ( array_keys($repo_names) as $repo ) {
-			$repos[ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'context' => 0, 'total' => 0 );
-		}
-		foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $row ) {
-			$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
-			if ( ! isset($repos[ $repo ]) ) {
-				continue;
-			}
-			$kind = ! empty($row['is_context']) ? 'context' : ( ! empty($row['is_worktree']) ? 'worktree' : 'primary' );
-			++$repos[ $repo ][ $kind ];
-			++$repos[ $repo ]['total'];
-		}
-		return array_values($repos);
-	}
-
-	/**
-	 * Count distinct repositories in bounded keyset batches.
-	 *
-	 * @param array<string,bool> $first_batch The selected smallest repository names.
-	 */
-	private function workspace_list_count_repositories( string $path, ?string $repo_filter, ?string $type_filter, array $first_batch ): int {
-		$count = count($first_batch);
-		if ( $count < self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT ) {
-			return $count;
-		}
-		$after = (string) array_key_last($first_batch);
-		do {
-			$batch = array();
-			foreach ( $this->workspace_list_rows($path, $repo_filter, $type_filter) as $row ) {
-				$repo = (string) ( $row['repo'] ?? $row['name'] ?? 'unknown' );
-				if ( $repo > $after ) {
-					$this->workspace_list_insert_bounded_repo_name($batch, $repo, self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT + 1);
-				}
-			}
-			$batch_count = count($batch);
-			$count += min(self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT, $batch_count);
-			if ( $batch_count > self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT ) {
-				$after = (string) array_keys($batch)[ self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT - 1 ];
-			}
-		} while ( $batch_count > self::WORKSPACE_LIST_SUMMARY_REPO_LIMIT );
-		return $count;
 	}
 
 	public static function normalize_workspace_list_limit( mixed $limit ): int|\WP_Error {
@@ -400,6 +407,12 @@ trait WorkspaceRepositoryLifecycle {
 
 		if ( is_wp_error($result) ) {
 			return $this->clone_failed_error($result, $name, $repo_path, $url);
+		}
+
+		$this->emit_clone_progress($progress_callback, 'verify', sprintf('Verifying cloned checkout at %s.', $repo_path), $started_at);
+		$validation = $this->validate_clone_target($url, $name, $repo_path);
+		if ( is_wp_error($validation) ) {
+			return $validation;
 		}
 
 		// Guarantee the freshly cloned default branch tracks its remote (issue
@@ -639,7 +652,7 @@ trait WorkspaceRepositoryLifecycle {
 	 * @param  float         $started_at        Clone start timestamp.
 	 * @return array{success: true, output: string}|\WP_Error
 	 */
-	private function run_clone_command( CommandSpec $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
+	protected function run_clone_command( CommandSpec $command, ?callable $progress_callback, float $started_at ): array|\WP_Error {
 		$result = ProcessRunner::run(
 			$command,
 			array(
@@ -668,6 +681,48 @@ trait WorkspaceRepositoryLifecycle {
 		return array(
 			'success' => true,
 			'output'  => $result['output'],
+		);
+	}
+
+	/**
+	 * Verify that a successful clone runner result materialized the requested primary.
+	 *
+	 * @return true|\WP_Error
+	 */
+	private function validate_clone_target( string $url, string $name, string $repo_path ): true|\WP_Error {
+		$phase         = 'post_clone_validation';
+		$state         = 'missing';
+		$actual_remote = null;
+		if ( GitCheckout::exists($repo_path) ) {
+			$actual_remote = $this->git_get_remote($repo_path);
+			$state         = null === $actual_remote || '' === trim($actual_remote) ? 'incomplete' : 'remote_mismatch';
+			if ( null !== $actual_remote && $this->normalize_git_remote_url($url) === $this->normalize_git_remote_url($actual_remote) ) {
+				return true;
+			}
+		} elseif ( is_dir($repo_path) ) {
+			$state = 'incomplete';
+		}
+
+		$next_steps = array(
+			sprintf('Inspect the target: %s', $repo_path),
+			sprintf('Confirm it is a checkout of the requested repository: %s', $url),
+			sprintf('If the target is safe to discard, remove it explicitly: wp datamachine-code workspace remove %s', $name),
+			'Then retry the clone command.',
+		);
+
+		return new \WP_Error(
+			'clone_postcondition_failed',
+			sprintf('Clone postcondition failed during %s for repository %s at %s: target is %s. Next steps: %s', $phase, $url, $repo_path, $state, implode(' ', $next_steps)),
+			array(
+				'status'           => 500,
+				'phase'            => $phase,
+				'repository'       => $url,
+				'name'             => $name,
+				'path'             => $repo_path,
+				'validation_state' => $state,
+				'actual_remote'    => $actual_remote,
+				'next_steps'       => $next_steps,
+			)
 		);
 	}
 
@@ -940,14 +995,18 @@ trait WorkspaceRepositoryLifecycle {
 	/**
 	 * Show detailed info about a workspace repo.
 	 *
-	 * @param  string $handle Workspace handle.
+	 * @param  string $handle  Workspace handle.
+	 * @param  bool   $refresh Fetch the tracked remote before classifying primary freshness.
 	 * @return array{success: bool, name?: string, repo?: string, is_worktree?: bool, is_context?: bool, path?: string|null, branch?: string|null, remote?: string|null, commit?: string|null, dirty?: int, workspace_capacity?: array, primary_freshness?: array|null, workspace_policy?: array}|\WP_Error
 	 */
-	public function show_repo( string $handle ): array|\WP_Error {
+	public function show_repo( string $handle, bool $refresh = false ): array|\WP_Error {
+		$show_started            = microtime(true);
+		$registry_lookup_started = microtime(true);
 		$requested_handle = $handle;
 		$context_policy   = null;
 		$parsed           = $this->parse_handle($handle);
 		$repo_path        = $this->workspace_path . '/' . $parsed['dir_name'];
+		$registry_lookup_ms = (int) round(( microtime(true) - $registry_lookup_started ) * 1000);
 		$inspection       = WorkspaceTargetInspector::inspect($repo_path, $parsed['dir_name']);
 		if ( is_wp_error($inspection) ) {
 			return $inspection;
@@ -1001,6 +1060,24 @@ trait WorkspaceRepositoryLifecycle {
 			return new \WP_Error('repo_not_found', sprintf('Workspace handle "%s" not found.', $requested_handle), array( 'status' => 404 ));
 		}
 
+		$primary_freshness = ! $parsed['is_worktree'] && is_string($inspection['branch_status'] ?? null)
+			? $this->build_primary_freshness_report_from_status_output(
+				(string) $inspection['branch_status'],
+				$parsed['dir_name'],
+				isset($inspection['tracking_ref_observed_at']) && is_string($inspection['tracking_ref_observed_at'])
+					? $inspection['tracking_ref_observed_at']
+					: null
+			)
+			: null;
+		$remote_freshness_started = microtime(true);
+		if ( $refresh && is_array($primary_freshness) ) {
+			$primary_freshness = $this->refresh_primary_freshness_report($repo_path, $parsed['dir_name'], $primary_freshness);
+		}
+		$remote_freshness_ms = (int) round(( microtime(true) - $remote_freshness_started ) * 1000);
+
+		$capacity_started = microtime(true);
+		$capacity         = WorktreeDiskBudget::inspect($this->workspace_path);
+		$capacity_ms      = (int) round(( microtime(true) - $capacity_started ) * 1000);
 		$result = array(
 			'success'            => true,
 			'name'               => null !== $context_policy ? (string) $context_policy['alias'] : $parsed['dir_name'],
@@ -1012,16 +1089,32 @@ trait WorkspaceRepositoryLifecycle {
 			'remote'             => $inspection['remote'] ?? null,
 			'commit'             => $inspection['commit'] ?? null,
 			'dirty'              => (int) ( $inspection['dirty'] ?? 0 ),
-			'workspace_capacity' => WorktreeDiskBudget::inspect($this->workspace_path),
-			'primary_freshness'  => ! $parsed['is_worktree'] && is_string($inspection['branch_status'] ?? null)
-				? $this->build_primary_freshness_report_from_status_output( (string) $inspection['branch_status'], $parsed['dir_name'])
-				: null,
+			'workspace_capacity' => $capacity,
+			'primary_freshness'  => $primary_freshness,
 		);
+		$optional_enrichments_started = microtime(true);
 		if ( $parsed['is_worktree'] ) {
 			$result['readiness'] = WorktreeContextInjector::bootstrap_readiness(WorktreeContextInjector::get_metadata($parsed['dir_name']));
 		}
 		if ( null !== $context_policy ) {
 			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+		if ( function_exists('do_action') ) {
+			$probe_timings = is_array($inspection['probe_timings_ms'] ?? null) ? $inspection['probe_timings_ms'] : array();
+			do_action(
+				'datamachine_code_workspace_show_profiled',
+				array(
+					'handle'     => $requested_handle,
+					'timings_ms' => array(
+						'registry_lookup'      => $registry_lookup_ms,
+						'capacity'             => $capacity_ms,
+						'git_status'           => array_sum(array_map('intval', array_intersect_key($probe_timings, array_flip(array( 'branch', 'remote', 'commit', 'status' ))))),
+						'remote_freshness'     => $remote_freshness_ms,
+						'optional_enrichments' => (int) round(( microtime(true) - $optional_enrichments_started ) * 1000),
+						'total'                => (int) round(( microtime(true) - $show_started ) * 1000),
+					),
+				)
+			);
 		}
 
 		return $result;

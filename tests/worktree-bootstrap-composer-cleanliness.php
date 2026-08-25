@@ -56,7 +56,7 @@ $bin  = $base . '/bin';
 mkdir($bin, 0777, true);
 worktree_bootstrap_tracked_files_write(
 	$bin . '/composer',
-	"#!/bin/sh\nmkdir -p vendor/composer\nprintf '%s\\n' \"rewritten\" > vendor/composer/installed.php\nprintf '%s\\n' \"rewritten marker\" > ../bootstrap-marker.txt\nprintf '%s\\n' \"autoload\" > vendor/autoload.php\nif [ \"\${DMC_COMPOSER_FAIL:-0}\" = 1 ]; then exit 7; fi\n"
+	"#!/bin/sh\nmkdir -p vendor/composer var/cache\nprintf '%s\\n' \"rewritten\" > vendor/composer/installed.php\nprintf '%s\\n' \"rewritten marker\" > ../bootstrap-marker.txt\nprintf '%s\\n' \"autoload\" > vendor/autoload.php\nprintf '%s\\n' \"cache\" > var/cache/bootstrap.cache\nif [ \"\${DMC_COMPOSER_FAIL:-0}\" = 1 ]; then exit 7; fi\n"
 );
 chmod($bin . '/composer', 0755);
 
@@ -65,6 +65,7 @@ putenv('PATH=' . $bin . PATH_SEPARATOR . $old_path);
 
 $success = worktree_bootstrap_tracked_files_fixture($base, 'success');
 $installed = $success . '/figma-transformer/vendor/composer/installed.php';
+worktree_bootstrap_tracked_files_write($success . '/caller-state.txt', "caller state\n");
 worktree_bootstrap_tracked_files_write($installed, "preexisting staged edit\n");
 worktree_bootstrap_tracked_files_command('git add figma-transformer/vendor/composer/installed.php', $success);
 worktree_bootstrap_tracked_files_write($installed, "preexisting local edit\n");
@@ -88,6 +89,16 @@ worktree_bootstrap_tracked_files_assert_same(
 	array( 'figma-transformer/vendor/composer/installed.php' ),
 	$composer['tracked_file_cleanup']['retained_paths'],
 	'Cleanup evidence identifies the retained pre-existing mutation.'
+);
+worktree_bootstrap_tracked_files_assert_same(
+	array( 'caller-state.txt', 'figma-transformer/vendor/composer/installed.php' ),
+	$result['git_state']['pre_existing_dirty_paths'],
+	'Pre-existing caller dirt is attributed separately and remains untouched.'
+);
+worktree_bootstrap_tracked_files_assert_same(
+	array( 'figma-transformer/var/cache/bootstrap.cache', 'figma-transformer/vendor/autoload.php' ),
+	$result['git_state']['bootstrap_created_dirty_paths'],
+	'Nested Composer cache output is attributed as bootstrap-created dirt.'
 );
 
 $failure = worktree_bootstrap_tracked_files_fixture($base, 'failure');

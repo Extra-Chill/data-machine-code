@@ -88,10 +88,55 @@ wp datamachine-code runtime doctor --apply
 
 Configure the authoritative checkout and optional command contract with the
 `datamachine_code_runtime_source_doctor_config` filter. Its `source_path` and
-`release_ref` values are read-only inputs; `command_contract` may provide a
+`release_ref` values resolve only an `origin/<branch>` tracking ref or an immutable
+tag; the doctor reports stale or diverged local branch refs without fetching or
+mutating Git state. `command_contract` may provide a
 `command` and `flag` so the doctor can report a source-supported flag that the
 active WP-CLI registration rejects. The doctor never reconciles unless
-`--apply` is explicit.
+`--apply` is explicit. Copied and Git runtimes may register `external_reconciler`
+with an `owner`, typed `action`, and explicit `reconcile` callback. The callback
+receives runtime/source/release identities, and its result is accepted only after
+the active runtime is re-inspected. Official packages may include immutable
+`Package-Version`, `Package-Source-Tag`, `Package-Source-Commit`, and
+`Package-Digest` headers in `data-machine-code.php`; matching headers verify
+package provenance without requiring a source-tree file-set match. Headers are
+package metadata, not trust roots: configure an independently obtained
+`trusted_release_provenance` record with the same version, tag, commit, and
+digest or the doctor reports the package as untrusted. Package assemblers inject
+the headers with:
+
+```bash
+php bin/dmc-package-provenance --package-dir=/path/to/package --version=1.2.3 --source-tag=v1.2.3 --source-commit=<40-char-commit>
+```
+
+Persist the command's JSON result with the release record and supply it through
+the runtime configuration filter. The package digest excludes only the digest
+header value itself, allowing the independently persisted digest to detect every
+other package/header change.
+
+```php
+add_filter('datamachine_code_runtime_source_doctor_config', static function (array $config): array {
+	$config['external_reconciler'] = array(
+		'owner' => 'deployment integration',
+		'action' => array(
+			'type' => 'command',
+			'command' => 'owner deploy command',
+			'authorize_callback' => static fn(): bool => current_user_can('update_plugins'),
+		),
+		'reconcile' => static function (array $identity): array {
+			// The owning integration updates $identity['runtime']['path'].
+			return array( 'success' => true, 'changed' => true, 'message' => 'Deployment completed.' );
+		},
+	);
+	$config['trusted_release_provenance'] = array(
+		'version' => '1.2.3',
+		'source_tag' => 'v1.2.3',
+		'source_commit' => '<40-char-commit>',
+		'package_digest' => '<64-char-sha256-from-release-record>',
+	);
+	return $config;
+});
+```
 
 # Workspace
 wp datamachine-code workspace path
@@ -103,6 +148,9 @@ wp datamachine-code workspace list --format=json --envelope
 wp datamachine-code workspace list --all --include-status --format=json
 wp datamachine-code workspace clone https://github.com/org/repo.git
 wp datamachine-code workspace show repo-name
+# Default freshness compares cached tracking refs and is reported as local_tracking_current.
+# Opt into a bounded network fetch for remote_verified_current evidence.
+wp datamachine-code workspace show repo-name --refresh
 
 # Worktrees — one per branch, parallel-safe
 wp datamachine-code workspace worktree add repo-name fix/foo
@@ -185,6 +233,7 @@ WordPress bootstrap with the standalone provider executable:
 ```bash
 bin/dmc-worktree-provider identity /path/to/workspace repo@fix-foo
 bin/dmc-worktree-provider safety /path/to/workspace '<identity-token>'
+bin/dmc-worktree-provider converge /path/to/workspace '<identity-token>' '<full-base-sha>'
 ```
 
 Identity reads only the canonical direct-child path and linked-worktree `HEAD`.
@@ -192,6 +241,28 @@ Safety is a separate operation with bounded local Git probes; neither operation
 loads WordPress, reads the database, enumerates the workspace, fetches a remote,
 or performs network I/O. Consumers should persist the returned opaque identity
 token and pass it back unchanged when requesting safety evidence.
+
+`converge` accepts only a full lowercase 40-character commit SHA already present
+locally. It resolves that input to Git's canonical commit OID and refuses any
+noncanonical spelling before mutation, preserving the exact caller-supplied
+`base_sha` evidence binding. It
+revalidates the token-bound identity and ownership, linked-worktree status, clean
+state, absence of unpushed commits, and strict fast-forward ancestry immediately
+before running `git merge --ff-only <base-sha>`. It never fetches or performs any
+other Git mutation. A bounded provider lock, keyed by the canonical linked Git
+directory and its filesystem identity, serializes that final admission and merge.
+It re-observes HEAD and clean status after merging, and reports an ambiguous or
+mutated failure from observed state if Git returns an error or times out. Its
+`datamachine-code/worktree-convergence/v1` evidence binds the unchanged identity
+token and requested base SHA with the before/after HEADs. Unsafe state is returned
+as typed `refused` evidence without mutation.
+
+The identity token is an integrity and staleness binding for the exact canonical
+worktree, branch, primary status, and linked Git directory. It is not an
+authorization secret: callers with host access can invoke Git directly. The
+provider's safety guarantees therefore apply to cooperating local callers and its
+own serialized convergence operations, while Git remains the final admission for
+index and worktree mutations.
 
 The primary checkout (bare `<repo>`) is **read-only by default** for mutating
 operations — pass `--allow-primary-mutation` to override. The default-deny is

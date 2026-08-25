@@ -7,6 +7,8 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined('ABSPATH') || exit;
 
 trait WorkspaceWorktreeInventoryCleanup {
@@ -29,7 +31,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 	 * @param  string   $scope_arg                 Optional primary repo or worktree handle scope.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0, string $scope_arg = '' ): array|\WP_Error {
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0, string $scope_arg = '', ?array $inventory_rows_override = null, ?WallClockBudget $budget = null ): array|\WP_Error {
 		$age_filter = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration($older_than);
@@ -48,13 +50,17 @@ trait WorkspaceWorktreeInventoryCleanup {
 			return $scope;
 		}
 
-		$inventory_rows = array_values(array_filter($this->build_workspace_inventory_rows(), fn( $wt ) => ! empty($wt['is_worktree']) && $this->worktree_row_matches_operation_scope($wt, $scope) ));
+		$source_rows     = null === $inventory_rows_override ? $this->build_workspace_inventory_rows($budget) : $inventory_rows_override;
+		$inventory_rows = array_values(array_filter($source_rows, fn( $wt ) => ! empty($wt['is_worktree']) && $this->worktree_row_matches_operation_scope($wt, $scope) ));
 		$total          = count($inventory_rows);
 		$offset         = max(0, $offset);
 		$page_rows      = null === $limit ? array_slice($inventory_rows, $offset) : array_slice($inventory_rows, $offset, max(1, $limit));
 		$processed      = 0;
 
 		foreach ( $page_rows as $wt ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			++$processed;
 			if ( empty($wt['is_worktree']) ) {
 				continue;
@@ -85,7 +91,7 @@ trait WorkspaceWorktreeInventoryCleanup {
 			if ( null !== $broken_orphan ) {
 				$base_row['classification']       = 'broken_orphan';
 				$base_row['broken_target_path']   = $broken_orphan['gitdir'];
-				$base_row['size_bytes']           = $this->estimate_path_size_bytes($path);
+				$base_row['size_bytes']           = $this->estimate_path_size_bytes($path, $budget);
 				$base_row['estimated_size_bytes'] = $base_row['size_bytes'];
 			}
 			$live_protection = WorktreeCleanupCandidateClassifier::live_protection($base_row);
@@ -223,7 +229,23 @@ trait WorkspaceWorktreeInventoryCleanup {
 		}
 
 		$candidates = $this->sort_worktree_cleanup_rows($candidates, $sort);
-		$pagination = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total, false, null);
+		$budget_stopped = $processed < count($page_rows) && null !== $budget && $budget->expired();
+		$pagination     = $this->build_worktree_cleanup_pagination($offset, $limit, $processed, $total, $budget_stopped, null);
+		if ( $budget_stopped && null === $pagination ) {
+			$next_offset = $offset + $processed;
+			$pagination  = array(
+				'total'          => $total,
+				'offset'         => $offset,
+				'limit'          => $limit,
+				'scanned'        => $processed,
+				'partial'        => true,
+				'complete'       => false,
+				'next_offset'    => $next_offset,
+				'next_command'   => sprintf('studio wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=%d --format=json', max(1, $limit ?? 25)),
+				'budget_stopped' => true,
+				'scope'          => $scope,
+			);
+		}
 		$summary    = $this->build_worktree_cleanup_summary($candidates, array(), $skipped, $age_filter, WorktreeCleanupClassifier::BUCKET_CLEANUP_ELIGIBLE_UNPROBED);
 		$summary['broken_orphans'] = array(
 			'candidates' => count(array_filter($candidates, static fn( $row ) => 'broken_orphan' === (string) ( $row['classification'] ?? '' ))),

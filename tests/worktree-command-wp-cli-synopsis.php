@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace DataMachine\Cli {
 	class BaseCommand {}
 }
@@ -13,14 +11,19 @@ namespace {
 		}
 	}
 
-	$wp_cli_root = getenv('WP_CLI_ROOT');
-	if ( ! is_string($wp_cli_root) || '' === $wp_cli_root ) {
-		throw new \RuntimeException('Set WP_CLI_ROOT to a WP-CLI installation before running this integration test.');
+	if ( ! class_exists(\WP_CLI\SynopsisParser::class) ) {
+		$wp_cli_root = getenv('WP_CLI_ROOT');
+		if ( ! is_string($wp_cli_root) || '' === $wp_cli_root ) {
+			fwrite(STDOUT, "worktree-command-wp-cli-synopsis: skipped (WP_CLI_ROOT is unavailable)\n");
+			return;
+		}
+		require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisParser.php';
+		require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisValidator.php';
 	}
-	require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisParser.php';
-	require_once rtrim($wp_cli_root, '/') . '/php/WP_CLI/SynopsisValidator.php';
 
-	define('ABSPATH', __DIR__ . '/');
+	if ( ! defined('ABSPATH') ) {
+		define('ABSPATH', __DIR__ . '/');
+	}
 	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
@@ -52,10 +55,15 @@ namespace {
 	$parse('remove', array( 'data-machine-code', 'fix/1070' ), array());
 	$parse('finalize', array( 'data-machine-code@fix-1070' ), array( 'pr' => 'https://github.com/Extra-Chill/data-machine-code/pull/1070' ));
 	$parse('locks', array(), array( 'prune-stale' => true, 'dry-run' => true, 'format' => 'json' ));
+	$list_synopsis = $parse('list', array(), array( 'task-ref' => 'https://github.com/Extra-Chill/data-machine-code/issues/1070', 'all' => true, 'format' => 'json' ));
+	worktree_wp_cli_synopsis_assert(str_starts_with($list_synopsis, '[<repo>]'), 'list did not render repo as an optional positional argument.');
 	$parse('abandoned', array(), array( 'apply' => true, 'limit' => '100', 'passes' => '2', 'until-budget' => '300s', 'format' => 'json' ));
 	$active_drain_synopsis = $parse('active-no-signal-drain', array(), array( 'apply' => true, 'limit' => '100', 'passes' => '2', 'until-budget' => '300s', 'format' => 'json' ));
 	$parse('active-no-signal-drain', array( 'data-machine-code' ), array( 'apply' => true, 'format' => 'json' ));
 	worktree_wp_cli_synopsis_assert(str_starts_with($active_drain_synopsis, '[<repo>]'), 'active-no-signal-drain did not render repo as an optional positional argument.');
+	$artifact_cleanup_synopsis = $parse('cleanup-artifacts', array(), array( 'dry-run' => true, 'safety-probes' => true, 'format' => 'json' ));
+	worktree_wp_cli_synopsis_assert(str_starts_with($artifact_cleanup_synopsis, '[<repo>]'), 'cleanup-artifacts did not render repo as an optional positional argument.');
+	$parse('cleanup-eligible-drain', array(), array( 'apply' => true, 'verbose' => true, 'format' => 'json' ));
 
 	$remove_synopsis = \WP_CLI\SynopsisParser::render($definitions['remove']['synopsis']);
 	worktree_wp_cli_synopsis_assert(str_starts_with($remove_synopsis, '<repo-or-handle> [<branch>]'), 'remove did not render branch as an optional positional argument.');
