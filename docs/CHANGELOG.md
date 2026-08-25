@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.9] - 2026-08-25
+
+### Changed
+- align freshness identity
+- format freshness planning
+
+### Fixed
+- keep planning read-only
+
 ## [0.70.8] - 2026-08-25
 
 ### Fixed
