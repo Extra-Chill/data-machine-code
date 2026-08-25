@@ -681,6 +681,19 @@ try {
 	$disposable_finalized = $workspace->worktree_finalize('homeboy@purpose-owned-disposable', 'active', null, 'success');
 	assert_true(! is_wp_error($disposable_finalized) && 'cleanup_eligible' === ( $disposable_finalized['lifecycle_state'] ?? '' ), 'successful owner terminal outcome did not make disposable worktree cleanup eligible');
 	assert_true(strtotime((string) ( $disposable_finalized['metadata']['last_seen_at'] ?? '' )) < strtotime((string) ( $disposable_finalized['metadata']['finalized_at'] ?? '' )), 'terminal finalization must not refresh heartbeat activity');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle'] = static fn(): bool => true;
+	$disposable_show = WorkspaceAbilities::showRepo(array( 'name' => 'homeboy@purpose-owned-disposable' ));
+	assert_true(! is_wp_error($disposable_show) && $disposable['path'] === ( $disposable_show['path'] ?? null ), 'workspace show did not keep the finalized local worktree on the canonical local route');
+	$disposable_status = WorkspaceAbilities::gitStatus(array( 'name' => 'homeboy@purpose-owned-disposable' ));
+	assert_true(! is_wp_error($disposable_status) && $disposable['path'] === ( $disposable_status['path'] ?? null ), 'workspace git status did not keep the finalized local worktree on the canonical local route');
+	$disposable_push = WorkspaceAbilities::gitPush(array(
+		'name'   => 'homeboy@purpose-owned-disposable',
+		'remote' => 'origin',
+		'branch' => 'purpose-owned-disposable',
+	));
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle']);
+	assert_true(! is_wp_error($disposable_push), is_wp_error($disposable_push) ? $disposable_push->get_error_message() : 'workspace git push refused a present finalized local worktree');
+	assert_true('homeboy' === ( $disposable_push['workspace_repo'] ?? null ) && array_key_exists('force_with_lease', $disposable_push) && 'Remote workspace branch already updated via GitHub API.' !== ( $disposable_push['message'] ?? '' ), 'workspace git push did not use the canonical local route for a finalized worktree');
 	$reuse_created_at  = $wpdb->rows[$reuse_handle]['created_at'] ?? null;
 	$owner_conflict_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($owner_conflict_plan) && 'owner_conflict' === ( $owner_conflict_plan['disposition'] ?? null ), 'live owner conflict was not planned');

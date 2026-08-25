@@ -2,6 +2,19 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.13] - 2026-08-25
+
+### Changed
+- Preserve typed SQLite workspace lock contention
+
+### Fixed
+- bound worktree list probes
+
+## [0.69.12] - 2026-08-25
+
+### Fixed
+- prefer local workspace git routing
+
 ## [0.69.11] - 2026-08-25
 
 ### Fixed
