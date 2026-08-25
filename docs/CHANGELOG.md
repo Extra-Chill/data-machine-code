@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.8] - 2026-08-25
+
+### Fixed
+- unify worktree repository filters
+
 ## [0.70.7] - 2026-08-25
 
 ### Fixed
