@@ -113,6 +113,9 @@ $branch        = $git_probe('branch', 'rev-parse --abbrev-ref HEAD');
 $remote        = $git_probe('remote', 'config --get ' . escapeshellarg('remote.origin.url'));
 $commit        = $git_probe('commit', 'log -1 --format=' . escapeshellarg('%h %s'));
 $branch_status = $git_probe('status', 'status --porcelain=v1 --branch');
+$fetch_path    = is_dir($workspace_path . '/.git') ? $workspace_path . '/.git/FETCH_HEAD' : null;
+$fetch_time    = null === $fetch_path ? false : @filemtime($fetch_path);
+$tracking_ref_observed_at = false === $fetch_time ? null : gmdate('c', $fetch_time);
 $status_lines  = null === $branch_status ? array() : array_filter(array_map('trim', explode("\n", $branch_status)));
 $dirty         = count(array_filter($status_lines, static fn ( string $line ): bool => ! str_starts_with($line, '## ')));
 
@@ -126,6 +129,7 @@ fwrite(
 			'commit'        => '' !== (string) $commit ? $commit : null,
 			'dirty'         => $dirty,
 			'branch_status' => $branch_status,
+			'tracking_ref_observed_at' => $tracking_ref_observed_at,
 		),
 		JSON_UNESCAPED_SLASHES
 	)
