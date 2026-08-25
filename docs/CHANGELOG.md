@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.2] - 2026-08-25
+
+### Fixed
+- preserve reused cleanup candidates
+
 ## [0.70.1] - 2026-08-25
 
 ### Changed
