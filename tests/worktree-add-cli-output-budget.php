@@ -75,6 +75,7 @@ namespace {
 			'free_inodes'            => 987654321,
 			'projected_demand_bytes' => 999999999,
 			'trigger_reasons'        => array( 'worktree_count_warning_threshold' ),
+			'admission_exception'    => array( 'type' => 'percentage_byte_floor_demand_bounded', 'operator_intent' => true, 'status' => 'admitted', 'waived_trigger' => 'projected_free_bytes_percentage_refusal_floor', 'blocking_triggers' => array( 'projected_free_bytes_percentage_refusal_floor' ), 'demand_bytes' => 1024, 'maximum_demand_bytes' => 67108864, 'demand_source' => 'conservative_defaults', 'projected_post_create_capacity' => array( 'free_bytes' => 123, 'free_inodes' => 456 ), 'retained_hard_floors' => array( 'refuse_free_bytes' => 100, 'refuse_free_inodes' => 10, 'refuse_free_inode_percent' => 1.0 ) ),
 			'calibration'            => array_fill(0, 100, str_repeat('capacity detail ', 100)),
 		),
 		'bootstrap' => array(
@@ -103,6 +104,7 @@ namespace {
 	worktree_add_cli_assert(in_array('worktree_count_warning_threshold', (array) ( $payload['warning_codes'] ?? array() ), true), 'Successful worktree-add JSON did not retain the stable worktree-count warning code.');
 	worktree_add_cli_assert(! isset($payload['capacity']['worktree_count']) && ! isset($payload['capacity']['free_bytes']) && ! isset($payload['capacity']['projected_demand_bytes']), 'Successful worktree-add JSON exposed detailed capacity projections.');
 	worktree_add_cli_assert(! isset($payload['bootstrap']['steps'][0]['output_tail']) && ! isset($payload['bootstrap']['steps'][0]['output_evidence']), 'Successful worktree-add JSON exposed bootstrap command evidence.');
+	worktree_add_cli_assert('admitted' === ( $payload['capacity']['admission_exception']['status'] ?? null ) && 'projected_free_bytes_percentage_refusal_floor' === ( $payload['capacity']['admission_exception']['waived_trigger'] ?? null ), 'Successful worktree-add JSON lost the required bounded exception evidence.');
 	worktree_add_cli_assert(array( 'Worktree add progress: lock request (request=request-123; scope=repo; queue=2).', 'Worktree add progress: lock wait (request=request-123; scope=repo; queue=2; owner=run-456; waited=5.001s; eta=7s).', 'Worktree add progress: post create validation.', 'Worktree add progress: staleness probe.', 'Worktree add progress: rebase.', 'Worktree add progress: default branch probe.', 'Worktree add progress: post rebase demand planning.', 'Worktree add progress: post rebase capacity inspection.', 'Worktree add progress: post rebase artifact reclamation.', 'Worktree add progress: bootstrap start.', 'Worktree add progress: bootstrap complete.' ) === WP_CLI::$warnings, 'Worktree-add JSON progress was not routed to the stderr warning channel with lock identity and queue evidence.');
 
 	WP_CLI::$lines = array();

@@ -1610,6 +1610,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Explicitly bypass the disk-budget refusal threshold. The disk-budget report still appears in output so the override is visible.',
 							),
+							'allow_percentage_byte_floor_exception' => array(
+								'type'        => 'boolean',
+								'description' => 'Explicitly admit only a trusted, demand-bounded worktree when the sole refusal is the percentage byte floor. Absolute byte and inode floors remain enforced.',
+							),
 							'remediate_capacity'         => array(
 								'type'        => 'boolean',
 								'description' => 'After a refused capacity admission, run bounded artifact and cleanup-eligible remediation under the capacity lock, remeasure, and retry this exact add once only if the safety floor is met. Separate from force.',
@@ -4602,6 +4606,7 @@ class WorkspaceAbilities {
 		$force                      = ! empty( $input['force'] );
 		$remediate_capacity         = ! empty( $input['remediate_capacity'] );
 		$remediate_capacity_dry_run = ! empty( $input['remediate_capacity_dry_run'] );
+		$allow_percentage_byte_floor_exception = ! empty( $input['allow_percentage_byte_floor_exception'] );
 		$progress_callback          = isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null;
 		$require_task_tracker       = array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true;
 		$task                       = array();
@@ -4642,13 +4647,28 @@ class WorkspaceAbilities {
 					$reuse_policy,
 					$remediate_capacity,
 					$remediate_capacity_dry_run,
-					$progress_callback
+					$progress_callback,
+					array(),
+					$allow_percentage_byte_floor_exception
 				),
 				$input
 			);
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
+			if ( $allow_percentage_byte_floor_exception ) {
+				return new \WP_Error(
+					'remote_worktree_percentage_byte_floor_exception_unsupported',
+					'Percentage-byte-floor admission requires a local workspace with measured capacity semantics.',
+					array(
+						'status'      => 400,
+						'remediation' => array(
+							'code'    => 'local_workspace_capacity_required',
+							'message' => 'Run the request against a local managed workspace, where byte and inode capacity can be measured and revalidated.',
+						),
+					)
+				);
+			}
 			if ( $remediate_capacity || $remediate_capacity_dry_run ) {
 				return new \WP_Error(
 					'remote_worktree_capacity_remediation_unsupported',
@@ -4690,7 +4710,9 @@ class WorkspaceAbilities {
 			$reuse_policy,
 			$remediate_capacity,
 			$remediate_capacity_dry_run,
-			$progress_callback
+			$progress_callback,
+			array(),
+			$allow_percentage_byte_floor_exception
 		);
 		return self::worktree_add_response( $result, $input );
 	}
@@ -4755,7 +4777,7 @@ class WorkspaceAbilities {
 				$intent[ $key ] = $input[ $key ];
 			}
 		}
-		return array( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true, array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true, ! empty( $input['allow_stale'] ), ! empty( $input['rebase_base'] ), ! empty( $input['force'] ), $task, ! empty( $input['allow_unverified_freshness'] ), array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true, $intent, (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ) );
+		return array( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true, array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true, ! empty( $input['allow_stale'] ), ! empty( $input['rebase_base'] ), ! empty( $input['force'] ), $task, ! empty( $input['allow_unverified_freshness'] ), array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true, $intent, (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), ! empty( $input['allow_percentage_byte_floor_exception'] ) );
 	}
 
 	/** @return array<string,array<string,mixed>> */
@@ -4771,6 +4793,7 @@ class WorkspaceAbilities {
 			'allow_unverified_freshness' => array( 'type' => 'boolean' ),
 			'rebase_base'                => array( 'type' => 'boolean' ),
 			'force'                      => array( 'type' => 'boolean' ),
+			'allow_percentage_byte_floor_exception' => array( 'type' => 'boolean' ),
 			'task_url'                   => array( 'type' => 'string' ),
 			'task_ref'                   => array( 'type' => 'string' ),
 			'require_task_tracker'       => array( 'type' => 'boolean' ),

@@ -27,9 +27,14 @@ namespace {
 	if ( ! class_exists('WP_CLI') ) {
 		class WP_CLI {
 			public static string $output = '';
+			public static array $logs = array();
 
 			public static function line( string $message ): void {
 				self::$output .= $message;
+			}
+
+			public static function log( string $message ): void {
+				self::$logs[] = $message;
 			}
 		}
 	}
@@ -95,6 +100,34 @@ namespace {
 	}
 	if ( array( 'lifecycle_state' => 'active', 'safety' => array( 'dirty' => false, 'unpushed' => false ) ) !== ( $row['metadata'] ?? null ) ) {
 		throw new RuntimeException('Worktree list JSON must preserve nested lifecycle metadata safety data.');
+	}
+
+	$empty_result = array(
+		'success'      => true,
+		'total'        => 0,
+		'returned'     => 0,
+		'next_cursor'  => null,
+		'worktrees'    => array(),
+		'summary'      => array( 'repos' => array() ),
+		'filters'      => array( 'task_ref' => 'https://github.com/example/repo/issues/123' ),
+	);
+	WP_CLI::$output = '';
+	$method->invoke($command, 'list', $empty_result, array( 'format' => 'json', 'envelope' => true ));
+	$decoded = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
+	if ( 0 !== ($decoded['total'] ?? null) || 0 !== ($decoded['returned'] ?? null) || array() !== ($decoded['worktrees'] ?? null) || $empty_result['filters'] !== ($decoded['filters'] ?? null) ) {
+		throw new RuntimeException('Empty envelope JSON must retain bounded metadata and filters.');
+	}
+
+	WP_CLI::$output = '';
+	$method->invoke($command, 'list', $empty_result, array( 'format' => 'json' ));
+	if ( array() !== json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR) ) {
+		throw new RuntimeException('Empty legacy JSON must remain a row array.');
+	}
+
+	WP_CLI::$logs = array();
+	$method->invoke($command, 'list', $empty_result, array());
+	if ( array( 'No worktrees found.' ) !== WP_CLI::$logs ) {
+		throw new RuntimeException('Empty human output must retain its operator message.');
 	}
 
 	echo "worktree-list-json-structured-output: ok\n";
