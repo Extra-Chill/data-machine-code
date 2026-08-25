@@ -2073,12 +2073,14 @@ class WorkspaceAbilities {
 							'generated_at'           => array( 'type' => 'string' ),
 							'workspace_path'         => array( 'type' => 'string' ),
 							'destructive'            => array( 'type' => 'boolean' ),
+							'fast_stats'             => array( 'type' => 'object' ),
 							'size'                   => array( 'type' => 'object' ),
 							'disk'                   => array( 'type' => 'object' ),
 							'recovery'               => array( 'type' => 'object' ),
 							'inventory'              => array( 'type' => 'object' ),
 							'worktrees'              => array( 'type' => 'object' ),
 							'worktree_status_mode'   => array( 'type' => 'string' ),
+							'remote_backend'         => array( 'type' => 'object' ),
 							'top_repos_by_worktrees' => array( 'type' => 'array' ),
 							'top_repos_by_size'      => array( 'type' => 'array' ),
 							'locks'                  => array( 'type' => 'object' ),
@@ -5122,6 +5124,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['until_budget'] ) ) {
 			$opts['until_budget'] = (string) $input['until_budget'];
+		}
+		if ( isset( $input['progress_callback'] ) && is_callable($input['progress_callback']) ) {
+			$opts['progress_callback'] = $input['progress_callback'];
 		}
 
 		return $workspace->workspace_hygiene_report( $opts );

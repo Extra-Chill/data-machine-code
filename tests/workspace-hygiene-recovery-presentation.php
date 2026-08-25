@@ -45,11 +45,12 @@ namespace {
 	$render  = new ReflectionMethod($command, 'render_workspace_hygiene_report');
 	$report  = array(
 		'workspace_path' => '/workspace',
+		'partial'        => true,
 		'size'           => array(),
 		'disk'           => array(),
 		'inventory'      => array( 'freshness' => array() ),
 		'worktrees'      => array( 'by_liveness' => array() ),
-		'locks'          => array(),
+		'locks'          => array( 'state' => 'budget_exhausted', 'partial' => true ),
 		'cleanup'        => array( 'summary' => array() ),
 		'recovery'       => array(
 			'status'         => 'warning',
@@ -60,6 +61,11 @@ namespace {
 	);
 	$render->invoke($command, $report, array( 'format' => 'table' ));
 
+	$hygiene_table = DataMachine\Cli\BaseCommand::$tables[0] ?? array();
+	recovery_presentation_assert('report_complete' === ( $hygiene_table['items'][0]['metric'] ?? null ) && str_starts_with((string) ( $hygiene_table['items'][0]['value'] ?? '' ), 'no;'), 'Default hygiene table must label incomplete component evidence before presenting counts.');
+	$hygiene_metrics = array_column((array) ($hygiene_table['items'] ?? array()), 'value', 'metric');
+	recovery_presentation_assert('unknown' === ($hygiene_metrics['active_locks'] ?? null) && 'unknown' === ($hygiene_metrics['stale_locks'] ?? null), 'Unavailable lock probes must render unknown rather than observed zero counts.');
+	recovery_presentation_assert('unknown' === ($hygiene_metrics['cleanup_candidates'] ?? null), 'Skipped cleanup classification must render unknown rather than an observed zero candidate count.');
 	$lane_table = end(DataMachine\Cli\BaseCommand::$tables);
 	recovery_presentation_assert(array( 'lane', 'state' ) === ( $lane_table['fields'] ?? null ), 'Default hygiene table must render recovery lanes.');
 	recovery_presentation_assert('unknown' === ( $lane_table['items'][0]['state'] ?? null ), 'Default hygiene table must preserve unknown lane state.');

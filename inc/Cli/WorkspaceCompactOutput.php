@@ -227,6 +227,9 @@ class WorkspaceCompactOutput {
 				'generated_at'         => $report['generated_at'] ?? null,
 				'workspace_path'       => $report['workspace_path'] ?? null,
 				'destructive'          => (bool) ( $report['destructive'] ?? false ),
+				'partial'              => (bool) ( $report['partial'] ?? false ),
+				'continuation'         => $report['continuation'] ?? null,
+				'evidence'             => $report['evidence'] ?? null,
 				'fast_stats'           => $report['fast_stats'] ?? null,
 				'disk'                 => $report['disk'] ?? null,
 				'recovery'             => $report['recovery'] ?? null,
@@ -235,6 +238,8 @@ class WorkspaceCompactOutput {
 				'worktree_status_mode' => $report['worktree_status_mode'] ?? null,
 				'locks'                => isset( $report['locks'] ) ? self::lock_result( (array) $report['locks'] ) : null,
 				'cleanup'              => array(
+					'partial'              => (bool) ( $cleanup['partial'] ?? false ),
+					'diagnostics'          => $cleanup['diagnostics'] ?? null,
 					'blocker_probe_source' => $cleanup['blocker_probe_source'] ?? null,
 					'blocker_counts'       => $cleanup['blocker_counts'] ?? null,
 					'expected_outcome'     => $cleanup['expected_outcome'] ?? null,

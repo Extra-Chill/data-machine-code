@@ -32,8 +32,8 @@ workspace_hygiene_contract_assert_contains("array_key_exists('include_sizes', \$
 workspace_hygiene_contract_assert_contains('Size scan skipped by default for large-workspace safety', $hygiene, 'Default report must explain why size data is partial.');
 workspace_hygiene_contract_assert_contains("'recovery'                  => \$recovery", $hygiene, 'Default report must expose shared recovery guidance.');
 workspace_hygiene_contract_assert_contains('--include-sizes --size-limit=100 --format=json', $hygiene, 'Continuation command must keep sizing bounded.');
-workspace_hygiene_contract_assert_contains("'total_bytes'           => \$enabled ? 0 : null", $hygiene, 'Disabled size scans must remain unknown rather than reporting measured zero bytes.');
-workspace_hygiene_contract_assert_contains("'total_human'           => \$enabled ? \$this->format_bytes(0) : 'not scanned'", $hygiene, 'Disabled size scans must render as not scanned.');
+workspace_hygiene_contract_assert_contains("'total_bytes'           => null", $hygiene, 'Unavailable and disabled size scans must remain unknown rather than reporting measured zero bytes.');
+workspace_hygiene_contract_assert_contains("'total_human'           => \$enabled ? 'unavailable' : 'not scanned'", $hygiene, 'Unavailable and disabled size scans must remain distinguishable.');
 workspace_hygiene_contract_assert_contains('ProcessRunner::run(', $hygiene, 'Workspace hygiene sizing must use the supervised process runner.');
 workspace_hygiene_contract_assert_contains("'entry_timeout'", $hygiene, 'Workspace hygiene must classify per-entry timeouts.');
 workspace_hygiene_contract_assert_contains("'total_timeout'", $hygiene, 'Workspace hygiene must classify whole-pass timeouts.');

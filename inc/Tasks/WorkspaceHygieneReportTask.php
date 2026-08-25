@@ -93,9 +93,11 @@ class WorkspaceHygieneReportTask extends SystemTask {
 				'include_cleanup'         => array_key_exists('include_cleanup', $params) ? (bool) $params['include_cleanup'] : true,
 				'include_sizes'           => array_key_exists('include_sizes', $params) ? (bool) $params['include_sizes'] : false,
 				'include_worktree_status' => array_key_exists('include_worktree_status', $params) ? (bool) $params['include_worktree_status'] : false,
+				'refresh_inventory'       => ! empty($params['refresh_inventory']),
 				'size_limit'              => isset($params['size_limit']) ? (int) $params['size_limit'] : Workspace::HYGIENE_DEFAULT_SIZE_LIMIT,
 				'size_entry_timeout'      => isset($params['size_entry_timeout']) ? (int) $params['size_entry_timeout'] : Workspace::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT,
 				'size_total_timeout'      => isset($params['size_total_timeout']) ? (int) $params['size_total_timeout'] : Workspace::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT,
+				'until_budget'             => isset($params['until_budget']) ? (string) $params['until_budget'] : '30s',
 			)
 		);
 

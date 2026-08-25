@@ -4270,6 +4270,7 @@ trait WorkspaceWorktreeLifecycle {
 		$target_handle  = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
 		$task_ref       = $this->normalize_worktree_list_task_ref($opts['task_ref'] ?? null);
 		$owner_run_ref  = $this->normalize_worktree_list_owner_run_ref($opts['owner_run_ref'] ?? null);
+		$progress       = isset($opts['progress_callback']) && is_callable($opts['progress_callback']) ? $opts['progress_callback'] : null;
 		$repo           = null !== $repo && '' !== trim($repo) ? $this->sanitize_name($repo) : null;
 		if ( null !== $state && '' !== trim($state) ) {
 			$state = WorktreeContextInjector::normalize_state($state);
@@ -4311,7 +4312,8 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		// Complete task lookups admit their bounded candidate set before any
 		// requested probe. Overflow must never spend work or hide ambiguity.
-		$defer_probes   = ( $bounded && ! $all ) || ( $task_lookup && $all );
+		$shared_budget_supplied = ( $opts['wall_clock_budget'] ?? null ) instanceof WallClockBudget;
+		$defer_probes           = ( $bounded && ! $all ) || ( $task_lookup && $all ) || ( $all && $shared_budget_supplied );
 		$run_status     = $include_status && ! $defer_probes;
 		$run_disk       = $include_disk && ! $defer_probes;
 		$limit = $this->normalize_worktree_list_limit($opts['limit'] ?? 50);
@@ -4371,6 +4373,7 @@ trait WorkspaceWorktreeLifecycle {
 		$budget_phase     = null;
 		$partial_reason   = null;
 		$budget_exhausted = false;
+		$inventory_probe_failures = array();
 
 		foreach ( new \DirectoryIterator($this->workspace_path) as $entry ) {
 			$primary = $entry->getFilename();
@@ -4380,6 +4383,7 @@ trait WorkspaceWorktreeLifecycle {
 			$primary_path      = $this->workspace_path . '/' . $primary;
 			$primary_repo      = $this->parse_handle($primary)['repo'];
 			$scanning_worktree = str_contains($primary, '@');
+			$this->worktree_list_progress($progress, 'worktree_inventory', $primary_repo, $primary);
 			$inventory_timeout = $budget->probe_timeout_seconds(self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
 			if ( 0 === $inventory_timeout ) {
 				$budget_stopped = true;
@@ -4391,6 +4395,12 @@ trait WorkspaceWorktreeLifecycle {
 			$result            = $this->run_git($primary_path, 'worktree list --porcelain', $inventory_timeout);
 			if ( is_wp_error($result) ) {
 				if ( 'git_command_timeout' === $result->get_error_code() ) {
+					if ( $all && $shared_budget_supplied ) {
+						$inventory_probe_failures[] = array( 'repo' => $primary, 'reason' => 'git_command_timeout', 'timeout_seconds' => $inventory_timeout );
+						$budget_phase   = 'worktree_inventory';
+						$partial_reason = 'repository_probe_timeout';
+						continue;
+					}
 					$data = $result->get_error_data();
 					return new \WP_Error(
 						'worktree_list_probe_timeout',
@@ -4565,10 +4575,10 @@ trait WorkspaceWorktreeLifecycle {
 		$summary     = array_merge($summary, $diagnostics['summary']);
 		$duplicates            = $diagnostics['duplicates'];
 		$base_branch_worktrees = $diagnostics['base_branch_worktrees'];
-		$inventory_complete = ! $budget_stopped;
+		$inventory_complete = ! $budget_stopped && array() === $inventory_probe_failures;
 		if ( $inventory_complete && $defer_probes && ( $include_status || $include_disk ) ) {
 			foreach ( $worktrees as &$worktree ) {
-				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk, $budget);
+				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk, $budget, $progress);
 				if ( is_wp_error($probe_result) ) {
 					if ( ! in_array($probe_result->get_error_code(), array( 'worktree_list_budget_exhausted', 'worktree_list_probe_incomplete' ), true) && ! $budget->expired() ) {
 						unset($worktree);
@@ -4613,18 +4623,19 @@ trait WorkspaceWorktreeLifecycle {
 			'status_requested'      => $include_status,
 			'disk_requested'        => $include_disk,
 			'summary'               => $summary,
-			'partial'               => $budget_stopped,
+			'partial'               => $budget_stopped || array() !== $inventory_probe_failures,
 			'continuation'          => array(
 				'available' => null !== $next_cursor,
 				'cursor'    => $next_cursor,
-				'reason'    => $budget_stopped ? $partial_reason : ( null === $next_cursor ? null : 'more_rows' ),
+				'reason'    => $budget_stopped || array() !== $inventory_probe_failures ? $partial_reason : ( null === $next_cursor ? null : 'more_rows' ),
 			),
 			'diagnostics'           => array(
 				'budget_exhausted'  => $budget_exhausted,
 				'budget_exhaustion_reason' => $budget_exhausted ? $partial_reason : null,
-				'partial_reason'   => $budget_stopped ? $partial_reason : null,
+				'partial_reason'   => $budget_stopped || array() !== $inventory_probe_failures ? $partial_reason : null,
 				'phase'             => $budget_phase,
 				'wall_clock_budget' => $budget->evidence(),
+				'inventory_probe_failures' => $inventory_probe_failures,
 			),
 		);
 	}
@@ -4645,12 +4656,13 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param array<string,mixed> $worktree Worktree row to enrich in place.
 	 * @return \WP_Error|null
 	 */
-	private function hydrate_worktree_list_probes( array &$worktree, bool $include_status, bool $include_disk, ?WallClockBudget $budget = null ): ?\WP_Error {
+	private function hydrate_worktree_list_probes( array &$worktree, bool $include_status, bool $include_disk, ?WallClockBudget $budget = null, ?callable $progress = null ): ?\WP_Error {
 		$path = (string) ( $worktree['path'] ?? '' );
 		if ( '' === $path ) {
 			return null;
 		}
 		if ( $include_status ) {
+			$this->worktree_list_progress($progress, 'status', (string) ( $worktree['repo'] ?? '' ), (string) ( $worktree['handle'] ?? '' ));
 			$timeout = null === $budget ? self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS : $budget->probe_timeout_seconds(self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
 			if ( 0 === $timeout ) {
 				return new \WP_Error('worktree_list_budget_exhausted', 'Worktree list budget expired before requested status probes completed.', array( 'status' => 504, 'phase' => 'status', 'handle' => $worktree['handle'] ?? null ));
@@ -4676,6 +4688,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 		if ( $include_disk ) {
+			$this->worktree_list_progress($progress, 'disk', (string) ( $worktree['repo'] ?? '' ), (string) ( $worktree['handle'] ?? '' ));
 			if ( null !== $budget && $budget->expired() ) {
 				return new \WP_Error('worktree_list_budget_exhausted', 'Worktree list budget expired before requested disk probes completed.', array( 'status' => 504, 'phase' => 'disk', 'handle' => $worktree['handle'] ?? null ));
 			}
@@ -4707,6 +4720,18 @@ trait WorkspaceWorktreeLifecycle {
 			$worktree['stale_reason'] = $stale_reason;
 		}
 		return null;
+	}
+
+	/** Emit best-effort visibility before a worktree-list probe. */
+	private function worktree_list_progress( ?callable $callback, string $phase, string $repository, string $handle ): void {
+		if ( null === $callback ) {
+			return;
+		}
+		try {
+			$callback(array( 'operation' => 'workspace_hygiene', 'phase' => $phase, 'repository' => $repository, 'handle' => $handle, 'message' => 'Inspecting ' . $handle . '.' ));
+		} catch ( \Throwable $error ) {
+			unset($error);
+		}
 	}
 
 	/** @return array<string,mixed> */
@@ -4975,9 +5000,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * Current rows are upserted. Previously known rows missing from the current
 	 * scan are marked `missing_path` so operators can see drift explicitly.
 	 *
+	 * @param WallClockBudget|null $budget   Optional shared wall-clock budget.
+	 * @param callable|null        $progress Optional best-effort phase observer.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_inventory_refresh( ?WallClockBudget $budget = null ): array|\WP_Error {
+	public function worktree_inventory_refresh( ?WallClockBudget $budget = null, ?callable $progress = null ): array|\WP_Error {
 		$budget  = $budget ?? WallClockBudget::from_seconds(30, '30s');
 		$listing = $this->worktree_list(
 			null,
@@ -4987,6 +5014,7 @@ trait WorkspaceWorktreeLifecycle {
 				'include_disk'   => false,
 				'all'            => true,
 				'wall_clock_budget' => $budget,
+				'progress_callback' => $progress,
 			)
 		);
 		if ( $listing instanceof \WP_Error ) {

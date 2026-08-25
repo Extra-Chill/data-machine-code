@@ -29,9 +29,12 @@ trait WorkspaceWorktreeInventoryCleanup {
 	 * @param  int|null $limit                     Optional worktree page size.
 	 * @param  int      $offset                    Optional worktree page offset.
 	 * @param  string   $scope_arg                 Optional primary repo or worktree handle scope.
+	 * @param  array<int,array<string,mixed>>|null $inventory_rows_override Optional pre-read inventory rows.
+	 * @param  WallClockBudget|null $budget        Optional shared wall-clock budget.
+	 * @param  callable|null $progress             Optional best-effort phase observer.
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0, string $scope_arg = '', ?array $inventory_rows_override = null, ?WallClockBudget $budget = null ): array|\WP_Error {
+	private function worktree_cleanup_inventory_only( string $older_than, string $sort, bool $include_repaired_metadata = false, ?int $limit = null, int $offset = 0, string $scope_arg = '', ?array $inventory_rows_override = null, ?WallClockBudget $budget = null, ?callable $progress = null ): array|\WP_Error {
 		$age_filter = null;
 		if ( '' !== $older_than ) {
 			$duration_seconds = $this->parse_worktree_cleanup_duration($older_than);
@@ -68,6 +71,18 @@ trait WorkspaceWorktreeInventoryCleanup {
 
 			$handle      = (string) ( $wt['handle'] ?? '?' );
 			$repo        = (string) ( $wt['repo'] ?? '' );
+			if ( null !== $progress && ( 1 === $processed || 0 === $processed % 25 ) ) {
+				try {
+					$progress(array( 'operation' => 'workspace_hygiene', 'phase' => 'cleanup_classification', 'repository' => $repo, 'handle' => $handle, 'message' => 'Classifying ' . $handle . '.' ));
+				} catch ( \Throwable $error ) {
+					unset($error);
+				}
+				if ( null !== $budget && $budget->expired() ) {
+					$budget_stopped = true;
+					--$processed;
+					break;
+				}
+			}
 			$branch_slug = (string) ( $wt['branch_slug'] ?? '' );
 			$metadata    = $wt['metadata'] ?? null;
 			$branch      = (string) ( $wt['branch'] ?? ( is_array($metadata) ? ( $metadata['branch'] ?? '' ) : '' ) );
@@ -268,6 +283,13 @@ trait WorkspaceWorktreeInventoryCleanup {
 			'removed'        => array(),
 			'skipped'        => $skipped,
 			'summary'        => $summary,
+			'partial'        => $budget_stopped,
+			'diagnostics'    => array(
+				'phase'                    => 'cleanup_classification',
+				'scanned'                  => $processed,
+				'total'                    => count($page_rows),
+				'budget_exhaustion_reason' => $budget_stopped ? 'report_budget_exhausted' : null,
+			),
 		);
 		if ( null !== $pagination ) {
 			$response['pagination'] = $pagination;
