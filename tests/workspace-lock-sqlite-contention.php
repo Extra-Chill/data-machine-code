@@ -23,6 +23,7 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
 
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorktreeContextInjector;
 
 final class Lock_Contention_Wpdb {
 	public string $prefix = 'wp_';
@@ -137,7 +138,7 @@ function lock_sqlite_worker(array $args): void {
 
 	if ('finalize' === $mode) {
 		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
-		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', 'pr_opened', 'https://example.test/pull/1250', 'success');
+		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', WorktreeContextInjector::STATE_PR_OPENED, 'https://example.test/pull/1250', 'success');
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
