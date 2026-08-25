@@ -45,6 +45,8 @@ namespace {
 		use WorkspaceWorktreeLifecycle { worktree_list_insert_bounded_row as private insert_bounded_row; }
 
 		public int $expensive_probes = 0;
+		public int $inventory_probes = 0;
+		public int $task_inventory_queries = 0;
 		public int $max_bounded_rows = 0;
 		public bool $fail_probes = false;
 		public bool $timeout_inventory_probe = false;
@@ -59,6 +61,7 @@ namespace {
 		private function worktree_get( string $handle, array $opts ): array|WP_Error { if ( 'repo@branch-300' !== $handle ) { return new WP_Error( 'worktree_not_found' ); } $metadata = \DataMachineCode\Workspace\WorktreeContextInjector::get_metadata($handle); if ( ! empty($opts['task_ref']) && \DataMachineCode\Workspace\TaskUrl::canonicalize($opts['task_ref']) !== \DataMachineCode\Workspace\TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) ) { return array( 'worktrees' => array() ); } if ( $this->fail_probes && ! empty($opts['include_status']) ) { throw new RuntimeException('A mismatched handle must not start a status probe.'); } return array( 'worktrees' => array( array( 'handle' => $handle, 'metadata' => $metadata, 'lifecycle_state' => 'active' ) ) ); }
 		private function run_git( string $path, string $command, int $timeout_seconds = 0 ): array|WP_Error {
 			if ( 'worktree list --porcelain' === $command ) {
+				++$this->inventory_probes;
 				if ( $this->timeout_inventory_probe ) { return new WP_Error( 'git_command_timeout', 'Synthetic timed-out inventory probe.', array( 'timeout' => $timeout_seconds, 'cleanup' => array( 'verified' => true ) ) ); }
 				$blocks = array( "worktree {$this->workspace_path}/repo\nHEAD primary\nbranch refs/heads/main" );
 				for ( $index = 0; $index < 338; ++$index ) {
@@ -75,6 +78,18 @@ namespace {
 		private function count_unpushed_commits( string $path ): int { if ( $this->advance_probe_clock ) { $this->probe_clock += 0.6; } ++$this->expensive_probes; return 0; }
 		private function build_primary_freshness_report( string $path, string $handle ): array { if ( $this->advance_probe_clock ) { $this->probe_clock += 0.6; } ++$this->expensive_probes; return array( 'status' => 'current' ); }
 		protected function worktree_list_budget_clock(): ?callable { return $this->advance_probe_clock ? fn(): float => $this->probe_clock : null; }
+		protected function worktree_list_task_inventory_rows( string $task_ref, int $limit ): array {
+			++$this->task_inventory_queries;
+			if ( 'https://github.com/example/repo/issues/998' === $task_ref ) { return array( array( 'handle' => 'repo@stale-task-owner', 'repo' => 'repo' ) ); }
+			if ( 'https://github.com/example/repo/issues/300' !== $task_ref ) { return array(); }
+			$count = ! empty($GLOBALS['dmc_task_every_row']) ? 339 : 2;
+			$rows  = array();
+			for ( $index = 0; $index < min($count, $limit); ++$index ) {
+				$branch = ! empty($GLOBALS['dmc_task_every_row']) ? $index : 300 + $index;
+				$rows[] = array( 'handle' => sprintf('repo@branch-%03d', $branch), 'repo' => 'repo' );
+			}
+			return $rows;
+		}
 		private function calculate_age_days( ?string $created_at ): ?int { return null; }
 		protected function detect_worktree_stale_reason( bool $is_worktree, int $dirty, ?int $age, ?string $created, array $probes = array() ): ?string { return null; }
 		protected function worktree_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
@@ -116,9 +131,30 @@ namespace {
 		$normalized_next = $harness->worktree_list('repo', 'active', array( 'include_status' => false, 'include_disk' => false, 'limit' => 50, 'cursor' => $normalized['next_cursor'] ));
 		bounded_worktree_assert('repo@branch-050' === ($normalized_next['worktrees'][0]['handle'] ?? null), 'Cursor validation must use normalized repository and state filters.');
 		$probes_before_task = $harness->expensive_probes;
+		$inventory_before_task = $harness->inventory_probes;
 		$task_candidates = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1, 'task_ref' => 'https://github.com/example/repo/issues/300?source=homeboy#candidate', 'owner_run_ref' => 'run-300' ));
 		bounded_worktree_assert(2 === $task_candidates['total'] && 'repo@branch-300' === ($task_candidates['worktrees'][0]['handle'] ?? null), 'Task and owner filters must select candidates beyond the first unfiltered page.');
 		bounded_worktree_assert($probes_before_task === $harness->expensive_probes, 'Task and owner filtering must run before requested probes.');
+		bounded_worktree_assert($inventory_before_task + 1 === $harness->inventory_probes && 1 === $harness->task_inventory_queries, 'Task lookup must enumerate Git worktrees only for inventory-selected repositories.');
+		$unrelated = array();
+		for ( $index = 0; $index < 205; ++$index ) {
+			$path = sprintf('%s/unrelated-%03d', $workspace, $index);
+			mkdir($path);
+			file_put_contents($path . '/.git', 'gitdir: /tmp/none');
+			$unrelated[] = $path;
+		}
+		$inventory_before_absent = $harness->inventory_probes;
+		$started_absent = microtime(true);
+		$absent = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'limit' => 200, 'task_ref' => 'https://github.com/example/repo/issues/999' ));
+		$absent_elapsed = microtime(true) - $started_absent;
+		bounded_worktree_assert(0 === $absent['total'] && $inventory_before_absent === $harness->inventory_probes, 'An absent task must not enumerate any unrelated Git repository.');
+		bounded_worktree_assert($absent_elapsed < 0.5, sprintf('Absent task lookup exceeded its bounded inventory deadline: %.3fs.', $absent_elapsed));
+		$stale = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'limit' => 200, 'task_ref' => 'https://github.com/example/repo/issues/998' ));
+		bounded_worktree_assert(0 === $stale['total'], 'A stale inventory candidate absent from the repository worktree list must not be returned as a task owner.');
+		foreach ( $unrelated as $path ) {
+			unlink($path . '/.git');
+			rmdir($path);
+		}
 		$task_next = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'run-300', 'cursor' => $task_candidates['next_cursor'] ));
 		bounded_worktree_assert('repo@branch-301' === ($task_next['worktrees'][0]['handle'] ?? null), 'Task-filtered cursor continuation must be deterministic.');
 		bounded_worktree_assert(is_wp_error($harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 1, 'task_ref' => 'https://github.com/example/repo/issues/300', 'owner_run_ref' => 'other-run', 'cursor' => $task_candidates['next_cursor'] ))), 'Task cursor must reject a changed owner scope.');
