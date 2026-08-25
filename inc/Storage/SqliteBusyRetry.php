@@ -34,7 +34,7 @@ final class SqliteBusyRetry {
 		$started_at      = hrtime(true);
 		$attempts        = 0;
 		$restore_errors  = null;
-		if ( method_exists($wpdb, 'suppress_errors') ) {
+		if ( is_object($wpdb) && method_exists($wpdb, 'suppress_errors') ) {
 			$restore_errors = (bool) $wpdb->suppress_errors(true);
 		}
 
