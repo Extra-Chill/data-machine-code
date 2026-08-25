@@ -15,11 +15,15 @@ final class WP_Error {
 function is_wp_error(mixed $value): bool { return $value instanceof WP_Error; }
 function wp_json_encode(mixed $value): string|false { return json_encode($value); }
 function apply_filters(string $hook, mixed $value, mixed ...$args): mixed { return $GLOBALS['filters'][$hook] ?? $value; }
+function current_time(string $type, bool $gmt = false): string { return gmdate('Y-m-d H:i:s'); }
+function get_option(string $name, mixed $default = false): mixed { return $GLOBALS['lock_sqlite_options'][$name] ?? $default; }
+function update_option(string $name, mixed $value, mixed $autoload = null): bool { $GLOBALS['lock_sqlite_options'][$name] = $value; return true; }
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorktreeContextInjector;
 
 final class Lock_Contention_Wpdb {
 	public string $prefix = 'wp_';
@@ -30,13 +34,21 @@ final class Lock_Contention_Wpdb {
 	public function __construct(private PDO $pdo, private bool $advertise_sqlite = true) {}
 	public function db_server_info(): string { return $this->advertise_sqlite ? 'SQLite' : 'MySQL'; }
 	public function suppress_errors(bool $suppress = true): bool { $previous = $this->errors_suppressed; $this->errors_suppressed = $suppress; return $previous; }
-	public function prepare(string $query, mixed ...$args): string { foreach ($args as $arg) { $query = preg_replace('/%[sd]/', is_int($arg) ? (string) $arg : $this->pdo->quote((string) $arg), $query, 1); } return $query; }
+	public function prepare(string $query, mixed ...$args): string {
+		foreach ($args as $arg) {
+			if (!preg_match('/%[sdi]/', $query, $match)) { break; }
+			$replacement = '%i' === $match[0] ? (string) $arg : ('%d' === $match[0] ? (string) (int) $arg : $this->pdo->quote((string) $arg));
+			$query = preg_replace('/%[sdi]/', $replacement, $query, 1);
+		}
+		return $query;
+	}
 	public function get_var(string $query): mixed {
 		if (str_contains($query, 'SHOW TABLES')) { return 'wp_datamachine_code_locks'; }
 		try { $this->last_error = ''; return $this->pdo->query($query)->fetchColumn(); } catch (PDOException $error) { return $this->failed($error); }
 	}
 	public function get_col(string $query): array { try { $this->last_error = ''; return $this->pdo->query($query)->fetchAll(PDO::FETCH_COLUMN); } catch (PDOException $error) { $this->failed($error); return array(); } }
 	public function get_results(string $query, string $format): array { try { $this->last_error = ''; return $this->pdo->query($query)->fetchAll(PDO::FETCH_ASSOC); } catch (PDOException $error) { $this->failed($error); return array(); } }
+	public function get_row(string $query, string $format): array|false { try { $this->last_error = ''; return $this->pdo->query($query)->fetch(PDO::FETCH_ASSOC); } catch (PDOException $error) { return $this->failed($error); } }
 	public function insert(string $table, array $data, array $formats): int|false {
 		try {
 			$columns = array_keys($data);
@@ -55,6 +67,14 @@ final class Lock_Contention_Wpdb {
 			$statement->execute(array_merge(array_values($data), array_values($where)));
 			$this->last_error = '';
 			return $statement->rowCount();
+		} catch (PDOException $error) { return $this->failed($error); }
+	}
+	public function replace(string $table, array $data): int|false {
+		try {
+			$statement = $this->pdo->prepare('INSERT INTO ' . $table . ' (handle, repo, path, lifecycle_state, metadata) VALUES (?, ?, ?, ?, ?) ON CONFLICT(handle) DO UPDATE SET repo = excluded.repo, path = excluded.path, lifecycle_state = excluded.lifecycle_state, metadata = excluded.metadata');
+			$statement->execute(array($data['handle'], $data['repo'] ?? '', $data['path'] ?? '', $data['lifecycle_state'] ?? null, $data['metadata'] ?? '{}'));
+			$this->last_error = '';
+			return 1;
 		} catch (PDOException $error) { return $this->failed($error); }
 	}
 	private function failed(PDOException $error): false {
@@ -112,6 +132,20 @@ function lock_sqlite_worker(array $args): void {
 			'isolated',
 			true
 		);
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+
+	if ('finalize' === $mode) {
+		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
+		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', WorktreeContextInjector::STATE_PR_OPENED, 'https://example.test/pull/1250', 'success');
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+
+	if ('discovery' === $mode) {
+		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
+		$result = (new Workspace())->worktree_get($repo . '@finalize-contention', array('include_status' => false, 'include_disk' => false));
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
@@ -200,6 +234,7 @@ mkdir($workspace);
 try {
 	$setup = new PDO('sqlite:' . $database);
 	$setup->exec('CREATE TABLE wp_datamachine_code_locks (id INTEGER PRIMARY KEY, lock_key TEXT, purpose TEXT, scope TEXT, owner TEXT, run_id TEXT, job_id INTEGER, status TEXT, acquired_at TEXT, heartbeat_at TEXT, expires_at TEXT, released_at TEXT, metadata_json TEXT)');
+	$setup->exec('CREATE TABLE wp_datamachine_code_worktrees (handle TEXT PRIMARY KEY, repo TEXT, path TEXT, lifecycle_state TEXT, metadata TEXT)');
 
 	// A hygiene reader and independent allocations must all survive a short
 	// shared writer transaction without leaking adapter output.
@@ -271,6 +306,32 @@ try {
 	$setup->exec('COMMIT');
 	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($unsafe_lifecycle['error'] ?? null) && !isset($unsafe_lifecycle['data']['retry_command']), 'Credential-bearing task identity retained an executable allocation receipt.');
 	lock_sqlite_assert(!str_contains(json_encode($unsafe_lifecycle), 'must-not-leak'), 'Credential-bearing task identity leaked through contention diagnostics.');
+
+	// Finalization is owned by the same repository lock as allocation. An
+	// exhausted DB admission cannot begin metadata mutation and returns one exact,
+	// idempotent replay command. Once contention clears, that replay succeeds.
+	$finalize_path = $workspace . '/lifecycle-repo@finalize-contention';
+	lock_sqlite_run(array('git', 'worktree', 'add', '-b', 'finalize-contention', $finalize_path, 'HEAD'), $primary);
+	$setup->exec('BEGIN EXCLUSIVE');
+	$finalize = lock_sqlite_finish(lock_sqlite_start(array('finalize', $database, $workspace, 'lifecycle-repo', '100')));
+	$setup->exec('COMMIT');
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($finalize['error'] ?? null) && 'workspace_lock_register' === ($finalize['data']['operation'] ?? null), 'Finalization did not preserve canonical lock-registration contention: ' . json_encode($finalize));
+	lock_sqlite_assert(false === ($finalize['data']['lock_callback_started'] ?? null), 'Contended finalization did not prove its metadata callback remained unstarted.');
+	$finalize_retry = "wp datamachine-code workspace worktree finalize 'lifecycle-repo@finalize-contention' --state='" . WorktreeContextInjector::STATE_PR_OPENED . "' --pr='https://example.test/pull/1250' --owner-terminal-outcome='success'";
+	lock_sqlite_assert($finalize_retry === ($finalize['data']['retry_command'] ?? null), 'Contended finalization omitted its exact normalized replay command: ' . json_encode($finalize));
+	$finalize_lock = fopen($workspace . '/.locks/worktree-lifecycle-repo.lock', 'c');
+	lock_sqlite_assert(is_resource($finalize_lock) && flock($finalize_lock, LOCK_EX | LOCK_NB), 'Contended finalization retained the authoritative OS flock.');
+	flock($finalize_lock, LOCK_UN); fclose($finalize_lock);
+	$setup->exec('BEGIN EXCLUSIVE');
+	$started = microtime(true);
+	$discovery = lock_sqlite_finish(lock_sqlite_start(array('discovery', $database, $workspace, 'lifecycle-repo', '100')));
+	$elapsed = microtime(true) - $started;
+	$setup->exec('COMMIT');
+	lock_sqlite_assert(true === ($discovery['success']['success'] ?? null) && 'lifecycle-repo@finalize-contention' === ($discovery['success']['worktrees'][0]['handle'] ?? null), 'Read-only exact discovery did not survive registry contention: ' . json_encode($discovery));
+	lock_sqlite_assert(null === ($discovery['success']['worktrees'][0]['metadata'] ?? null), 'Contended read-only discovery invented unavailable registry metadata.');
+	lock_sqlite_assert($elapsed < 2, 'Read-only exact discovery exceeded its bounded registry recovery window.');
+	$replayed = lock_sqlite_finish(lock_sqlite_start(array('finalize', $database, $workspace, 'lifecycle-repo', '100')));
+	lock_sqlite_assert(true === ($replayed['success']['success'] ?? null) && 'cleanup_eligible' === ($replayed['success']['lifecycle_state'] ?? null) && WorktreeContextInjector::STATE_PR_OPENED === ($replayed['success']['metadata']['finalized_state'] ?? null), 'Finalization replay did not recover after SQLite contention cleared: ' . json_encode($replayed));
 
 	// Heartbeat retries through a short lock, then reports both writes if exhausted.
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);

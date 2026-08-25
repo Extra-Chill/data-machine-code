@@ -205,6 +205,7 @@ class WorktreeInventoryRepository {
 	 */
 	public function get( string $handle ): ?array {
 		global $wpdb;
+		$this->last_error = null;
 
 		$handle = trim($handle);
 		if ( '' === $handle || ! isset($wpdb) ) {
@@ -213,10 +214,17 @@ class WorktreeInventoryRepository {
 
 		if ( method_exists($wpdb, 'get_row') && method_exists($wpdb, 'prepare') ) {
 			$table = self::table_name();
-			$row   = $wpdb->get_row(
-				$wpdb->prepare('SELECT * FROM %i WHERE handle = %s LIMIT 1', $table, $handle),
-				ARRAY_A
+			$row   = SqliteBusyRetry::run(
+				'worktree_inventory_get',
+				fn() => $wpdb->get_row(
+					$wpdb->prepare('SELECT * FROM %i WHERE handle = %s LIMIT 1', $table, $handle),
+					ARRAY_A
+				)
 			);
+			if ( $row instanceof \WP_Error ) {
+				$this->last_error = $row;
+				return null;
+			}
 			return is_array($row) ? $this->decode_row($row) : null;
 		}
 
