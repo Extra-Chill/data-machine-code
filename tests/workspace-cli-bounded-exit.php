@@ -82,6 +82,9 @@ namespace {
 	function wp_get_ability( string $name ): object {
 		return new class {
 			public function execute( array $input ): array {
+				if ( 'repo' === ( $input['repo'] ?? null ) ) {
+					return array( 'success' => true, 'worktrees' => array() );
+				}
 				return array( 'path' => '/workspace', 'total' => 1, 'returned' => 1, 'repos' => array( array( 'name' => 'repo', 'repo' => 'repo', 'git' => true, 'path' => '/workspace/repo' ) ) );
 			}
 		};
@@ -90,13 +93,13 @@ namespace {
 	if ( 'child' === ( $argv[1] ?? '' ) ) {
 		$mode = (string) ( $argv[2] ?? '' );
 		$marker = (string) ( $argv[3] ?? '' );
-		bounded_exit_assert(in_array($mode, array( 'success', 'failure', 'embedded' ), true), 'Unknown lifecycle mode.');
+		bounded_exit_assert(in_array($mode, array( 'success', 'failure', 'broken_pipe', 'embedded' ), true), 'Unknown lifecycle mode.');
 		if ( 'embedded' !== $mode ) {
 			define('WP_CLI', true);
 		}
 		define('WPINC', 'wp-includes');
 		define('ABSPATH', __DIR__ . '/fixtures/');
-		$GLOBALS['argv'] = array( 'wp', 'datamachine-code', 'workspace', 'list', '--limit=1' );
+		$GLOBALS['argv'] = array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'list', 'repo' );
 		require_once dirname(__DIR__) . '/data-machine-code.php';
 
 		bounded_exit_assert(
@@ -119,10 +122,18 @@ namespace {
 		$started = microtime(true);
 		$command->list_repos(array(), array());
 		$command->show(array( 'repo' ), array());
+		$worktree_list = WP_CLI::$commands['datamachine-code workspace worktree list'] ?? null;
+		bounded_exit_assert(is_callable($worktree_list), 'Minimal runtime did not register the filtered worktree-list leaf command.');
+		$worktree_list(array( 'repo' ), array());
 		bounded_exit_assert(microtime(true) - $started < 0.5, 'Registered workspace list/show dispatch exceeded its bounded command deadline.');
 		bounded_exit_assert(in_array('Name:     repo', WP_CLI::$output, true), 'Workspace show did not dispatch through the registered command.');
-		fwrite(STDOUT, "buffered-output {$mode}\n");
-		fflush(STDOUT);
+		if ( 'broken_pipe' === $mode ) {
+			@fwrite(STDOUT, "buffered-output {$mode}\n");
+			@fflush(STDOUT);
+		} else {
+			fwrite(STDOUT, "buffered-output {$mode}\n");
+			fflush(STDOUT);
+		}
 		if ( 'failure' === $mode ) {
 			// WP-CLI runs after_invoke after command output and before its final exit.
 			fwrite(STDERR, 'after_invoke failure');
@@ -131,13 +142,18 @@ namespace {
 		exit(0);
 	}
 
-	foreach ( array( 'success' => 0, 'failure' => 1, 'embedded' => 0 ) as $mode => $expected_status ) {
+	foreach ( array( 'success' => 0, 'failure' => 1, 'broken_pipe' => 0, 'embedded' => 0 ) as $mode => $expected_status ) {
 		$marker = tempnam(sys_get_temp_dir(), 'dmc-bounded-exit-');
 		$process = proc_open(array( PHP_BINARY, __FILE__, 'child', $mode, $marker), array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes);
 		bounded_exit_assert(is_resource($process), "Could not start {$mode} lifecycle process.");
-		$output = stream_get_contents($pipes[1]);
+		if ( 'broken_pipe' === $mode ) {
+			fclose($pipes[1]);
+			$output = '';
+		} else {
+			$output = stream_get_contents($pipes[1]);
+			fclose($pipes[1]);
+		}
 		$error = stream_get_contents($pipes[2]);
-		fclose($pipes[1]);
 		fclose($pipes[2]);
 		$status = proc_close($process);
 
@@ -145,7 +161,11 @@ namespace {
 		if ( 'embedded' === $mode ) {
 			bounded_exit_assert('embedded-safe' === file_get_contents($marker), 'Embedded invocation was not left untouched.');
 		} else {
-			bounded_exit_assert(str_contains($output, "buffered-output {$mode}"), "{$mode} output was not flushed before shutdown.");
+			if ( 'broken_pipe' === $mode ) {
+				bounded_exit_assert('' === $output, 'Broken-pipe parent unexpectedly retained child stdout.');
+			} else {
+				bounded_exit_assert(str_contains($output, "buffered-output {$mode}"), "{$mode} output was not flushed before shutdown.");
+			}
 			bounded_exit_assert('native-cleanup' === file_get_contents($marker), "{$mode} native cleanup was suppressed.");
 		}
 		unlink($marker);
