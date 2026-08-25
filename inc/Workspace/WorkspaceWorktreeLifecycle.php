@@ -4067,6 +4067,24 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$task_lookup     = null !== $task_ref;
 		$task_limit      = 200;
+		$task_candidates = null;
+		$task_repos      = null;
+		if ( $task_lookup ) {
+			$inventory_rows = $this->worktree_list_task_inventory_rows($task_ref, $task_limit + 1);
+			if ( count($inventory_rows) > $task_limit ) {
+				return new \WP_Error('worktree_task_candidates_overflow', 'Task worktree lookup exceeded the complete bounded candidate limit.', array( 'status' => 409, 'task_ref' => $task_ref, 'total' => count($inventory_rows), 'limit' => $task_limit ));
+			}
+			$task_candidates = array();
+			$task_repos      = array();
+			foreach ( $inventory_rows as $inventory_row ) {
+				$handle = trim( (string) ( $inventory_row['handle'] ?? '' ));
+				$repo_name = trim( (string) ( $inventory_row['repo'] ?? '' ));
+				if ( '' !== $handle && '' !== $repo_name ) {
+					$task_candidates[ $handle ] = true;
+					$task_repos[ $repo_name ]   = true;
+				}
+			}
+		}
 		if ( $all && isset($opts['cursor']) ) {
 			return new \WP_Error('invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ));
 		}
@@ -4135,7 +4153,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		foreach ( new \DirectoryIterator($this->workspace_path) as $entry ) {
 			$primary = $entry->getFilename();
-			if ( $entry->isDot() || str_contains($primary, '@') || ! $entry->isDir() || ! file_exists($entry->getPathname() . '/.git') || ( null !== $repo && $primary !== $repo ) ) {
+			if ( $entry->isDot() || str_contains($primary, '@') || ! $entry->isDir() || ! file_exists($entry->getPathname() . '/.git') || ( null !== $repo && $primary !== $repo ) || ( is_array($task_repos) && ! isset($task_repos[ $primary ]) ) ) {
 				continue;
 			}
 			$primary_path      = $this->workspace_path . '/' . $primary;
@@ -4191,6 +4209,9 @@ trait WorkspaceWorktreeLifecycle {
 					// External worktree (created via raw `git worktree add` outside the workspace).
 					// Show the absolute path so it is still useful, even though it has no `<repo>@<slug>` handle.
 					$handle = $wt['path'];
+				}
+				if ( is_array($task_candidates) && ! isset($task_candidates[ $handle ]) ) {
+					continue;
 				}
 				if ( '' !== $target_handle && $handle !== $target_handle ) {
 					continue;
@@ -4385,6 +4406,11 @@ trait WorkspaceWorktreeLifecycle {
 				'wall_clock_budget' => $budget->evidence(),
 			),
 		);
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	protected function worktree_list_task_inventory_rows( string $task_ref, int $limit ): array {
+		return $this->worktree_inventory()->findByTaskRef($task_ref, $limit);
 	}
 
 	/** Monotonic clock seam for deterministic budget contract tests. */
