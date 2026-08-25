@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.71.1] - 2026-08-25
+
+### Changed
+- centralize hygiene budget stop
+
+### Fixed
+- clarify hygiene budget checks
+- bound hygiene inventory work
+
 ## [0.71.0] - 2026-08-25
 
 ### Added
