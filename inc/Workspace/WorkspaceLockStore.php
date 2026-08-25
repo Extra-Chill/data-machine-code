@@ -89,6 +89,20 @@ final class WorkspaceLockStore {
 		return (int) $wpdb->insert_id;
 	}
 
+	/** Start a bounded lease when its owner actually acquires the OS lock. */
+	public static function activate_lease( array $metadata ): array {
+		if ( ! isset($metadata['lease_duration_seconds']) || ! is_numeric($metadata['lease_duration_seconds']) ) {
+			return $metadata;
+		}
+
+		$activated_at                    = self::now_microtime();
+		$duration                        = max(1, (int) $metadata['lease_duration_seconds']);
+		$metadata['lease_activated_at']  = gmdate('c', (int) floor($activated_at));
+		$metadata['expected_release_at'] = gmdate('c', (int) ceil($activated_at + $duration));
+
+		return $metadata;
+	}
+
 	/**
 	 * Mark a lock row released.
 	 */
@@ -145,12 +159,13 @@ final class WorkspaceLockStore {
 				if ( false === $existing && '' !== (string) $wpdb->last_error ) {
 					return false;
 				}
-				$metadata = array_merge(self::decode_metadata( (string) $existing), $metadata_patch);
+				$metadata = self::decode_metadata( (string) $existing);
 				$time     = self::now_timestamp();
 				$expected = strtotime( (string) ( $metadata['expected_release_at'] ?? '' ));
 				if ( false !== $expected && $expected <= $time ) {
 					return 0;
 				}
+				$metadata = array_merge($metadata, $metadata_patch);
 				return $wpdb->update(
 					$table,
 					array(
@@ -524,6 +539,15 @@ final class WorkspaceLockStore {
 			$time = (int) apply_filters('datamachine_code_workspace_lock_time', $time);
 		}
 		return max(0, $time);
+	}
+
+	/** Preserve a complete duration before storing its deadline at DB precision. */
+	private static function now_microtime(): float {
+		$time = microtime(true);
+		if ( function_exists('apply_filters') ) {
+			$time = (float) apply_filters('datamachine_code_workspace_lock_time', $time);
+		}
+		return max(0.0, $time);
 	}
 
 	private static function released_ttl_seconds(): int {

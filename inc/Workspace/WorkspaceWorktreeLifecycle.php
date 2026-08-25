@@ -440,28 +440,42 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Issue the proof while the caller still holds the allocation's repository lock. */
-	private function worktree_add_handoff_proof( array|\WP_Error $result, bool $allow_unverified_freshness = false ): array|\WP_Error {
+	private function worktree_add_handoff_proof( array|\WP_Error $result, bool $allow_unverified_freshness = false, ?float $operation_deadline = null ): array|\WP_Error {
 		if ( is_wp_error($result) || empty($result['success']) ) {
 			return $result;
+		}
+		$deadline = min($operation_deadline ?? INF, microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT);
+		if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+			$result['handoff_freshness'] = array(
+				'status' => 'unverified',
+				'reason' => 'worktree_handoff_revalidation_timeout',
+			);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
 		}
 		if ( empty($result['handle']) || empty($result['path']) ) {
 			$result['handoff_freshness'] = array(
 				'status' => 'unverified',
 				'reason' => 'allocation_identity_missing',
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
 		}
 		$primary  = $this->get_primary_path(explode('@', (string) $result['handle'], 2)[0]);
 		$metadata = WorktreeContextInjector::get_metadata_fresh( (string) $result['handle']) ?? array();
+		if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+			$result['handoff_freshness'] = array(
+				'status' => 'unverified',
+				'reason' => 'worktree_handoff_revalidation_timeout',
+			);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+		}
 		$base_ref = $this->worktree_handoff_base_ref($metadata);
 		if ( is_wp_error($base_ref) ) {
 			$result['handoff_freshness'] = array(
 				'status' => 'unverified',
 				'reason' => $base_ref->get_error_code(),
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
 		}
-		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
 		$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
 		if ( empty($fetch['ok']) ) {
 			$result['handoff_freshness'] = array(
@@ -469,7 +483,7 @@ trait WorkspaceWorktreeLifecycle {
 				'reason' => 'fetch_failed',
 				'fetch'  => $fetch,
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
 		}
 		$proof = $this->worktree_handoff_proof( (string) $result['handle'], (string) $result['path'], $primary, $base_ref, $deadline, bin2hex(random_bytes(16)));
 		if ( is_wp_error($proof) ) {
@@ -479,7 +493,7 @@ trait WorkspaceWorktreeLifecycle {
 				'reason'     => $reason,
 				'error_code' => $proof->get_error_code(),
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
 		}
 		$stored = WorktreeContextInjector::store_lifecycle_metadata( (string) $result['handle'], array( 'handoff_freshness_proof' => $proof ));
 		if ( is_wp_error($stored) || ! $stored ) {
@@ -488,7 +502,7 @@ trait WorkspaceWorktreeLifecycle {
 				'reason'     => 'metadata_persist_failed',
 				'error_code' => is_wp_error($stored) ? $stored->get_error_code() : null,
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
 		}
 		$result['metadata']          = array_merge($metadata, array( 'handoff_freshness_proof' => $proof ));
 		$result['handoff_freshness'] = array(
@@ -499,11 +513,11 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Refuse downstream use after a mutation when its handoff proof is absent. */
-	private function worktree_unverified_handoff_error( array $result, bool $allow_unverified_freshness ): array|\WP_Error {
+	private function worktree_unverified_handoff_error( array $result, bool $allow_unverified_freshness, ?float $deadline = null ): array|\WP_Error {
 		if ( $allow_unverified_freshness ) {
 			return $result;
 		}
-		$allocation_identity = $this->worktree_bind_handoff_allocation_identity($result);
+		$allocation_identity = $this->worktree_bind_handoff_allocation_identity($result, $deadline);
 		$continuation        = is_wp_error($allocation_identity) ? null : $this->worktree_handoff_continuation($allocation_identity);
 		$message             = null === $continuation
 			? 'The worktree allocation is committed but no verified handoff freshness proof or exact continuation is available. Do not repeat allocation or bootstrap; inspect the preserved allocation.'
@@ -536,13 +550,17 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Bind and confirm the continuation against the final persisted allocation record. */
-	private function worktree_bind_handoff_allocation_identity( array $result ): array|\WP_Error {
-		$identity = $this->worktree_handoff_allocation_identity($result);
+	private function worktree_bind_handoff_allocation_identity( array $result, ?float $deadline = null ): array|\WP_Error {
+		$deadline = $deadline ?? ( isset($result['handoff_deadline']) ? (float) $result['handoff_deadline'] : null );
+		$identity = $this->worktree_handoff_allocation_identity($result, $deadline);
 		if ( is_wp_error($identity) ) {
 			return $identity;
 		}
 
 		for ( $attempt = 0; $attempt < 2; ++$attempt ) {
+			if ( null !== $deadline && $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+				return $this->worktree_handoff_timeout();
+			}
 			$bound = WorktreeContextInjector::store_lifecycle_metadata( (string) $identity['handle'], array( 'handoff_continuation_identity' => $identity ));
 			if ( is_wp_error($bound) || ! $bound ) {
 				return new \WP_Error('worktree_handoff_allocation_identity_persist_failed', 'The exact handoff continuation identity could not be persisted.', array( 'status' => 500 ));
@@ -550,12 +568,15 @@ trait WorkspaceWorktreeLifecycle {
 
 			$confirmation_result = $result;
 			unset($confirmation_result['worktree_sha']);
-			$confirmed = $this->worktree_handoff_allocation_identity($confirmation_result);
+			$confirmed = $this->worktree_handoff_allocation_identity($confirmation_result, $deadline);
 			if ( is_wp_error($confirmed) ) {
 				return $confirmed;
 			}
 			if ( $this->worktree_handoff_proof_canonical_json($confirmed) === $this->worktree_handoff_proof_canonical_json($identity) ) {
 				$metadata = WorktreeContextInjector::get_metadata_fresh( (string) $identity['handle']);
+				if ( null !== $deadline && $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+					return $this->worktree_handoff_timeout();
+				}
 				if ( is_array($metadata) && $this->worktree_handoff_proof_canonical_json($identity) === $this->worktree_handoff_proof_canonical_json( (array) ( $metadata['handoff_continuation_identity'] ?? array() )) ) {
 					return $identity;
 				}
@@ -567,7 +588,10 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Bind a continuation to one allocation and its exact post-bootstrap HEAD. */
-	private function worktree_handoff_allocation_identity( array $result ): array|\WP_Error {
+	private function worktree_handoff_allocation_identity( array $result, ?float $deadline = null ): array|\WP_Error {
+		if ( null !== $deadline && $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+			return $this->worktree_handoff_timeout();
+		}
 		$handle   = (string) ( $result['handle'] ?? '' );
 		$path     = (string) ( $result['path'] ?? '' );
 		$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
@@ -580,6 +604,9 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 		if ( is_array($metadata) && '' === (string) ( $metadata['allocation_id'] ?? '' ) ) {
+			if ( null !== $deadline && $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+				return $this->worktree_handoff_timeout();
+			}
 			$allocation_id = bin2hex(random_bytes(16));
 			$stored        = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'allocation_id' => $allocation_id ));
 			$metadata      = is_wp_error($stored) || ! $stored ? $metadata : WorktreeContextInjector::get_metadata_fresh($handle);
@@ -590,8 +617,8 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$worktree_sha = (string) ( $result['worktree_sha'] ?? '' );
 		if ( 1 !== preg_match('/^[0-9a-f]{40,64}$/D', $worktree_sha) ) {
-			$head = isset($result['handoff_deadline'])
-				? $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', (float) $result['handoff_deadline'])
+			$head = null !== $deadline
+				? $this->worktree_handoff_git($path, 'rev-parse --verify HEAD^{commit}', $deadline)
 				: $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
 			if ( is_wp_error($head) ) {
 				return $head;
@@ -1102,7 +1129,7 @@ trait WorkspaceWorktreeLifecycle {
 			$repo,
 			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline, $progress_callback),
 			$capacity_timeout,
-			array(),
+			array( '_acquisition_deadline' => $operation_deadline ),
 			$progress_callback
 		);
 		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
@@ -1149,9 +1176,12 @@ trait WorkspaceWorktreeLifecycle {
 			),
 			$capacity_timeout,
 			array(
-				'expected_release_at'       => gmdate('c', (int) ceil($operation_deadline)),
-				'operation_timeout_seconds' => $operation_timeout,
-				'lease_strategy'            => 'operation_deadline',
+				'_acquisition_deadline'       => $operation_deadline,
+				'lease_duration_seconds'     => $operation_timeout,
+				'operation_timeout_seconds'  => $operation_timeout,
+				'aggregate_timeout_seconds'  => self::worktree_capacity_aggregate_timeout_seconds($bootstrap),
+				'operation_requested_at'     => gmdate('c', (int) floor($operation_started)),
+				'lease_strategy'             => 'acquisition_bounded',
 			),
 			$progress_callback
 		);
@@ -1166,8 +1196,13 @@ trait WorkspaceWorktreeLifecycle {
 			unset($locked['bootstrap_noop_completed']);
 		}
 
-		// The reservation was committed during admission, before both lock handles
-		// are closed by with_repo(). Dependency children therefore inherit neither.
+		// Carry the acquired deadline across with_repo(), then strip the internal
+		// field before either deferred bootstrap or the public response can see it.
+		if ( isset($locked['_capacity_operation_deadline']) ) {
+			$operation_deadline = (float) $locked['_capacity_operation_deadline'];
+			$operation_started  = $operation_deadline - $operation_timeout;
+			unset($locked['_capacity_operation_deadline']);
+		}
 		$result = ! $bootstrap || empty($locked['bootstrap_deferred'])
 			? $locked
 			: $this->complete_deferred_bootstrap($locked, $repo, $branch, $operation_deadline, $operation_timeout, $operation_started, $progress_callback);
@@ -1177,14 +1212,27 @@ trait WorkspaceWorktreeLifecycle {
 
 		// The proof is the consumer handoff boundary, so issue it only after the
 		// complete allocation lifecycle, including any deferred bootstrap, finishes.
-		return WorkspaceMutationLock::with_repo(
+		$proof_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
+		if ( $proof_timeout <= 0 ) {
+			return $this->worktree_add_handoff_proof($result, $allow_unverified_freshness, $operation_deadline);
+		}
+		$proof = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			$repo,
-			fn() => $this->worktree_add_handoff_proof($result, $allow_unverified_freshness),
-			30,
-			array(),
+			fn() => $this->worktree_add_handoff_proof($result, $allow_unverified_freshness, $operation_deadline),
+			$proof_timeout,
+			array( '_acquisition_deadline' => $operation_deadline ),
 			$progress_callback
 		);
+		if ( is_wp_error($proof) && 'workspace_repo_busy' === $proof->get_error_code() ) {
+			$result['handoff_freshness'] = array(
+				'status'     => 'unverified',
+				'reason'     => 'handoff_proof_lock_wait',
+				'contention' => $proof->get_error_data(),
+			);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $operation_deadline);
+		}
+		return $proof;
 	}
 
 	/** Prepare repo-local freshness and projected demand before global admission. */
@@ -1320,6 +1368,12 @@ trait WorkspaceWorktreeLifecycle {
 		return max(1, $timeout);
 	}
 
+	/** Declare the maximum pre-admission plus acquisition-bounded lifecycle time. */
+	public static function worktree_capacity_aggregate_timeout_seconds( bool $bootstrap = true ): int {
+		$operation = self::worktree_capacity_operation_timeout_seconds($bootstrap);
+		return ( 2 * $operation ) + 1;
+	}
+
 	/**
 	 * Inspect, create, and reserve bootstrap demand while holding the workspace-
 	 * wide capacity lock. A later admission includes the durable reservation while
@@ -1354,6 +1408,11 @@ trait WorkspaceWorktreeLifecycle {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
 		$operation_deadline = $operation_deadline ?? ( $operation_started + $operation_timeout );
+		$lease_deadline     = $capacity_lock?->lease_deadline();
+		if ( null !== $lease_deadline ) {
+			$operation_deadline = (float) $lease_deadline;
+			$operation_started  = $operation_deadline - $operation_timeout;
+		}
 		$deadline_error     = $this->worktree_operation_deadline_error('freshness', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
@@ -1370,14 +1429,18 @@ trait WorkspaceWorktreeLifecycle {
 			if ( $repo_timeout <= 0 ) {
 				return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
 			}
-			return WorkspaceMutationLock::with_repo(
+			$reused = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
-				fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness),
+				fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness, $operation_deadline),
 				$repo_timeout,
-				array(),
+				array( '_acquisition_deadline' => $operation_deadline ),
 				$progress_callback
 			);
+			if ( is_array($reused) ) {
+				$reused['_capacity_operation_deadline'] = $operation_deadline;
+			}
+			return $reused;
 		}
 		// The workspace capacity lock serializes admission. The target repo lock is
 		// acquired only for final creation, so remediation can safely take per-repo
@@ -1646,7 +1709,7 @@ trait WorkspaceWorktreeLifecycle {
 					'operation_deadline'    => $operation_deadline,
 					'operation_timeout'     => $operation_timeout,
 					'operation_started'     => $operation_started,
-				), $progress_callback), $repo_timeout, array(), $progress_callback);
+				), $progress_callback), $repo_timeout, array( '_acquisition_deadline' => $operation_deadline ), $progress_callback);
 		$response = $this->worktree_operation_lock_result($response, 'repo_lock_wait', $operation_timeout, $operation_started);
 
 		if ( is_wp_error($response) ) {
@@ -1670,6 +1733,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
+		$response['_capacity_operation_deadline'] = $operation_deadline;
 		$measurement_plan             = $demand_plan;
 		if ( is_array($capacity_remediation) ) {
 			$response['capacity_remediation'] = $capacity_remediation;
@@ -1835,11 +1899,12 @@ trait WorkspaceWorktreeLifecycle {
 		if ( false === $renewed ) {
 			return new \WP_Error(
 				'workspace_capacity_lock_heartbeat_lost',
-				'The workspace capacity lock is no longer active; refusing to continue allocation without current ownership evidence.',
+				sprintf('The workspace capacity lock DB lease is no longer active during %s (OS ownership %s, deadline %s, timeout %d); refusing to continue allocation without current ownership evidence.', str_replace('_', ' ', $phase), $lock->is_active() ? 'active' : 'inactive', gmdate('c', (int) ceil($operation_deadline)), $operation_timeout),
 				array(
 					'status'             => 423,
 					'retryable'          => true,
 					'phase'              => $phase,
+					'ownership'          => $lock->lease_evidence(),
 					'operation_timeout'  => $operation_timeout,
 					'operation_started'  => $operation_started,
 					'operation_deadline' => gmdate('c', (int) ceil($operation_deadline)),
@@ -2550,11 +2615,19 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
+		$deadline_error = $this->worktree_operation_deadline_error('bootstrap_complete', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 		$after_capacity                = $this->inspect_worktree_capacity($repo, $branch, false, array());
 		$measurement_plan              = (array) ( $response['bootstrap_measurement_plan'] ?? array() );
 		$bootstrap_before_capacity     = (array) ( $response['bootstrap_capacity_before'] ?? array() );
 		$response['capacity_evidence'] = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, ! empty($response['bootstrap']['success']));
+		$deadline_error                = $this->worktree_operation_deadline_error('bootstrap_finalize', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		unset($response['bootstrap_deferred'], $response['bootstrap_reservation'], $response['bootstrap_capacity_before'], $response['bootstrap_measurement_plan']);
 		return $response;
 	}

@@ -179,6 +179,9 @@ final class WorkspaceMutationLock {
 
 		$started = microtime(true);
 		$timeout = max(0, $timeout);
+		$first_attempt        = true;
+		$acquisition_deadline = isset($metadata['_acquisition_deadline']) && is_numeric($metadata['_acquisition_deadline']) ? (float) $metadata['_acquisition_deadline'] : null;
+		unset($metadata['_acquisition_deadline']);
 		self::emit_progress($progress_callback, array(
 			'operation'            => 'workspace_mutation_lock',
 			'phase'                => 'lock_request',
@@ -196,7 +199,12 @@ final class WorkspaceMutationLock {
 
 		do {
 			self::update_request($request_path, 'queued');
-			if ( self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$acquired = self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$elapsed  = microtime(true) - $started;
+			$deadline_live = null === $acquisition_deadline || microtime(true) < $acquisition_deadline;
+			if ( $acquired && $deadline_live && ( ( 0 === $timeout && $first_attempt ) || $elapsed < $timeout ) ) {
+				$metadata                  = WorkspaceLockStore::activate_lease($metadata);
+				$metadata['owner_context'] = WorkspaceLockStore::default_owner_context();
 				self::update_request($request_path, 'acquiring');
 				$lock_id = WorkspaceLockStore::register_acquired(
 					array(
@@ -207,7 +215,7 @@ final class WorkspaceMutationLock {
 							'workspace_path' => $workspace_path,
 							'lock_path'      => $lock_path,
 							'request_id'     => $request_id,
-							'owner_context'  => WorkspaceLockStore::default_owner_context(),
+							'owner_context'  => $metadata['owner_context'],
 						)),
 					)
 				);
@@ -221,6 +229,9 @@ final class WorkspaceMutationLock {
 				self::update_request($request_path, 'acquired');
 				return new self($handle, (int) $lock_id, $request_path, $metadata);
 			}
+			if ( $acquired ) {
+				flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			}
 
 			$now = microtime(true);
 			if ( null === $last_progress || ( $now - $last_progress ) >= self::PROGRESS_INTERVAL_SECONDS ) {
@@ -229,10 +240,11 @@ final class WorkspaceMutationLock {
 				$last_progress = $now;
 			}
 
-			if ( 0 === $timeout || ( $now - $started ) >= $timeout ) {
+			if ( 0 === $timeout || ( $now - $started ) >= $timeout || ! $deadline_live ) {
 				return self::timed_out_error($repo, $lock_path, $request_path, $timeout, $started, $handle, $progress_callback);
 			}
 
+			$first_attempt = false;
 			usleep(self::POLL_USEC);
 		} while ( true );
 	}
@@ -267,6 +279,29 @@ final class WorkspaceMutationLock {
 		}
 		$this->metadata = array_merge($this->metadata, $metadata);
 		return WorkspaceLockStore::heartbeat($this->lock_id, $this->metadata);
+	}
+
+	/** Return the acquisition-bounded lease deadline, when one was declared. */
+	public function lease_deadline(): ?int {
+		$deadline = strtotime((string) ( $this->metadata['expected_release_at'] ?? '' ));
+		return false === $deadline ? null : $deadline;
+	}
+
+	/** Whether this object still owns its authoritative OS lock handle. */
+	public function is_active(): bool {
+		return null !== $this->handle;
+	}
+
+	/** Return bounded ownership evidence without exposing arbitrary caller metadata. */
+	public function lease_evidence(): array {
+		return array(
+			'os_lock_active'        => $this->is_active(),
+			'lease_strategy'        => $this->metadata['lease_strategy'] ?? null,
+			'lease_activated_at'    => $this->metadata['lease_activated_at'] ?? null,
+			'expected_release_at'   => $this->metadata['expected_release_at'] ?? null,
+			'lease_duration_seconds' => isset($this->metadata['lease_duration_seconds']) ? (int) $this->metadata['lease_duration_seconds'] : null,
+			'owner'                 => $this->metadata['owner_context'] ?? WorkspaceLockStore::default_owner_context(),
+		);
 	}
 
 	/** Invoke legacy zero-argument callbacks without a new argument. */
