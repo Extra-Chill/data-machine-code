@@ -221,12 +221,48 @@ if ( 'repo-holder' === $mode ) {
 
 if ( 'diagnostic-waiter' === $mode ) {
 	$workspace = (string) $argv[2];
-	$result    = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'acquired', 1);
+	$events    = array();
+	$marker    = $workspace . '/diagnostic-mutated';
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function () use ( $marker ): string {
+			file_put_contents($marker, 'mutated');
+			return 'acquired';
+		},
+		1,
+		array(),
+		static function ( array $event ) use ( &$events ): void {
+			$events[] = $event;
+		}
+	);
 	if ( ! is_wp_error($result) ) {
 		exit(7);
 	}
-	fwrite(STDOUT, json_encode($result->get_error_data()));
+	fwrite(STDOUT, json_encode(array( 'error' => $result->get_error_data(), 'events' => $events, 'mutated' => is_file($marker) )));
 	exit(0);
+}
+
+if ( 'slow-observer-waiter' === $mode ) {
+	$workspace = (string) $argv[2];
+	$marker    = $workspace . '/slow-observer-mutated';
+	$result    = WorkspaceMutationLock::with_repo(
+		$workspace,
+		'workspace-capacity-admission',
+		static function () use ( $marker ): string {
+			file_put_contents($marker, 'mutated');
+			return 'acquired';
+		},
+		1,
+		array(),
+		static function ( array $event ): void {
+			if ( 'lock_wait' === ($event['phase'] ?? null) && 'queued' === ($event['state'] ?? null) ) {
+				usleep(1200000);
+			}
+		}
+	);
+	fwrite(STDOUT, json_encode(array( 'error' => is_wp_error($result) ? $result->get_error_code() : null, 'mutated' => is_file($marker) )));
+	exit(is_wp_error($result) ? 0 : 7);
 }
 
 if ( 'bootstrap-child' === $mode ) {
@@ -373,6 +409,22 @@ try {
 	capacity_lock_assert('zero-argument' === $zero_argument_callback, 'Zero-argument lock callback compatibility regressed.');
 	$lock_aware_callback = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn( WorkspaceMutationLock $lock ): string => $lock instanceof WorkspaceMutationLock ? 'lock-aware' : 'invalid', 1);
 	capacity_lock_assert('lock-aware' === $lock_aware_callback, 'Lock-aware callback did not receive the safe lease handle.');
+	$observer_failure = WorkspaceMutationLock::with_repo($workspace, 'callback-compat', static fn(): string => 'observer-safe', 1, array(), static function (): void { throw new RuntimeException('observer failed'); });
+	capacity_lock_assert('observer-safe' === $observer_failure, 'A failing progress observer interrupted lock admission.');
+	$slow_request_mutated = false;
+	$slow_request = WorkspaceMutationLock::with_repo($workspace, 'slow-request-observer', static function () use ( &$slow_request_mutated ): void { $slow_request_mutated = true; }, 1, array(), static function ( array $event ): void {
+		if ( 'lock_request' === ($event['phase'] ?? null) ) { usleep(1200000); }
+	});
+	capacity_lock_assert(is_wp_error($slow_request) && 'workspace_repo_busy' === $slow_request->get_error_code() && ! $slow_request_mutated, 'Initial observer latency allowed mutation after the admission budget expired.');
+	$slow_request_retry = WorkspaceMutationLock::with_repo($workspace, 'slow-request-observer', static fn(): string => 'retry-acquired', 1);
+	capacity_lock_assert('retry-acquired' === $slow_request_retry, 'A clean retry failed after initial observer latency.');
+	$request_failure_workspace = $workspace . '/request-failure';
+	mkdir($request_failure_workspace . '/.locks', 0777, true);
+	file_put_contents($request_failure_workspace . '/.locks/requests', 'not-a-directory');
+	$request_failure_mutated = false;
+	$request_failure = WorkspaceMutationLock::with_repo($request_failure_workspace, 'repo-a', static function () use ( &$request_failure_mutated ): void { $request_failure_mutated = true; });
+	capacity_lock_assert(is_wp_error($request_failure) && 'workspace_lock_request_create_failed' === $request_failure->get_error_code() && ! $request_failure_mutated, 'Admission did not fail closed when its durable request identity could not be persisted.');
+	capacity_lock_remove_tree($request_failure_workspace);
 
 	$run_contention = static function ( int $hold_seconds, int $wait_timeout ) use ( $workspace ): array {
 		$ready   = $workspace . '/ready';
@@ -431,13 +483,45 @@ try {
 	$diagnostic_output = stream_get_contents($diagnostic_pipes[1]);
 	fclose($diagnostic_pipes[1]); fclose($diagnostic_pipes[2]);
 	capacity_lock_assert(0 === proc_close($diagnostic), 'Diagnostic waiter did not return typed timeout evidence.');
-	$diagnostic_data = json_decode($diagnostic_output, true);
+	$diagnostic_result = json_decode($diagnostic_output, true);
+	$diagnostic_data = $diagnostic_result['error'] ?? null;
+	$diagnostic_events = $diagnostic_result['events'] ?? array();
 	capacity_lock_assert(is_array($diagnostic_data) && ! empty($diagnostic_data['request_id']), 'Timeout must expose a durable request identity.');
 	capacity_lock_assert(1 === ($diagnostic_data['queue_position'] ?? null), 'Single waiter must report queue position one.');
 	capacity_lock_assert('lock_wait' === ($diagnostic_data['progress']['phase'] ?? null), 'Timeout must identify lock-wait progress.');
 	capacity_lock_assert(is_array($diagnostic_data['owner'] ?? null), 'Timeout must expose the active lock owner.');
 	capacity_lock_assert(array_key_exists('estimated_wait_seconds', $diagnostic_data) && 'active_holder_release_unknown' === ($diagnostic_data['eta_status'] ?? null), 'Timeout without an owner operation deadline must not estimate completion from the DB lease.');
+	$request_events = array_values(array_filter($diagnostic_events, static fn( array $event ): bool => 'lock_request' === ($event['phase'] ?? null)));
+	$wait_events = array_values(array_filter($diagnostic_events, static fn( array $event ): bool => 'lock_wait' === ($event['phase'] ?? null)));
+	capacity_lock_assert(1 === count($request_events) && ($diagnostic_data['request_id'] ?? null) === ($request_events[0]['request_id'] ?? null), 'Lock admission did not report its durable request identity before waiting.');
+	capacity_lock_assert(2 <= count($wait_events) && 'queued' === ($wait_events[0]['state'] ?? null) && 'timed_out' === ($wait_events[count($wait_events) - 1]['state'] ?? null), 'Contended admission did not report bounded queued and terminal wait states.');
+	capacity_lock_assert(1 === ($wait_events[0]['queue_position'] ?? null) && is_array($wait_events[0]['owner'] ?? null) && (float) ($wait_events[0]['elapsed_seconds'] ?? 1) < 0.5, 'Initial lock wait progress omitted timely queue or owner evidence.');
+	capacity_lock_assert(false === ($diagnostic_result['mutated'] ?? true) && ! is_file($workspace . '/diagnostic-mutated'), 'Timed-out admission ran its protected mutation callback.');
 	fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
+	$diagnostic_retry = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'retry-acquired', 1);
+	capacity_lock_assert('retry-acquired' === $diagnostic_retry, 'A clean retry did not acquire after the observed holder released.');
+	unlink($ready);
+
+	// Observer latency is presentation overhead, not permission to mutate after
+	// the admission wait budget has expired and the holder has released.
+	$ready = $workspace . '/slow-observer-ready';
+	$holder = proc_open(array( PHP_BINARY, __FILE__, 'holder', $workspace, $ready, '1' ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $holder_pipes);
+	capacity_lock_assert(is_resource($holder), 'Could not start slow-observer lock holder.');
+	fclose($holder_pipes[0]);
+	$deadline = microtime(true) + 3;
+	while ( ! is_file($ready) && microtime(true) < $deadline ) { usleep(10000); }
+	$slow_observer = proc_open(array( PHP_BINARY, __FILE__, 'slow-observer-waiter', $workspace), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $slow_observer_pipes);
+	capacity_lock_assert(is_resource($slow_observer), 'Could not start slow-observer waiter.');
+	fclose($slow_observer_pipes[0]);
+	$slow_observer_output = stream_get_contents($slow_observer_pipes[1]);
+	$slow_observer_error = stream_get_contents($slow_observer_pipes[2]);
+	fclose($slow_observer_pipes[1]); fclose($slow_observer_pipes[2]);
+	capacity_lock_assert(0 === proc_close($slow_observer), 'Slow observer changed lock admission outcome: ' . $slow_observer_error);
+	$slow_observer_result = json_decode($slow_observer_output, true);
+	capacity_lock_assert('workspace_repo_busy' === ($slow_observer_result['error'] ?? null) && false === ($slow_observer_result['mutated'] ?? true) && ! is_file($workspace . '/slow-observer-mutated'), 'Expired admission mutated after observer latency allowed the holder to release.');
+	fclose($holder_pipes[1]); fclose($holder_pipes[2]); proc_close($holder);
+	$slow_observer_retry = WorkspaceMutationLock::with_repo($workspace, 'workspace-capacity-admission', static fn(): string => 'retry-acquired', 1);
+	capacity_lock_assert('retry-acquired' === $slow_observer_retry, 'A clean retry failed after observer-delayed contention.');
 	unlink($ready);
 
 	// Repository-local preparation locks are independent. This is the property

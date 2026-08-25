@@ -12,7 +12,8 @@ namespace DataMachine\Cli {
 namespace DataMachineCode\Abilities {
 	class WorkspaceAbilities {
 		public static array|\WP_Error $result;
-		public static function showRepo( array $input ): array|\WP_Error { return self::$result; }
+		public static array $input = array();
+		public static function showRepo( array $input ): array|\WP_Error { self::$input = $input; return self::$result; }
 	}
 }
 
@@ -85,6 +86,29 @@ namespace {
 			'Dirty:    no',
 		) === WP_CLI::$logs,
 		'Default workspace show output changed.'
+	);
+	workspace_show_cli_assert(array( 'name' => 'example', 'refresh' => false ) === WorkspaceAbilities::$input, 'Default workspace show unexpectedly requested network verification.');
+
+	WP_CLI::$logs = array();
+	WorkspaceAbilities::$result['primary_freshness'] = array(
+		'status'                         => 'remote_verified_current',
+		'verification_scope'             => 'remote_verified',
+		'upstream'                       => 'origin/main',
+		'behind'                         => 0,
+		'ahead'                          => 0,
+		'tracking_ref_observed_at'       => '2026-08-24T12:00:00+00:00',
+		'network_verification_attempted' => true,
+		'remote_verified_at'             => '2026-08-24T12:00:00+00:00',
+		'verification_error'             => null,
+	);
+	$command->show( array( 'example' ), array( 'refresh' => true ) );
+	workspace_show_cli_assert(array( 'name' => 'example', 'refresh' => true ) === WorkspaceAbilities::$input, 'Workspace show --refresh did not reach the ability input.');
+	workspace_show_cli_assert(
+		in_array('Freshness: remote_verified_current', WP_CLI::$logs, true)
+		&& in_array('Verification: remote_verified', WP_CLI::$logs, true)
+		&& in_array('Network attempted: yes', WP_CLI::$logs, true)
+		&& in_array('Remote verified: 2026-08-24T12:00:00+00:00', WP_CLI::$logs, true),
+		'Workspace show human output omitted qualified remote-verification evidence.'
 	);
 
 	WP_CLI::$logs = array();

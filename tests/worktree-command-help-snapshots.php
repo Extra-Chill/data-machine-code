@@ -70,6 +70,7 @@ namespace {
 	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], 'reuse_compatible|isolated|recycle_terminal|claim_expired'), 'Compact add help does not enumerate reuse policies.');
 	worktree_help_assert(str_contains($add_options['cleanup-policy']['description'], 'manual|remove_on_success|preserve_on_failure'), 'Compact add help does not enumerate cleanup policies.');
 	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], 'purpose, owner_run_ref, and cleanup_policy=remove_on_success'), 'Compact add help does not describe the isolated same-task contract.');
+	worktree_help_assert(array_column($definitions['attach-tracker']['synopsis'], 'name') === array( 'handle', 'task-url', 'task-ref', 'dry-run', 'format' ), 'Attach-tracker help omitted the preview input.');
 
 	$remove = $definitions['remove'];
 	worktree_help_assert(array_column($remove['synopsis'], 'name') === array( 'repo-or-handle', 'branch', 'force', 'format' ), 'Remove help option snapshot changed.');

@@ -995,10 +995,11 @@ trait WorkspaceRepositoryLifecycle {
 	/**
 	 * Show detailed info about a workspace repo.
 	 *
-	 * @param  string $handle Workspace handle.
+	 * @param  string $handle  Workspace handle.
+	 * @param  bool   $refresh Fetch the tracked remote before classifying primary freshness.
 	 * @return array{success: bool, name?: string, repo?: string, is_worktree?: bool, is_context?: bool, path?: string|null, branch?: string|null, remote?: string|null, commit?: string|null, dirty?: int, workspace_capacity?: array, primary_freshness?: array|null, workspace_policy?: array}|\WP_Error
 	 */
-	public function show_repo( string $handle ): array|\WP_Error {
+	public function show_repo( string $handle, bool $refresh = false ): array|\WP_Error {
 		$requested_handle = $handle;
 		$context_policy   = null;
 		$parsed           = $this->parse_handle($handle);
@@ -1056,6 +1057,19 @@ trait WorkspaceRepositoryLifecycle {
 			return new \WP_Error('repo_not_found', sprintf('Workspace handle "%s" not found.', $requested_handle), array( 'status' => 404 ));
 		}
 
+		$primary_freshness = ! $parsed['is_worktree'] && is_string($inspection['branch_status'] ?? null)
+			? $this->build_primary_freshness_report_from_status_output(
+				(string) $inspection['branch_status'],
+				$parsed['dir_name'],
+				isset($inspection['tracking_ref_observed_at']) && is_string($inspection['tracking_ref_observed_at'])
+					? $inspection['tracking_ref_observed_at']
+					: null
+			)
+			: null;
+		if ( $refresh && is_array($primary_freshness) ) {
+			$primary_freshness = $this->refresh_primary_freshness_report($repo_path, $parsed['dir_name'], $primary_freshness);
+		}
+
 		$result = array(
 			'success'            => true,
 			'name'               => null !== $context_policy ? (string) $context_policy['alias'] : $parsed['dir_name'],
@@ -1068,9 +1082,7 @@ trait WorkspaceRepositoryLifecycle {
 			'commit'             => $inspection['commit'] ?? null,
 			'dirty'              => (int) ( $inspection['dirty'] ?? 0 ),
 			'workspace_capacity' => WorktreeDiskBudget::inspect($this->workspace_path),
-			'primary_freshness'  => ! $parsed['is_worktree'] && is_string($inspection['branch_status'] ?? null)
-				? $this->build_primary_freshness_report_from_status_output( (string) $inspection['branch_status'], $parsed['dir_name'])
-				: null,
+			'primary_freshness'  => $primary_freshness,
 		);
 		if ( $parsed['is_worktree'] ) {
 			$result['readiness'] = WorktreeContextInjector::bootstrap_readiness(WorktreeContextInjector::get_metadata($parsed['dir_name']));
