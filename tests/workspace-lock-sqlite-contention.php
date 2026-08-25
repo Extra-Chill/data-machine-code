@@ -10,6 +10,7 @@ final class WP_Error {
 	public function get_error_code(): string { return $this->code; }
 	public function get_error_message(): string { return $this->message; }
 	public function get_error_data(): mixed { return $this->data; }
+	public function add_data(mixed $data): void { $this->data = $data; }
 }
 function is_wp_error(mixed $value): bool { return $value instanceof WP_Error; }
 function wp_json_encode(mixed $value): string|false { return json_encode($value); }
@@ -90,9 +91,27 @@ function lock_sqlite_worker(array $args): void {
 		return;
 	}
 
-	if ('lifecycle' === $mode) {
+	if ('lifecycle' === $mode || 'unsafe-lifecycle' === $mode) {
 		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
-		$result = (new Workspace())->worktree_add($repo, 'contention/fail-closed', 'refs/heads/main', false, false, false, false, true);
+		putenv('DATAMACHINE_TASK_URL=HTTPS://Example.TEST:443/tracker/1247/?source=environment');
+		putenv('DATAMACHINE_TASK_REF=environment#1247');
+		$task = 'unsafe-lifecycle' === $mode ? array( 'task_url' => 'https://token:must-not-leak@example.test/tracker/1247' ) : array();
+		$result = (new Workspace())->worktree_add(
+			$repo,
+			"contention/quote'path;safe",
+			"refs/heads/base/quote'path;safe",
+			false,
+			false,
+			true,
+			true,
+			false,
+			$task,
+			true,
+			true,
+			array( 'purpose' => "review'purpose", 'owner_run_ref' => 'run;1247', 'cleanup_policy' => 'remove_on_success' ),
+			'isolated',
+			true
+		);
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
@@ -206,6 +225,9 @@ try {
 	lock_sqlite_assert((microtime(true) - $started) < 2, 'Exhausted acquisition exceeded its bounded retry envelope.');
 	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($acquire['error'] ?? null) && true === ($acquire['data']['retryable'] ?? null) && 'workspace_lock_register' === ($acquire['data']['operation'] ?? null), 'Exhausted acquisition did not retain canonical contention diagnostics.');
 	lock_sqlite_assert('workspace_lock_register' === ($acquire['data']['blocker_phase'] ?? null), 'Exhausted acquisition omitted its blocker phase.');
+	lock_sqlite_assert(false === ($acquire['data']['lock_callback_started'] ?? null), 'Exhausted acquisition did not prove its mutation callback remained unstarted.');
+	lock_sqlite_assert(!isset($acquire['data']['retry_command']), 'Generic lock acquisition invented a worktree allocation command.');
+	lock_sqlite_assert(!isset($acquire['data']['owner']['wp_cli_args']), 'Public lock contention retained raw process argv.');
 	lock_sqlite_assert(100 === ($acquire['data']['max_wait_ms'] ?? null) && ($acquire['data']['waited_ms'] ?? 0) >= 100, 'Exhausted acquisition did not report its configured retry bound.');
 	$raw = fopen($workspace . '/.locks/worktree-acquire-exhausted.lock', 'c');
 	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Failed DB acquisition retained the authoritative OS flock.');
@@ -227,12 +249,28 @@ try {
 	lock_sqlite_run(array('git', 'config', 'user.email', 'test@example.test'), $primary);
 	lock_sqlite_run(array('git', 'config', 'user.name', 'DMC Test'), $primary);
 	lock_sqlite_run(array('git', 'commit', '--allow-empty', '-m', 'fixture'), $primary);
+	$branch = "contention/quote'path;safe";
+	$from   = "refs/heads/base/quote'path;safe";
+	lock_sqlite_run(array('git', 'check-ref-format', 'refs/heads/' . $branch), $primary);
+	lock_sqlite_run(array('git', 'check-ref-format', $from), $primary);
 	$setup->exec('BEGIN EXCLUSIVE');
-	$lifecycle = lock_sqlite_finish(lock_sqlite_start(array('lifecycle', $database, $workspace, 'lifecycle-repo', '100')));
+	$lifecycle = lock_sqlite_finish(lock_sqlite_start(array('lifecycle', $database, $workspace, $primary, '100')));
 	$setup->exec('COMMIT');
-	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($lifecycle['error'] ?? null) && 'workspace_lock_register' === ($lifecycle['data']['operation'] ?? null), 'Worktree add did not preserve lock-registration contention.');
-	lock_sqlite_assert(!is_dir($workspace . '/lifecycle-repo@contention-fail-closed'), 'Failed ownership registration allowed a worktree path mutation.');
-	lock_sqlite_assert('' === lock_sqlite_run(array('git', 'branch', '--list', 'contention/fail-closed'), $primary), 'Failed ownership registration allowed a branch mutation.');
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($lifecycle['error'] ?? null) && 'workspace_lock_register' === ($lifecycle['data']['operation'] ?? null), 'Worktree add did not preserve lock-registration contention: ' . json_encode($lifecycle));
+	$expected_retry = "wp datamachine-code workspace worktree add 'lifecycle-repo' " . escapeshellarg($branch)
+		. ' --from=' . escapeshellarg($from)
+		. " --skip-context-injection --skip-bootstrap --allow-stale --allow-unverified-freshness --rebase-base --remediate-capacity --reuse-policy='isolated'"
+		. " --task-url='https://example.test/tracker/1247' --task-ref='environment#1247' --require-task-tracker"
+		. ' --purpose=' . escapeshellarg("review'purpose") . " --owner-run-ref='run;1247' --cleanup-policy='remove_on_success'";
+	lock_sqlite_assert($expected_retry === ($lifecycle['data']['retry_command'] ?? null), 'Lifecycle contention did not retain the normalized environment-resolved allocation request: ' . json_encode($lifecycle));
+	lock_sqlite_assert(!is_dir($workspace . '/lifecycle-repo@contention-quote-path-safe'), 'Failed ownership registration allowed a worktree path mutation.');
+	lock_sqlite_assert('' === lock_sqlite_run(array('git', 'branch', '--list', $branch), $primary), 'Failed ownership registration allowed a branch mutation.');
+
+	$setup->exec('BEGIN EXCLUSIVE');
+	$unsafe_lifecycle = lock_sqlite_finish(lock_sqlite_start(array('unsafe-lifecycle', $database, $workspace, $primary, '100')));
+	$setup->exec('COMMIT');
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($unsafe_lifecycle['error'] ?? null) && !isset($unsafe_lifecycle['data']['retry_command']), 'Credential-bearing task identity retained an executable allocation receipt.');
+	lock_sqlite_assert(!str_contains(json_encode($unsafe_lifecycle), 'must-not-leak'), 'Credential-bearing task identity leaked through contention diagnostics.');
 
 	// Heartbeat retries through a short lock, then reports both writes if exhausted.
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);

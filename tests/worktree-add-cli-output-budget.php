@@ -15,7 +15,6 @@ namespace {
 		public function get_error_code(): string { return $this->code; }
 		public function get_error_message(): string { return $this->message; }
 		public function get_error_data(): mixed { return $this->data; }
-		public function add_data( mixed $data ): void { $this->data = $data; }
 	}
 
 	final class Worktree_Add_Cli_Halt extends \RuntimeException {
@@ -34,7 +33,6 @@ namespace {
 	}
 
 	function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false { return json_encode($value, $flags, $depth); }
-	function wp_parse_url( string $url ): array|false { return parse_url($url); }
 	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
 	function wp_get_ability( string $name ): ?object { return $GLOBALS['worktree_add_cli_abilities'][ $name ] ?? null; }
 
@@ -132,7 +130,7 @@ namespace {
 				'blocker_phase' => 'workspace_lock_register',
 				'request_id'    => 'request-sqlite',
 				'retryable'     => true,
-				'retry_command' => 'wp datamachine-code workspace worktree add studio <branch> --from=origin/main',
+				'retry_command' => "wp datamachine-code workspace worktree add 'studio' 'resolved-branch' --from='resolved-ref' --task-ref='environment#1247'",
 				'wpdb_error'    => '<div>SQLSTATE[HY000]: database is locked</div>',
 				'debug'         => array( 'backtrace' => '/local/site/wp-content/plugins/sqlite.php:123' ),
 			)
@@ -167,12 +165,15 @@ namespace {
 	$contended = json_decode($contended_output, true, 512, JSON_THROW_ON_ERROR);
 	worktree_add_cli_assert('workspace_sqlite_lock_contention' === ($contended['error']['code'] ?? null), 'Public CLI envelope lost typed SQLite contention.');
 	worktree_add_cli_assert('workspace_lock_register' === ($contended['error']['data']['blocker_phase'] ?? null) && 'request-sqlite' === ($contended['error']['data']['request_id'] ?? null), 'Public CLI envelope lost blocker or request identity.');
-	$expected_retry = "wp datamachine-code workspace worktree add 'studio' 'iteration/junedigan-pr3952-20260825' --from='origin/feat/site-artifact-import-cli' --skip-context-injection --skip-bootstrap --allow-stale --rebase-base --reuse-policy='isolated' --task-url='https://github.com/example/studio/issues/3952' --task-ref='studio#3952' --require-task-tracker --purpose='pull_request' --owner-run-ref='run-1235' --cleanup-policy='remove_on_success'";
-	worktree_add_cli_assert($expected_retry === ($contended['error']['data']['retry_command'] ?? null), 'Public contention receipt did not faithfully replay the safe normalized allocation request.');
+	$expected_retry = "wp datamachine-code workspace worktree add 'studio' 'resolved-branch' --from='resolved-ref' --task-ref='environment#1247'";
+	worktree_add_cli_assert($expected_retry === ($contended['error']['data']['retry_command'] ?? null), 'CLI rendering replaced the lifecycle-owned retry receipt with unresolved argv.');
 	worktree_add_cli_assert(! str_contains($contended_output, 'must-not-leak') && ! str_contains($contended_output, 'api-token'), 'Public contention receipt leaked an option outside the safe allocation allowlist.');
 	worktree_add_cli_assert(!str_contains(strtolower($contended_output), 'sqlstate') && !str_contains($contended_output, '<div>') && !str_contains($contended_output, '/local/site'), 'Public CLI envelope leaked WordPress database diagnostics.');
 
 	WP_CLI::$lines = array();
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(
+		new WP_Error('workspace_sqlite_lock_contention', 'SQLite remained locked while updating workspace ownership.', array( 'operation' => 'workspace_lock_register', 'retryable' => true ))
+	);
 	try {
 		$command->__worktree_operation('add', array( 'studio', 'unsafe-retry' ), array( 'format' => 'json', 'task-url' => 'https://token:must-not-leak@github.com/example/studio/issues/3952' ));
 		throw new \RuntimeException('Unsafe contended worktree-add JSON did not halt.');

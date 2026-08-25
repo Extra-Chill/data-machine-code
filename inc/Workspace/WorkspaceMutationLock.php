@@ -20,6 +20,9 @@ if ( ! class_exists(WorkspaceLockStore::class) ) {
 if ( ! class_exists(WallClockBudget::class) ) {
 	include_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 }
+if ( ! class_exists(TaskUrl::class) ) {
+	include_once __DIR__ . '/TaskUrl.php';
+}
 
 final class WorkspaceMutationLock {
 
@@ -496,15 +499,25 @@ final class WorkspaceMutationLock {
 	}
 
 	private static function admission_error( \WP_Error $error, string $repo, string $lock_path, string $request_id ): \WP_Error {
-		$data = (array) $error->get_error_data();
+		$data  = (array) $error->get_error_data();
+		$owner = WorkspaceLockStore::default_owner_context();
+		unset($owner['wp_cli_args']);
+		if ( isset($owner['datamachine_task_url']) ) {
+			$task_url = TaskUrl::canonicalize_for_replay($owner['datamachine_task_url']);
+			if ( null === $task_url ) {
+				unset($owner['datamachine_task_url']);
+			} else {
+				$owner['datamachine_task_url'] = $task_url;
+			}
+		}
 		$data = array_merge(
 			$data,
 			array(
-				'resource'      => $lock_path,
-				'repo'          => $repo,
-				'request_id'    => $request_id,
-				'owner'         => WorkspaceLockStore::default_owner_context(),
-				'retry_command' => sprintf('wp datamachine-code workspace worktree add %s <branch> --from=origin/main', $repo),
+				'resource'              => $lock_path,
+				'repo'                  => $repo,
+				'request_id'            => $request_id,
+				'owner'                 => $owner,
+				'lock_callback_started' => false,
 			)
 		);
 		return new \WP_Error($error->get_error_code(), $error->get_error_message(), $data);

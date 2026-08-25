@@ -1178,6 +1178,11 @@ try {
 	assert_true(str_contains($adversarial_command, escapeshellarg($adversarial_branch)) && str_contains($adversarial_command, '--purpose=' . escapeshellarg($adversarial_intent['purpose'])) && str_contains($adversarial_command, '--owner-run-ref=' . escapeshellarg($adversarial_intent['owner_run_ref'])), 'replay command did not shell-escape adversarial values');
 	assert_true(! str_contains($adversarial_command, 'origin/not-a-ref;'), 'replay command retained the invalid explicit base');
 	assert_true(! file_exists($workspace_root . '/should-not-run'), 'replay command executed adversarial shell input while rendering');
+	$unsafe_tracker_retry = $workspace->worktree_add('homeboy', 'unsafe-tracker-retry', 'origin/not-a-ref', false, false, false, false, true, array( 'task_url' => 'https://token:must-not-leak@example.test/issues/1247' ));
+	assert_true(is_wp_error($unsafe_tracker_retry), 'credential-bearing missing-base request unexpectedly succeeded');
+	$unsafe_tracker_data  = (array) $unsafe_tracker_retry->get_error_data();
+	assert_true(array() === ( $unsafe_tracker_data['next_commands'] ?? null ), 'credential-bearing tracker identity retained a missing-base retry command');
+	assert_true(! str_contains($unsafe_tracker_retry->get_error_message() . wp_json_encode($unsafe_tracker_data), 'must-not-leak'), 'credential-bearing tracker identity leaked into missing-base remediation');
 
 	run_command('git checkout main', $source_path);
 	run_command('git branch -f trunk main && git push -f origin trunk', $source_path);

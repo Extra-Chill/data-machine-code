@@ -5451,9 +5451,6 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
-			if ( 'add' === $operation ) {
-				$this->decorate_worktree_add_retry($result, $input);
-			}
 			if ( in_array( $operation, array( 'add', 'get', 'list', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json($this->renderer()->error_envelope($result));
 				WP_CLI::halt( 1 );
@@ -5463,94 +5460,6 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		$this->renderWorktreeResult( $operation, $result, $assoc_args );
-	}
-
-	/** Replace generic internal lock guidance with the safe normalized add request. */
-	private function decorate_worktree_add_retry( \WP_Error $error, array $input ): void {
-		$data = (array) $error->get_error_data();
-		if ( empty($data['retryable']) || empty($input['repo']) || empty($input['branch']) ) {
-			return;
-		}
-		$repo         = trim( (string) $input['repo']);
-		$branch       = trim( (string) $input['branch']);
-		$from         = isset($input['from']) ? trim( (string) $input['from']) : '';
-		$task_url     = $this->safe_retry_task_url($input['task_url'] ?? null);
-		$reuse_policy = strtolower(trim( (string) ( $input['reuse_policy'] ?? 'reuse_compatible' )));
-		if ( ! preg_match('/\A[a-zA-Z0-9._-]+\z/', $repo)
-			|| ! preg_match('/\A[a-zA-Z0-9._\/-]+\z/', $branch)
-			|| ( '' !== $from && ! preg_match('/\A[a-zA-Z0-9._\/-]+\z/', $from) )
-			|| null === $task_url
-		) {
-			unset($data['retry_command']);
-			$error->add_data($data);
-			return;
-		}
-
-		$parts = array(
-			'wp datamachine-code workspace worktree add',
-			escapeshellarg($repo),
-			escapeshellarg($branch),
-		);
-		if ( '' !== $from ) {
-			$parts[] = '--from=' . escapeshellarg($from);
-		}
-		foreach ( array(
-			'inject_context'             => '--skip-context-injection',
-			'bootstrap'                  => '--skip-bootstrap',
-		) as $key => $flag ) {
-			if ( array_key_exists($key, $input) && ! $input[ $key ] ) {
-				$parts[] = $flag;
-			}
-		}
-		foreach ( array(
-			'allow_stale'                => '--allow-stale',
-			'allow_unverified_freshness' => '--allow-unverified-freshness',
-			'rebase_base'                => '--rebase-base',
-			'force'                      => '--force',
-			'remediate_capacity'         => '--remediate-capacity',
-			'remediate_capacity_dry_run' => '--remediate-capacity-dry-run',
-		) as $key => $flag ) {
-			if ( ! empty($input[ $key ]) ) {
-				$parts[] = $flag;
-			}
-		}
-		if ( 'reuse_compatible' !== $reuse_policy ) {
-			$parts[] = '--reuse-policy=' . escapeshellarg($reuse_policy);
-		}
-		foreach ( array( 'task_url' => 'task-url', 'task_ref' => 'task-ref' ) as $key => $flag ) {
-			$value = 'task_url' === $key ? $task_url : trim( (string) ( $input[ $key ] ?? '' ));
-			if ( '' !== $value ) {
-				$parts[] = '--' . $flag . '=' . escapeshellarg($value);
-			}
-		}
-		if ( ! empty($input['require_task_tracker']) ) {
-			$parts[] = '--require-task-tracker';
-		}
-		foreach ( array( 'purpose' => 'purpose', 'owner_run_ref' => 'owner-run-ref', 'cleanup_policy' => 'cleanup-policy' ) as $key => $flag ) {
-			$value = trim( (string) ( $input[ $key ] ?? '' ));
-			$value = 'cleanup_policy' === $key ? strtolower($value) : $value;
-			if ( '' !== $value ) {
-				$parts[] = '--' . $flag . '=' . escapeshellarg($value);
-			}
-		}
-
-		$data['retry_command'] = implode(' ', $parts);
-		$error->add_data($data);
-	}
-
-	/** Return the canonical tracker URL, or null when credentials make replay unsafe. */
-	private function safe_retry_task_url( mixed $task_url ): ?string {
-		if ( null === $task_url || '' === trim( (string) $task_url) ) {
-			return '';
-		}
-		$parts = wp_parse_url(trim( (string) $task_url));
-		if ( ! is_array($parts) || ! in_array(strtolower( (string) ( $parts['scheme'] ?? '' )), array( 'http', 'https' ), true) || '' === (string) ( $parts['host'] ?? '' ) || isset($parts['user']) || isset($parts['pass']) ) {
-			return null;
-		}
-		$scheme       = strtolower( (string) $parts['scheme']);
-		$port         = isset($parts['port']) ? (int) $parts['port'] : null;
-		$default_port = ( 'http' === $scheme && 80 === $port ) || ( 'https' === $scheme && 443 === $port );
-		return rtrim($scheme . '://' . strtolower( (string) $parts['host']) . ( null !== $port && ! $default_port ? ':' . $port : '' ) . (string) ( $parts['path'] ?? '' ), '/');
 	}
 
 	/** Render phase checkpoints without contaminating JSON response stdout. */
