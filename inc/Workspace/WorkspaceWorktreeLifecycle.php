@@ -3173,6 +3173,21 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'owned' !== ( $provider['status'] ?? null ) || $handle !== (string) ( $provider['handle'] ?? '' ) || $path !== (string) ( $provider['path'] ?? '' ) || ! hash_equals($before_branch, (string) ( $provider['branch'] ?? '' )) ) {
 			return new \WP_Error('worktree_tracker_provider_resolution_failed', 'A fresh standalone provider resolution could not prove the exact worktree identity.', array( 'status' => 500, 'handle' => $handle, 'mutation_committed' => false, 'retry_safe' => true, 'provider_resolution' => $provider ));
 		}
+		$provider_tracker  = array(
+			'task_url' => TaskUrl::canonicalize($provider['task_url'] ?? null),
+			'task_ref' => null !== WorktreeContextInjector::normalize_scalar_metadata_value($provider['task_ref'] ?? null) ? strtolower(trim((string) $provider['task_ref'])) : null,
+		);
+		$provider_identity = $this->worktree_reuse_task_identity(array_filter($provider_tracker, static fn( mixed $value ): bool => null !== $value));
+		if ( '' !== $existing_identity && ( ! hash_equals($existing_identity, $provider_identity) || ! WorktreeContextInjector::standalone_worktree_tracker_is_current($metadata) ) ) {
+			return new \WP_Error('worktree_tracker_provider_mismatch', 'The standalone provider tracker does not match durable lifecycle ownership.', array( 'status' => 409, 'handle' => $handle, 'lifecycle_tracker' => $existing_task, 'provider_tracker' => $provider_tracker ));
+		}
+		if ( '' !== $provider_identity ) {
+			foreach ( $task as $field => $value ) {
+				if ( $value !== ( $provider_tracker[ $field ] ?? null ) ) {
+					return new \WP_Error('worktree_tracker_conflict', 'The standalone provider already has conflicting tracker ownership.', array( 'status' => 409, 'handle' => $handle, 'existing_task' => $provider_tracker, 'requested_task' => $task ));
+				}
+			}
+		}
 
 		return array(
 			'handle'              => $handle,

@@ -604,7 +604,14 @@ try {
 	$before_tracker  = is_file($tracker_path) ? file_get_contents($tracker_path) : null;
 	$before_row      = $wpdb->rows[ $attach_handle ];
 	$before_options  = $GLOBALS['datamachine_code_test_options'];
-	$before_locks    = $wpdb->lock_rows;
+	$conflicting_provider_tracker = wp_json_encode(array( 'schema' => 'datamachine-code/worktree-tracker/v1', 'task_url' => 'https://github.com/Example/Homeboy/issues/999', 'task_ref' => null ));
+	file_put_contents($tracker_path, $conflicting_provider_tracker);
+	$provider_conflict_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$provider_conflict_apply   = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($provider_conflict_preview) && is_wp_error($provider_conflict_apply) && 'worktree_tracker_conflict' === $provider_conflict_preview->get_error_code() && $provider_conflict_preview->get_error_code() === $provider_conflict_apply->get_error_code(), 'conflicting standalone tracker ownership was not rejected consistently');
+	assert_true($conflicting_provider_tracker === file_get_contents($tracker_path) && $before_attach === WorktreeContextInjector::get_metadata_fresh($attach_handle), 'conflicting standalone tracker rejection changed provider or lifecycle ownership');
+	unlink($tracker_path);
+	$before_locks = $wpdb->lock_rows;
 	$preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ), true);
 	assert_true(! is_wp_error($preview) && true === ( $preview['dry_run'] ?? false ) && 'eligible' === ( $preview['status'] ?? null ), is_wp_error($preview) ? $preview->get_error_message() : 'clean tracker attachment preview was not eligible');
 	assert_true($attach_handle === ( $preview['handle'] ?? null ) && (string) $attach_fixture['path'] === ( $preview['path'] ?? null ) && $before_branch === ( $preview['branch'] ?? null ) && $before_head === ( $preview['worktree_sha'] ?? null ), 'attachment preview omitted exact handle, path, branch, or HEAD identity');
@@ -622,6 +629,11 @@ try {
 	foreach ( array( 'lifecycle_state', 'branch', 'reuse_contract', 'provisioning' ) as $preserved_field ) {
 		assert_true(($before_attach[ $preserved_field ] ?? null) === ($after_attach[ $preserved_field ] ?? null), 'tracker attachment changed preserved metadata field ' . $preserved_field);
 	}
+	file_put_contents($tracker_path, wp_json_encode(array( 'schema' => 'datamachine-code/worktree-tracker/v1', 'task_url' => 'https://github.com/Example/Homeboy/issues/999', 'task_ref' => null )));
+	$stale_provider_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$stale_provider_apply   = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($stale_provider_preview) && is_wp_error($stale_provider_apply) && 'worktree_tracker_provider_mismatch' === $stale_provider_preview->get_error_code() && $stale_provider_preview->get_error_code() === $stale_provider_apply->get_error_code(), 'stale standalone tracker projection did not fail preview and apply consistently');
+	assert_true(true === WorktreeContextInjector::store_standalone_worktree_tracker($after_attach), 'standalone tracker fixture could not be restored after stale projection coverage');
 	$replay_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
 	assert_true(! is_wp_error($replay_preview) && 'already_attached' === ( $replay_preview['status'] ?? null ), 'same-tracker preview was not typed as already_attached');
 	$replayed = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
