@@ -56,6 +56,7 @@ final class StandaloneWorktreeProvider {
 			'branch'  => $branch,
 			'primary' => ! $parsed['is_worktree'],
 			'git_dir' => $git_dir,
+			'task_url' => $this->read_task_url($git_dir),
 		);
 
 		return array_merge(
@@ -257,7 +258,15 @@ final class StandaloneWorktreeProvider {
 			&& $identity['path'] === ( $current['path'] ?? null )
 			&& $identity['branch'] === ( $current['branch'] ?? null )
 			&& $identity['primary'] === ( $current['primary'] ?? null )
-			&& $identity['git_dir'] === ( $current['git_dir'] ?? null );
+			&& $identity['git_dir'] === ( $current['git_dir'] ?? null )
+			&& $identity['task_url'] === ( $current['task_url'] ?? null );
+	}
+
+	private function read_task_url( string $git_dir ): ?string {
+		$payload = @file_get_contents($git_dir . '/datamachine-code-task.json');
+		$data    = is_string($payload) ? json_decode($payload, true) : null;
+		$url     = is_array($data) && is_string($data['task_url'] ?? null) ? $data['task_url'] : null;
+		return TaskUrl::canonicalize($url);
 	}
 
 	/** @return resource|null */
@@ -355,7 +364,7 @@ final class StandaloneWorktreeProvider {
 	}
 
 	/**
-	 * @param array{handle:string,path:string,branch:string,primary:bool,git_dir:string} $identity
+	 * @param array{handle:string,path:string,branch:string,primary:bool,git_dir:string,task_url:?string} $identity
 	 */
 	private function encode_token( array $identity ): string {
 		$payload = json_encode($identity, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -364,7 +373,7 @@ final class StandaloneWorktreeProvider {
 	}
 
 	/**
-	 * @return array{handle:string,path:string,branch:string,primary:bool,git_dir:string}|null
+	 * @return array{handle:string,path:string,branch:string,primary:bool,git_dir:string,task_url:?string}|null
 	 */
 	private function decode_token( string $token ): ?array {
 		if ( ! str_starts_with($token, self::TOKEN_PREFIX) ) {
@@ -384,10 +393,18 @@ final class StandaloneWorktreeProvider {
 			|| ! is_string($decoded['path'] ?? null)
 			|| ! is_string($decoded['branch'] ?? null)
 			|| ! is_bool($decoded['primary'] ?? null)
-			|| ! is_string($decoded['git_dir'] ?? null) ) {
+			|| ! is_string($decoded['git_dir'] ?? null)
+			|| ( ! is_string($decoded['task_url'] ?? null) && null !== ( $decoded['task_url'] ?? null ) ) ) {
 			return null;
 		}
-		return $decoded;
+		return array(
+			'handle'   => $decoded['handle'],
+			'path'     => $decoded['path'],
+			'branch'   => $decoded['branch'],
+			'primary'  => $decoded['primary'],
+			'git_dir'  => $decoded['git_dir'],
+			'task_url' => $decoded['task_url'] ?? null,
+		);
 	}
 
 	/**

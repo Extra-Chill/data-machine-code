@@ -575,6 +575,9 @@ trait WorkspaceMetadataReconciliation {
 		if ( WorktreeCleanupCandidateClassifier::needs_lifecycle_reconciliation($metadata, (string) ( $liveness['liveness'] ?? '' )) ) {
 			return 'lifecycle_reconciliation_candidate';
 		}
+		if ( ! WorktreeContextInjector::standalone_worktree_tracker_is_current($metadata) ) {
+			return 'standalone_tracker_missing';
+		}
 
 		return null;
 	}
@@ -710,6 +713,10 @@ trait WorkspaceMetadataReconciliation {
 			}
 
 			return $this->build_worktree_metadata_reconciliation_finalizer_proposal($base_row, $metadata, $handle, $repo, $branch, $path, $dirty, $unpushed, $finalizer_signal);
+		}
+
+		if ( ! WorktreeContextInjector::standalone_worktree_tracker_is_current($metadata) ) {
+			return $this->build_standalone_tracker_backfill_proposal($base_row, $dirty, $unpushed, $metadata);
 		}
 
 		if ( $this->has_stored_lifecycle_finalizer_context($metadata) ) {
@@ -1020,6 +1027,31 @@ trait WorkspaceMetadataReconciliation {
 					'missing_fields'    => $metadata_missing,
 					'invalid_fields'    => $invalid_fields,
 					'proposed_metadata' => $proposed,
+					'source_map'        => $source_map,
+				)
+			),
+		);
+	}
+
+	/** Build a sidecar-only repair without reclassifying persisted lifecycle metadata. */
+	private function build_standalone_tracker_backfill_proposal( array $base_row, int $dirty, int $unpushed, array $metadata ): array {
+		$source_map = is_array($metadata['reconciled_sources'] ?? null) ? (array) $metadata['reconciled_sources'] : array();
+		foreach ( array( 'handle', 'repo', 'branch', 'path', 'created_at', 'observed_at', 'lifecycle_state' ) as $field ) {
+			if ( ! isset($source_map[ $field ]) || '' === (string) $source_map[ $field ] ) {
+				$source_map[ $field ] = 'metadata';
+			}
+		}
+		return array(
+			'proposal' => array_merge(
+				$base_row,
+				array(
+					'reason_code'       => 'standalone_tracker_backfill',
+					'reason'            => 'persisted task ownership can be projected for standalone worktree resolution',
+					'dirty'             => $dirty,
+					'unpushed'          => $unpushed,
+					'missing_fields'    => array( 'standalone_tracker' ),
+					'invalid_fields'    => array(),
+					'proposed_metadata' => $metadata,
 					'source_map'        => $source_map,
 				)
 			),

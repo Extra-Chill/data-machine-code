@@ -82,6 +82,10 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 			throw new RuntimeException(sprintf('Expected workspace ability %s was not registered.', $ability));
 		}
 	}
+	$worktree_list_schema = wp_get_ability('datamachine-code/workspace-worktree-list')['input_schema']['properties'] ?? array();
+	if ( ! isset($worktree_list_schema['task_ref'], $worktree_list_schema['owner_run_ref']) ) {
+		throw new RuntimeException('Worktree-list ability omitted task and owner filters.');
+	}
 	$proof_fields = array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'remote_default_advertised_sha', 'verified_at', 'digest' );
 	$add_freshness = (array) ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-add']['output_schema']['properties']['handoff_freshness'] ?? array() );
 	$add_proof = (array) ( $add_freshness['properties']['proof'] ?? array() );
