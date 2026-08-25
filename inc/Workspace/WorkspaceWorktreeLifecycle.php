@@ -10,11 +10,15 @@ namespace DataMachineCode\Workspace;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\ListCursor;
 use DataMachineCode\Support\MacOSLsofProcessPathProbe;
+use DataMachineCode\Support\WallClockBudget;
 
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(MacOSLsofProcessPathProbe::class) ) {
 	require_once dirname(__DIR__) . '/Support/ProcessPathProbe.php';
+}
+if ( ! class_exists(WallClockBudget::class) ) {
+	require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 }
 
 trait WorkspaceWorktreeLifecycle {
@@ -3587,6 +3591,11 @@ trait WorkspaceWorktreeLifecycle {
 
 		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
 		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : false;
+		$budget         = $opts['wall_clock_budget'] ?? null;
+		$budget         = $budget instanceof WallClockBudget ? $budget : WallClockBudget::from_duration($opts['until_budget'] ?? null, '30s', 'invalid_worktree_get_budget');
+		if ( is_wp_error($budget) ) {
+			return $budget;
+		}
 		$skipped_groups = array();
 		if ( ! $include_status ) {
 			$skipped_groups[] = 'status';
@@ -3608,21 +3617,37 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$head = $this->run_git($path, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$timeout = $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( 0 === $timeout ) {
+			return $this->worktree_get_budget_error('identity', $parsed['dir_name'], $path, $budget);
+		}
+		$head = $this->run_git($path, 'rev-parse --verify HEAD', $timeout);
 		if ( $head instanceof \WP_Error ) {
 			return $this->worktree_get_probe_error('identity', $parsed['dir_name'], $path, $head);
 		}
-		$branch = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$timeout = $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( 0 === $timeout ) {
+			return $this->worktree_get_budget_error('identity', $parsed['dir_name'], $path, $budget);
+		}
+		$branch = $this->run_git($path, 'branch --show-current', $timeout);
 		if ( $branch instanceof \WP_Error ) {
 			return $this->worktree_get_probe_error('identity', $parsed['dir_name'], $path, $branch);
 		}
 
 		if ( $include_status ) {
-			$dirty_paths = $this->probe_worktree_dirty_paths($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$timeout = $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( 0 === $timeout ) {
+				return $this->worktree_get_budget_error('status', $parsed['dir_name'], $path, $budget);
+			}
+			$dirty_paths = $this->probe_worktree_dirty_paths($path, $timeout);
 			if ( $dirty_paths instanceof \WP_Error ) {
 				return $this->worktree_get_probe_error('status', $parsed['dir_name'], $path, $dirty_paths);
 			}
-			$unpushed = $this->count_unpushed_commits($path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$timeout = $budget->probe_timeout_seconds(self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( 0 === $timeout ) {
+				return $this->worktree_get_budget_error('unpushed', $parsed['dir_name'], $path, $budget);
+			}
+			$unpushed = $this->count_unpushed_commits($path, $timeout);
 			if ( $unpushed instanceof \WP_Error ) {
 				return $this->worktree_get_probe_error('unpushed', $parsed['dir_name'], $path, $unpushed);
 			}
@@ -3634,7 +3659,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$created_at   = $metadata['created_at'] ?? null;
 		$liveness     = WorktreeContextInjector::classify_liveness($metadata);
-		$disk         = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata) : array(
+		$disk         = $include_disk ? $this->build_worktree_disk_report($parsed['repo'], $path, $parsed['is_worktree'], $created_at, $metadata, $budget) : array(
 			'size_bytes'           => null,
 			'estimated_size_bytes' => null,
 			'last_touched_at'      => null,
@@ -3698,6 +3723,22 @@ trait WorkspaceWorktreeLifecycle {
 			'duplicates'            => array(),
 			'base_branch_worktrees' => array(),
 			'fields_skipped'        => $skipped_groups,
+		);
+	}
+
+	private function worktree_get_budget_error( string $phase, string $handle, string $path, WallClockBudget $budget ): \WP_Error {
+		return new \WP_Error(
+			'worktree_get_budget_exhausted',
+			'Exact worktree inspection stopped before starting another probe because its shared wall-clock budget was exhausted.',
+			array(
+				'status'       => 504,
+				'phase'        => $phase,
+				'handle'       => $handle,
+				'path'         => $path,
+				'retryable'    => true,
+				'continuation' => array( 'command' => sprintf('wp datamachine-code workspace worktree get %s --format=json', escapeshellarg($handle)) ),
+				'evidence'     => array( 'wall_clock_budget' => $budget->evidence() ),
+			)
 		);
 	}
 
@@ -4019,6 +4060,11 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$bounded        = array_key_exists('limit', $opts) || array_key_exists('cursor', $opts) || array_key_exists('all', $opts);
 		$all            = ! empty($opts['all']);
+		$budget         = $opts['wall_clock_budget'] ?? null;
+		$budget         = $budget instanceof WallClockBudget ? $budget : WallClockBudget::from_duration($opts['until_budget'] ?? null, $all ? '30s' : '5s', 'invalid_worktree_list_budget', $this->worktree_list_budget_clock());
+		if ( is_wp_error($budget) ) {
+			return $budget;
+		}
 		$task_lookup     = null !== $task_ref;
 		$task_limit      = 200;
 		if ( $all && isset($opts['cursor']) ) {
@@ -4047,6 +4093,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		if ( '' !== $target_handle ) {
 			// A handle is a single-checkout query, not a filtered workspace scan.
+			$opts['wall_clock_budget'] = $budget;
 			$result = $this->worktree_get($target_handle, $opts);
 			if ( $result instanceof \WP_Error ) {
 				if ( 'worktree_not_found' !== $result->get_error_code() ) {
@@ -4080,6 +4127,11 @@ trait WorkspaceWorktreeLifecycle {
 		$worktrees = array();
 		$summary   = $this->worktree_list_empty_summary();
 		$remaining = 0;
+		$diagnostic_state = $this->worktree_list_empty_diagnostic_state();
+		$budget_stopped   = false;
+		$budget_phase     = null;
+		$partial_reason   = null;
+		$budget_exhausted = false;
 
 		foreach ( new \DirectoryIterator($this->workspace_path) as $entry ) {
 			$primary = $entry->getFilename();
@@ -4089,7 +4141,15 @@ trait WorkspaceWorktreeLifecycle {
 			$primary_path      = $this->workspace_path . '/' . $primary;
 			$primary_repo      = $this->parse_handle($primary)['repo'];
 			$scanning_worktree = str_contains($primary, '@');
-			$result            = $this->run_git($primary_path, 'worktree list --porcelain', self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
+			$inventory_timeout = $budget->probe_timeout_seconds(self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
+			if ( 0 === $inventory_timeout ) {
+				$budget_stopped = true;
+				$budget_phase   = 'worktree_inventory';
+				$partial_reason = 'scan_budget_exhausted';
+				$budget_exhausted = true;
+				break;
+			}
+			$result            = $this->run_git($primary_path, 'worktree list --porcelain', $inventory_timeout);
 			if ( is_wp_error($result) ) {
 				if ( 'git_command_timeout' === $result->get_error_code() ) {
 					$data = $result->get_error_data();
@@ -4241,6 +4301,7 @@ trait WorkspaceWorktreeLifecycle {
 				}
 
 				$this->worktree_list_count_summary($summary, $row);
+				$this->worktree_list_accumulate_diagnostic_state($diagnostic_state, $row);
 				if ( null === $cursor || strcmp($this->worktree_list_row_key($row), $cursor) > 0 ) {
 					++$remaining;
 					if ( $bounded && ( ! $all || $task_lookup ) ) {
@@ -4258,23 +4319,44 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $task_lookup && $all && $summary['total'] > $task_limit ) {
 			return new \WP_Error('worktree_task_candidates_overflow', 'Task worktree lookup exceeded the complete bounded candidate limit.', array( 'status' => 409, 'task_ref' => $task_ref, 'total' => $summary['total'], 'limit' => $task_limit ));
 		}
-		$diagnostics = $this->worktree_list_global_diagnostics($repo, $state, $task_ref, $owner_run_ref);
+		$diagnostics = $this->worktree_list_finalize_diagnostic_state($diagnostic_state);
 		$summary     = array_merge($summary, $diagnostics['summary']);
 		$duplicates            = $diagnostics['duplicates'];
 		$base_branch_worktrees = $diagnostics['base_branch_worktrees'];
-		if ( $defer_probes && ( $include_status || $include_disk ) ) {
+		$inventory_complete = ! $budget_stopped;
+		if ( $inventory_complete && $defer_probes && ( $include_status || $include_disk ) ) {
 			foreach ( $worktrees as &$worktree ) {
-				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk);
+				$probe_result = $this->hydrate_worktree_list_probes($worktree, $include_status, $include_disk, $budget);
 				if ( is_wp_error($probe_result) ) {
-					unset($worktree);
-					return $probe_result;
+					if ( ! in_array($probe_result->get_error_code(), array( 'worktree_list_budget_exhausted', 'worktree_list_probe_incomplete' ), true) && ! $budget->expired() ) {
+						unset($worktree);
+						return $probe_result;
+					}
+					$budget_stopped = true;
+					$probe_data     = (array) $probe_result->get_error_data();
+					$budget_phase   = (string) ( $probe_data['phase'] ?? 'requested_probes' );
+					$budget_exhausted = 'worktree_list_budget_exhausted' === $probe_result->get_error_code() || $budget->expired();
+					$partial_reason = (string) ( $probe_data['reason'] ?? ( $budget_exhausted ? 'budget_exhausted_' . $budget_phase : 'probe_incomplete_' . $budget_phase ) );
+					$skipped_group  = 'disk' === $budget_phase ? 'disk' : 'status';
+					if ( ! in_array($skipped_group, $skipped_groups, true) ) {
+						$skipped_groups[] = $skipped_group;
+					}
+					break;
 				}
 			}
 			unset($worktree);
 		}
 		$next_cursor = null;
-		if ( $bounded && ! $all && $remaining > count($worktrees) && ! empty($worktrees) ) {
+		if ( $inventory_complete && $bounded && ! $all && $remaining > count($worktrees) && ! empty($worktrees) ) {
 			$next_cursor = $this->encode_worktree_list_cursor($this->worktree_list_row_key($worktrees[ count($worktrees) - 1 ]), $repo, $state, $target_handle, $task_ref, $owner_run_ref);
+		}
+		if ( ! $inventory_complete ) {
+			$summary['observed'] = array_intersect_key($summary, array_flip(array( 'total', 'primary', 'worktree', 'external', 'dirty', 'unpushed', 'stale', 'active', 'stopped', 'unknown' )));
+			foreach ( array_keys($summary['observed']) as $field ) {
+				$summary[ $field ] = null;
+			}
+			$summary['repo_count'] = null;
+			$summary['repos_omitted'] = null;
 		}
 
 		return array(
@@ -4283,13 +4365,31 @@ trait WorkspaceWorktreeLifecycle {
 			'duplicates'            => $duplicates,
 			'base_branch_worktrees' => $base_branch_worktrees,
 			'fields_skipped'        => $skipped_groups,
-			'total'                 => $summary['total'],
+			'total'                 => $inventory_complete ? $summary['total'] : null,
 			'returned'              => count($worktrees),
 			'next_cursor'           => $next_cursor,
 			'status_requested'      => $include_status,
 			'disk_requested'        => $include_disk,
 			'summary'               => $summary,
+			'partial'               => $budget_stopped,
+			'continuation'          => array(
+				'available' => null !== $next_cursor,
+				'cursor'    => $next_cursor,
+				'reason'    => $budget_stopped ? $partial_reason : ( null === $next_cursor ? null : 'more_rows' ),
+			),
+			'diagnostics'           => array(
+				'budget_exhausted'  => $budget_exhausted,
+				'budget_exhaustion_reason' => $budget_exhausted ? $partial_reason : null,
+				'partial_reason'   => $budget_stopped ? $partial_reason : null,
+				'phase'             => $budget_phase,
+				'wall_clock_budget' => $budget->evidence(),
+			),
 		);
+	}
+
+	/** Monotonic clock seam for deterministic budget contract tests. */
+	protected function worktree_list_budget_clock(): ?callable {
+		return null;
 	}
 
 	/**
@@ -4298,24 +4398,40 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param array<string,mixed> $worktree Worktree row to enrich in place.
 	 * @return \WP_Error|null
 	 */
-	private function hydrate_worktree_list_probes( array &$worktree, bool $include_status, bool $include_disk ): ?\WP_Error {
+	private function hydrate_worktree_list_probes( array &$worktree, bool $include_status, bool $include_disk, ?WallClockBudget $budget = null ): ?\WP_Error {
 		$path = (string) ( $worktree['path'] ?? '' );
 		if ( '' === $path ) {
 			return null;
 		}
 		if ( $include_status ) {
-			$dirty_result      = $this->run_git($path, 'status --porcelain');
+			$timeout = null === $budget ? self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS : $budget->probe_timeout_seconds(self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
+			if ( 0 === $timeout ) {
+				return new \WP_Error('worktree_list_budget_exhausted', 'Worktree list budget expired before requested status probes completed.', array( 'status' => 504, 'phase' => 'status', 'handle' => $worktree['handle'] ?? null ));
+			}
+			$dirty_result      = $this->run_git($path, 'status --porcelain', $timeout);
+			if ( is_wp_error($dirty_result) && null !== $budget ) {
+				$worktree['dirty'] = null;
+				return new \WP_Error('worktree_list_probe_incomplete', 'Requested worktree status probe did not complete inside its child timeout.', array( 'status' => 504, 'phase' => 'status', 'reason' => 'probe_incomplete_status', 'handle' => $worktree['handle'] ?? null, 'cause_code' => $dirty_result->get_error_code() ));
+			}
 			$worktree['dirty'] = is_wp_error($dirty_result) ? 0 : count(array_filter(array_map('trim', explode("\n", $dirty_result['output'] ?? ''))));
-			$unpushed_commits  = $this->count_unpushed_commits($path);
+			$timeout             = null === $budget ? self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS : $budget->probe_timeout_seconds(self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
+			$unpushed_commits    = 0 === $timeout ? new \WP_Error('worktree_list_budget_exhausted', 'Worktree list budget expired before requested unpushed probes completed.', array( 'status' => 504, 'phase' => 'status', 'handle' => $worktree['handle'] ?? null )) : $this->count_unpushed_commits($path, $timeout);
 			if ( is_wp_error($unpushed_commits) ) {
+				if ( null !== $budget && 'worktree_list_budget_exhausted' !== $unpushed_commits->get_error_code() ) {
+					return new \WP_Error('worktree_list_probe_incomplete', 'Requested unpushed-commit probe did not complete inside its child timeout.', array( 'status' => 504, 'phase' => 'status', 'reason' => 'probe_incomplete_status', 'handle' => $worktree['handle'] ?? null, 'cause_code' => $unpushed_commits->get_error_code() ));
+				}
 				return $unpushed_commits;
 			}
 			$worktree['unpushed'] = $unpushed_commits;
 			if ( ! empty($worktree['is_primary']) ) {
-				$worktree['primary_freshness'] = $this->build_primary_freshness_report($path, (string) ( $worktree['handle'] ?? '' ));
+				$timeout = null === $budget ? self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS : $budget->probe_timeout_seconds(self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS);
+				$worktree['primary_freshness'] = 0 === $timeout ? array( 'status' => 'unknown', 'reason' => 'budget_exhausted' ) : $this->build_primary_freshness_report($path, (string) ( $worktree['handle'] ?? '' ), $timeout);
 			}
 		}
 		if ( $include_disk ) {
+			if ( null !== $budget && $budget->expired() ) {
+				return new \WP_Error('worktree_list_budget_exhausted', 'Worktree list budget expired before requested disk probes completed.', array( 'status' => 504, 'phase' => 'disk', 'handle' => $worktree['handle'] ?? null ));
+			}
 			$worktree = array_merge(
 				$worktree,
 				$this->build_worktree_disk_report(
@@ -4323,7 +4439,8 @@ trait WorkspaceWorktreeLifecycle {
 					$path,
 					! empty($worktree['is_worktree']),
 					isset($worktree['created_at']) ? (string) $worktree['created_at'] : null,
-					is_array($worktree['metadata'] ?? null) ? $worktree['metadata'] : null
+					is_array($worktree['metadata'] ?? null) ? $worktree['metadata'] : null,
+					$budget
 				)
 			);
 		}
@@ -4410,173 +4527,86 @@ trait WorkspaceWorktreeLifecycle {
 		}
 	}
 
-	/** @return \Generator<int,array<string,mixed>> */
-	private function worktree_list_diagnostic_rows( ?string $repo_filter, ?string $state_filter, ?string $task_ref = null, ?string $owner_run_ref = null ): \Generator {
-		foreach ( new \DirectoryIterator($this->workspace_path) as $entry ) {
-			$primary = $entry->getFilename();
-			if ( $entry->isDot() || str_contains($primary, '@') || ! $entry->isDir() || ! file_exists($entry->getPathname() . '/.git') || ( null !== $repo_filter && $primary !== $repo_filter ) ) {
-				continue; }
-			$primary_path = $entry->getPathname();
-			$result       = $this->run_git($primary_path, 'worktree list --porcelain');
-			if ( is_wp_error($result) ) {
-				continue; }
-			foreach ( $this->worktree_list_blocks( (string) ( $result['output'] ?? '' )) as $block ) {
-				$wt = $this->parse_worktree_block($block);
-				if ( null === $wt ) {
-					continue; }
-				$is_primary   = $wt['path'] === $primary_path;
-				$inside       = str_starts_with($wt['path'], $this->workspace_path . '/');
-				$handle       = $is_primary ? $primary : ( $inside ? substr($wt['path'], strlen($this->workspace_path . '/')) : $wt['path'] );
-				$metadata_key = ! $is_primary ? ( $inside ? $handle : 'external:' . sha1($wt['path']) ) : null;
-				$metadata     = null !== $metadata_key ? WorktreeContextInjector::get_metadata($metadata_key) : null;
-				if ( ( null !== $state_filter && ( ! is_array($metadata) || ( $metadata['lifecycle_state'] ?? null ) !== $state_filter ) ) || ! $this->worktree_list_matches_metadata_filters($metadata, $task_ref, $owner_run_ref) ) {
-					continue; }
-				yield array(
-					'handle'      => $handle,
-					'repo'        => $this->parse_handle($primary)['repo'],
-					'is_primary'  => $is_primary,
-					'is_worktree' => ! $is_primary,
-					'external'    => ! $is_primary && ! $inside,
-					'branch'      => $wt['branch'],
-					'path'        => $wt['path'],
-					'metadata'    => $metadata,
-					'pr_url'      => is_array($metadata) ? ( $metadata['pr_url'] ?? null ) : null,
-					'pr_number'   => is_array($metadata) ? ( $metadata['pr_number'] ?? null ) : null,
-				);
+	/** @return array<string,mixed> */
+	private function worktree_list_empty_diagnostic_state(): array {
+		return array(
+			'repos'      => array(),
+			'base'       => array(),
+			'base_total' => 0,
+			'tasks'      => array(),
+		);
+	}
+
+	/** Accumulate complete diagnostics during the owning inventory pass. */
+	private function worktree_list_accumulate_diagnostic_state( array &$state, array $row ): void {
+		$repo = (string) ( $row['repo'] ?? '' );
+		if ( ! isset($state['repos'][ $repo ]) ) {
+			$state['repos'][ $repo ] = array( 'repo' => $repo, 'primary' => 0, 'worktree' => 0, 'external' => 0, 'total' => 0 );
+		}
+		++$state['repos'][ $repo ][ ! empty($row['is_primary']) ? 'primary' : 'worktree' ];
+		++$state['repos'][ $repo ]['total'];
+		if ( ! empty($row['external']) ) {
+			++$state['repos'][ $repo ]['external'];
+		}
+
+		$warning = $this->base_branch_worktree_warning($row);
+		if ( null !== $warning ) {
+			++$state['base_total'];
+			$this->worktree_list_insert_bounded_row($state['base'], $warning, 25);
+		}
+
+		$metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
+		foreach ( WorktreeContextInjector::task_ownership_keys($row, $metadata) as $kind => $key ) {
+			$id = $kind . '|' . $key;
+			if ( ! isset($state['tasks'][ $id ]) ) {
+				$state['tasks'][ $id ] = array( 'kind' => $kind, 'key' => $key, 'handles' => array(), 'handle_count' => 0 );
+			}
+			++$state['tasks'][ $id ]['handle_count'];
+			if ( count($state['tasks'][ $id ]['handles']) < 25 ) {
+				$state['tasks'][ $id ]['handles'][] = (string) ( $row['handle'] ?? '' );
 			}
 		}
 	}
 
 	/** @return array{summary:array<string,mixed>,duplicates:array<int,array<string,mixed>>,base_branch_worktrees:array<int,array<string,mixed>>} */
-	private function worktree_list_global_diagnostics( ?string $repo_filter, ?string $state_filter, ?string $task_ref = null, ?string $owner_run_ref = null ): array {
-		$repo_names = array();
-		$base       = array();
-		$base_total = 0;
-		foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter, $task_ref, $owner_run_ref) as $row ) {
-			$this->worktree_list_insert_bounded_key($repo_names, (string) $row['repo'], 25);
-			$warning = $this->base_branch_worktree_warning($row);
-			if ( null !== $warning ) {
-				++$base_total;
-				$this->worktree_list_insert_bounded_row($base, $warning, 25); }
-		}
-		$repos = array();
-		foreach ( array_keys($repo_names) as $name ) {
-			$repos[ $name ] = array(
-				'repo'     => $name,
-				'primary'  => 0,
-				'worktree' => 0,
-				'external' => 0,
-				'total'    => 0,
-			); }
-		foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter, $task_ref, $owner_run_ref) as $row ) {
-			$name = (string) $row['repo'];
-			if ( isset($repos[ $name ]) ) {
-				++$repos[ $name ][ ! empty($row['is_primary']) ? 'primary' : 'worktree' ];
-				++$repos[ $name ]['total'];
-				if ( ! empty($row['external']) ) {
-					++$repos[ $name ]['external']; }
+	private function worktree_list_finalize_diagnostic_state( array $state ): array {
+		$repos = (array) $state['repos'];
+		ksort($repos);
+		$repo_count = count($repos);
+		$repos      = array_slice(array_values($repos), 0, 25);
+
+		$duplicate_total = 0;
+		$duplicates      = array();
+		$tasks           = (array) $state['tasks'];
+		ksort($tasks);
+		foreach ( $tasks as $group ) {
+			if ( (int) ( $group['handle_count'] ?? 0 ) < 2 ) {
+				continue;
+			}
+			++$duplicate_total;
+			if ( count($duplicates) < 25 ) {
+				sort($group['handles'], SORT_STRING);
+				$group['handles_omitted'] = (int) $group['handle_count'] - count($group['handles']);
+				$duplicates[]             = $group;
 			}
 		}
-		$duplicates = $this->worktree_list_duplicate_groups($repo_filter, $state_filter, $task_ref, $owner_run_ref);
-		$repo_count = $this->worktree_list_unique_repository_count($repo_filter, $state_filter, $repo_names, $task_ref, $owner_run_ref);
+
 		return array(
 			'summary'               => array(
-				'repos'                          => array_values($repos),
+				'repos'                          => $repos,
 				'repo_count'                     => $repo_count,
 				'repos_returned'                 => count($repos),
 				'repos_omitted'                  => $repo_count - count($repos),
-				'duplicate_task_groups_total'    => $duplicates['total'],
-				'duplicate_task_groups_returned' => count($duplicates['groups']),
-				'duplicate_task_groups_omitted'  => $duplicates['total'] - count($duplicates['groups']),
-				'base_branch_worktrees_total'    => $base_total,
-				'base_branch_worktrees_returned' => count($base),
-				'base_branch_worktrees_omitted'  => $base_total - count($base),
+				'duplicate_task_groups_total'    => $duplicate_total,
+				'duplicate_task_groups_returned' => count($duplicates),
+				'duplicate_task_groups_omitted'  => $duplicate_total - count($duplicates),
+				'base_branch_worktrees_total'    => (int) ( $state['base_total'] ?? 0 ),
+				'base_branch_worktrees_returned' => count((array) $state['base']),
+				'base_branch_worktrees_omitted'  => (int) ( $state['base_total'] ?? 0 ) - count((array) $state['base']),
 			),
-			'duplicates'            => $duplicates['groups'],
-			'base_branch_worktrees' => $base,
+			'duplicates'            => $duplicates,
+			'base_branch_worktrees' => array_values((array) $state['base']),
 		);
-	}
-
-	/** @param array<string,bool> $first_batch */
-	private function worktree_list_unique_repository_count( ?string $repo_filter, ?string $state_filter, array $first_batch, ?string $task_ref = null, ?string $owner_run_ref = null ): int {
-		$count = count($first_batch);
-		if ( $count < 25 ) {
-			return $count; }
-		$after = (string) array_key_last($first_batch);
-		do {
-			$batch = array();
-			foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter, $task_ref, $owner_run_ref) as $row ) {
-				if ( (string) $row['repo'] > $after ) {
-					$this->worktree_list_insert_bounded_key($batch, (string) $row['repo'], 26); }
-			}
-			$size   = count($batch);
-			$count += min(25, $size);
-			if ( $size > 25 ) {
-				$after = (string) array_keys($batch)[24]; }
-		} while ( $size > 25 );
-		return $count;
-	}
-
-	/** @return array{total:int,groups:array<int,array<string,mixed>>} */
-	private function worktree_list_duplicate_groups( ?string $repo_filter, ?string $state_filter, ?string $task_ref = null, ?string $owner_run_ref = null ): array {
-		$after   = '';
-		$total   = 0;
-		$samples = array();
-		do {
-			$batch = array();
-			foreach ( $this->worktree_list_diagnostic_rows($repo_filter, $state_filter, $task_ref, $owner_run_ref) as $row ) {
-				foreach ( WorktreeContextInjector::task_ownership_keys($row, is_array($row['metadata'] ?? null) ? $row['metadata'] : array()) as $kind => $key ) {
-					$id = $kind . '|' . $key;
-					if ( $id <= $after ) {
-						continue; }
-					if ( ! isset($batch[ $id ]) ) {
-						$batch[ $id ] = array(
-							'kind'         => $kind,
-							'key'          => $key,
-							'handles'      => array(),
-							'handle_count' => 0,
-						);
-						ksort($batch);
-						if ( count($batch) > 26 ) {
-							array_pop($batch); }
-					}
-					if ( isset($batch[ $id ]) ) {
-						++$batch[ $id ]['handle_count'];
-						if ( count($batch[ $id ]['handles']) < 25 ) {
-							$batch[ $id ]['handles'][] = (string) $row['handle']; }
-					}
-				}
-			}
-			$size = count($batch);
-			$keys = array_keys($batch);
-			foreach ( array_slice($batch, 0, min(25, $size), true) as $id => $group ) {
-				if ( $group['handle_count'] > 1 ) {
-					++$total;
-					$samples[ $id ] = $group;
-					ksort($samples);
-					if ( count($samples) > 25 ) {
-						array_pop($samples); }
-				}
-			}
-			if ( $size > 25 ) {
-				$after = (string) $keys[24]; }
-		} while ( $size > 25 );
-		foreach ( $samples as &$sample ) {
-			$sample['handles_omitted'] = $sample['handle_count'] - count($sample['handles']);
-		}
-		unset($sample);
-		return array(
-			'total'  => $total,
-			'groups' => array_values($samples),
-		);
-	}
-
-	/** @param array<string,bool> $keys */
-	private function worktree_list_insert_bounded_key( array &$keys, string $key, int $limit ): void {
-		$keys[ $key ] = true;
-		ksort($keys);
-		if ( count($keys) > $limit ) {
-			array_pop($keys); }
 	}
 
 	/** @param array<int,array<string,mixed>> $worktrees */
@@ -4700,13 +4730,16 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_inventory_refresh(): array|\WP_Error {
+	public function worktree_inventory_refresh( ?WallClockBudget $budget = null ): array|\WP_Error {
+		$budget  = $budget ?? WallClockBudget::from_seconds(30, '30s');
 		$listing = $this->worktree_list(
 			null,
 			null,
 			array(
 				'include_status' => false,
 				'include_disk'   => false,
+				'all'            => true,
+				'wall_clock_budget' => $budget,
 			)
 		);
 		if ( $listing instanceof \WP_Error ) {
@@ -4717,8 +4750,13 @@ trait WorkspaceWorktreeLifecycle {
 		$current_handles = array();
 		$upserted        = array();
 		$marked_missing  = array();
+		$observed_rows   = 0;
 
 		foreach ( (array) ( $listing['worktrees'] ?? array() ) as $row ) {
+			if ( $budget->expired() ) {
+				break;
+			}
+			++$observed_rows;
 			$handle = (string) ( $row['handle'] ?? '' );
 			if ( '' === $handle || ! empty($row['external']) ) {
 				continue;
@@ -4730,14 +4768,21 @@ trait WorkspaceWorktreeLifecycle {
 			}
 		}
 
-		foreach ( $repository->list() as $stored ) {
-			$handle = (string) ( $stored['handle'] ?? '' );
-			if ( '' === $handle || isset($current_handles[ $handle ]) ) {
-				continue;
-			}
+		$scan_complete = empty($listing['partial']) && ! $budget->expired() && $observed_rows === count((array) ( $listing['worktrees'] ?? array() ));
+		if ( $scan_complete ) {
+			foreach ( $repository->list() as $stored ) {
+				if ( $budget->expired() ) {
+					$scan_complete = false;
+					break;
+				}
+				$handle = (string) ( $stored['handle'] ?? '' );
+				if ( '' === $handle || isset($current_handles[ $handle ]) ) {
+					continue;
+				}
 
-			if ( $repository->mark_missing($handle) ) {
-				$marked_missing[] = $handle;
+				if ( $repository->mark_missing($handle) ) {
+					$marked_missing[] = $handle;
+				}
 			}
 		}
 
@@ -4746,6 +4791,13 @@ trait WorkspaceWorktreeLifecycle {
 			'refreshed_at'   => gmdate('c'),
 			'upserted'       => $upserted,
 			'marked_missing' => $marked_missing,
+			'partial'        => ! $scan_complete,
+			'continuation'   => array(
+				'available'    => ! $scan_complete,
+				'reason'       => $scan_complete ? null : 'inventory_refresh_budget_exhausted',
+				'next_command' => $scan_complete ? null : 'wp datamachine-code workspace inventory refresh --format=json',
+			),
+			'evidence'       => array( 'wall_clock_budget' => $budget->evidence() ),
 			'summary'        => array(
 				'upserted'       => count($upserted),
 				'marked_missing' => count($marked_missing),

@@ -176,6 +176,60 @@ final class SafeCleanupFakeRunRepository implements \DataMachineCode\Storage\Cle
 	}
 }
 
+final class SafeCleanupDurableCheckpointRepository implements \DataMachineCode\Storage\CleanupRunRepositoryInterface {
+	/** @var array<string,array<string,mixed>> */
+	public array $runs = array();
+	/** @var array<int,array<string,mixed>> */
+	public array $items = array();
+
+	public function create_run( array $run ): string {
+		$run_id = 'cleanup-run-interrupted-output';
+		$this->runs[ $run_id ] = $run + array( 'run_id' => $run_id );
+		return $run_id;
+	}
+
+	public function update_run( string $run_id, array $fields ): bool {
+		$this->runs[ $run_id ] = array_merge($this->runs[ $run_id ] ?? array( 'run_id' => $run_id ), $fields);
+		return true;
+	}
+
+	public function get_run( string $run_id ): ?array {
+		return $this->runs[ $run_id ] ?? null;
+	}
+
+	public function add_items( string $run_id, array $items ): int {
+		foreach ( $items as $item ) {
+			$this->items[] = array( 'run_id' => $run_id ) + $item;
+		}
+		return count($items);
+	}
+}
+
+final class SafeCleanupCommittedCandidateAbility {
+	private bool $committed = false;
+
+	public function execute( array $input ): array {
+		if ( $this->committed ) {
+			return array( 'success' => true, 'summary' => array( 'processed' => 0, 'removed' => 0 ) );
+		}
+		$this->committed = true;
+		$callback = $input['progress_callback'] ?? null;
+		$candidate = array( 'handle' => 'repo@interrupted', 'repo' => 'repo', 'branch' => 'interrupted', 'path' => '/workspace/repo@interrupted' );
+		if ( is_callable($callback) ) {
+			$callback(array( 'phase' => 'mutation_prepared', 'candidate' => $candidate, 'recovery' => array( 'recovery_ref' => 'refs/dmc/recovery/abc' ) ));
+			$callback(array( 'phase' => 'mutation_committed', 'candidate' => $candidate, 'outcome' => array( 'path_exists_after' => false ) ));
+			$callback(array( 'phase' => 'candidate_terminal', 'action' => 'removed', 'candidate' => $candidate, 'outcome' => array( 'reason_code' => 'cleanup_eligible' ) ));
+		}
+		return array(
+			'success'      => true,
+			'workspace_path' => '/workspace',
+			'summary'      => array( 'processed' => 1, 'removed' => 1 ),
+			'removed'      => array( $candidate + array( 'reason_code' => 'cleanup_eligible' ) ),
+			'continuation' => array( 'remaining_total' => 0 ),
+		);
+	}
+}
+
 final class SafeCleanupCancellingAbility {
 	public function __construct( private SafeCleanupFakeRunRepository $repository ) {}
 	public function execute( array $input ): array {
@@ -471,7 +525,7 @@ $schema_validated_cleanup   = new DataMachineCode\Workspace\WorkspaceSafeCleanup
 );
 $schema_validated_result    = $schema_validated_cleanup->run( array( 'dry_run' => true ) );
 safe_cleanup_assert( ! is_wp_error( $schema_validated_result ), 'safe cleanup omits unset optional inputs accepted by the inventory Ability schema' );
-safe_cleanup_assert( ! array_key_exists( 'until_budget', $schema_validated_inventory->calls[0] ), 'safe cleanup does not pass a null until_budget to the inventory Ability' );
+safe_cleanup_assert( preg_match('/^\d+s$/', (string) ( $schema_validated_inventory->calls[0]['until_budget'] ?? '' )) === 1, 'safe cleanup passes the inventory Ability a concrete remaining shared budget' );
 
 $cursor_inventory = new SafeCleanupQueuedAbility(
 	array(
@@ -921,6 +975,26 @@ $incomplete_run_repository = new SafeCleanupFakeRunRepository();
 	safe_cleanup_assert( 'complete_with_blockers' === ( $incomplete_result['state'] ?? null ), 'active/no-signal continuation prevents terminal complete without current backlog detail' );
 	safe_cleanup_assert( 'complete_with_blockers' === ( $incomplete_run_repository->runs['cleanup-run-safe-test']['status'] ?? null ), 'incomplete active/no-signal drain persists a non-complete terminal status' );
 	safe_cleanup_assert( 25 === ( $incomplete_result['continuation']['active_no_signal']['next_offset'] ?? null ), 'typed active/no-signal continuation evidence is preserved' );
+
+	$interrupted_repository = new SafeCleanupDurableCheckpointRepository();
+	$committed_ability      = new SafeCleanupCommittedCandidateAbility();
+	$empty_ability          = new SafeCleanupQueuedAbility(array_fill(0, 8, array( 'success' => true, 'summary' => array() )));
+	$output_attempts        = 0;
+	$interrupted_result     = ( new DataMachineCode\Workspace\WorkspaceSafeCleanupOrchestrator(
+		static fn( string $name ) => 'datamachine-code/workspace-worktree-cleanup-eligible-drain' === $name ? $committed_ability : $empty_ability,
+		static fn( bool $dry_run ) => array( 'dry_run' => $dry_run, 'after' => array(), 'filesystem' => array() ),
+		$interrupted_repository
+	) )->run(array(
+		'cycles' => 2,
+		'progress_callback' => static function () use ( &$output_attempts ): void {
+			++$output_attempts;
+			throw new RuntimeException('Synthetic client output interruption.');
+		},
+	));
+	$committed_items = array_values(array_filter($interrupted_repository->items, static fn( array $item ): bool => 'applied' === (string) ( $item['status'] ?? '' )));
+	safe_cleanup_assert(1 === $output_attempts && ! is_wp_error($interrupted_result), 'an output interruption after the early durable envelope does not stop safe cleanup');
+	safe_cleanup_assert('cleanup-run-interrupted-output' === ($interrupted_result['run_id'] ?? null) && array() !== $committed_items, 'committed mutation evidence remains recoverable by durable run ID after output interruption');
+	safe_cleanup_assert(false === ($committed_items[0]['evidence']['outcome']['path_exists_after'] ?? true), 'durable committed evidence records the post-removal path state');
 
 	$cancellation_repository = new SafeCleanupFakeRunRepository();
 	$cancelling_ability      = new SafeCleanupCancellingAbility( $cancellation_repository );

@@ -10,10 +10,15 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(WorkspaceLockStore::class) ) {
 	include_once __DIR__ . '/WorkspaceLockStore.php';
+}
+if ( ! class_exists(WallClockBudget::class) ) {
+	include_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 }
 
 final class WorkspaceMutationLock {
@@ -419,11 +424,15 @@ final class WorkspaceMutationLock {
 	 *
 	 * @return array<string,mixed>
 	 */
-	public static function status( string $workspace_path ): array {
-		$filesystem = self::filesystem_status($workspace_path);
-		$queue      = self::queued_requests($workspace_path);
-		$database   = WorkspaceLockStore::status();
-		$stale      = self::stale_lock_report($database, $filesystem);
+	public static function status( string $workspace_path, ?WallClockBudget $budget = null ): array {
+		$budget     = $budget ?? WallClockBudget::from_seconds(5, '5s');
+		$filesystem = self::filesystem_status($workspace_path, $budget);
+		$queue      = $budget->expired() ? array() : self::queued_requests($workspace_path, $budget);
+		$database   = $budget->remaining_seconds() < 1.0
+			? array( 'available' => false, 'state' => 'budget_exhausted', 'active' => 0, 'stale' => 0, 'released' => 0, 'total' => 0 )
+			: WorkspaceLockStore::status();
+		$stale      = self::stale_lock_report($database, $filesystem, $budget);
+		$partial    = $budget->expired() || ! empty($filesystem['partial']) || ! empty($stale['partial']) || empty($database['available']);
 
 		return array(
 			'database'          => $database,
@@ -438,6 +447,8 @@ final class WorkspaceMutationLock {
 			'retention_enabled' => true,
 			'policy'            => self::retention_policy(),
 			'queue'             => $queue,
+			'partial'           => $partial,
+			'evidence'          => array( 'wall_clock_budget' => $budget->evidence() ),
 		);
 	}
 
@@ -446,17 +457,23 @@ final class WorkspaceMutationLock {
 	 *
 	 * @return array<string,mixed>
 	 */
-	public static function prune_stale( string $workspace_path, bool $dry_run = false ): array {
-		$before    = self::status($workspace_path);
+	public static function prune_stale( string $workspace_path, bool $dry_run = false, ?WallClockBudget $budget = null ): array {
+		$budget    = $budget ?? WallClockBudget::from_seconds(10, '10s');
+		$before    = self::status($workspace_path, $budget);
 		$protected = self::active_filesystem_lock_keys( (array) ( $before['filesystem'] ?? array() ) );
-		$db_pruned = $dry_run ? array(
+		$db_pruned = $budget->remaining_seconds() < 1.0 ? array(
+			'dry_run'         => $dry_run,
+			'skipped'         => true,
+			'reason'          => 'budget_exhausted',
+			'candidate_count' => (int) ( $before['database']['stale'] ?? 0 ),
+		) : ( $dry_run ? array(
 			'dry_run'          => true,
 			'protected_active' => count($protected),
 			'protected_keys'   => $protected,
 			'candidate_count'  => (int) ( $before['database']['stale'] ?? 0 ),
-		) : WorkspaceLockStore::prune_expired($protected);
-		$fs_pruned = self::prune_stale_filesystem_locks($workspace_path, $dry_run);
-		$after     = self::status($workspace_path);
+		) : WorkspaceLockStore::prune_expired($protected) );
+		$fs_pruned = self::prune_stale_filesystem_locks($workspace_path, $dry_run, $budget);
+		$after     = $budget->remaining_seconds() < 1.0 ? array( 'available' => false, 'state' => 'budget_exhausted' ) : self::status($workspace_path, $budget);
 
 		return array(
 			'dry_run'    => $dry_run,
@@ -464,6 +481,8 @@ final class WorkspaceMutationLock {
 			'database'   => $db_pruned,
 			'filesystem' => $fs_pruned,
 			'after'      => $after,
+			'partial'    => $budget->expired() || ! empty($fs_pruned['partial']) || 'budget_exhausted' === (string) ( $after['state'] ?? '' ),
+			'evidence'   => array( 'wall_clock_budget' => $budget->evidence() ),
 		);
 	}
 
@@ -563,13 +582,16 @@ final class WorkspaceMutationLock {
 	}
 
 	/** @return array<int,array<string,mixed>> */
-	private static function queued_requests( string $workspace_path ): array {
+	private static function queued_requests( string $workspace_path, ?WallClockBudget $budget = null ): array {
 		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
-		self::prune_stale_requests($lock_dir);
+		self::prune_stale_requests($lock_dir, $budget);
 		$files = glob($lock_dir . '/requests/*.json');
 		$files = false !== $files ? $files : array();
 		$rows  = array();
 		foreach ( array_slice($files, 0, 25) as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$row = self::read_request($file);
 			if ( is_array($row) && ! self::request_is_stale($row) ) {
 				$rows[] = $row;
@@ -592,9 +614,12 @@ final class WorkspaceMutationLock {
 	}
 
 	/** Reclaim dead or expired queue tokens before selecting the FIFO head. */
-	private static function prune_stale_requests( string $lock_dir ): void {
+	private static function prune_stale_requests( string $lock_dir, ?WallClockBudget $budget = null ): void {
 		$files = glob($lock_dir . '/requests/*.json');
 		foreach ( false === $files ? array() : $files as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$request = self::read_request($file);
 			if ( is_array($request) && self::request_is_stale($request) ) {
 				self::remove_request($file);
@@ -736,10 +761,13 @@ final class WorkspaceMutationLock {
 	 * @param array<string,mixed> $filesystem Filesystem lock status.
 	 * @return array<string,mixed>
 	 */
-	private static function stale_lock_report( array $database, array $filesystem ): array {
+	private static function stale_lock_report( array $database, array $filesystem, ?WallClockBudget $budget = null ): array {
 		$active_filesystem_keys = self::active_filesystem_lock_keys($filesystem);
 		$database_rows          = array();
 		foreach ( (array) ( $database['locks'] ?? array() ) as $lock ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			if ( ! is_array($lock) || 'stale' !== (string) ( $lock['state'] ?? '' ) ) {
 				continue;
 			}
@@ -771,6 +799,9 @@ final class WorkspaceMutationLock {
 
 		$filesystem_rows = array();
 		foreach ( (array) ( $filesystem['locks'] ?? array() ) as $lock ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			if ( ! is_array($lock) || 'stale' !== (string) ( $lock['state'] ?? '' ) ) {
 				continue;
 			}
@@ -800,6 +831,7 @@ final class WorkspaceMutationLock {
 			'safety'                 => 'Preview is non-destructive. Apply prunes expired DB rows and old unlocked filesystem lock files only; live filesystem flocks are reported and protected.',
 			'database'               => $database_rows,
 			'filesystem'             => $filesystem_rows,
+			'partial'                => null !== $budget && $budget->expired(),
 		);
 	}
 
@@ -974,7 +1006,7 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function filesystem_status( string $workspace_path ): array {
+	private static function filesystem_status( string $workspace_path, ?WallClockBudget $budget = null ): array {
 		$lock_dir    = rtrim($workspace_path, '/') . '/.locks';
 		$files       = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
 		$files       = false === $files ? array() : $files;
@@ -984,8 +1016,13 @@ final class WorkspaceMutationLock {
 		$active_keys = array();
 		$stale_keys  = array();
 		$locks       = array();
+		$partial     = false;
 
 		foreach ( $files as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				$partial = true;
+				break;
+			}
 			$entry = self::filesystem_lock_entry($file);
 			if ( empty($entry) ) {
 				continue;
@@ -1013,6 +1050,8 @@ final class WorkspaceMutationLock {
 			'stale_keys'  => array_values(array_filter($stale_keys)),
 			'recent'      => $recent,
 			'locks'       => $locks,
+			'partial'     => $partial,
+			'observed'    => count($locks),
 			'guidance'    => self::recovery_guidance(),
 		);
 	}
@@ -1086,7 +1125,7 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function prune_stale_filesystem_locks( string $workspace_path, bool $dry_run ): array {
+	private static function prune_stale_filesystem_locks( string $workspace_path, bool $dry_run, ?WallClockBudget $budget = null ): array {
 		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
 		$files    = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
 		$files    = false === $files ? array() : $files;
@@ -1096,6 +1135,9 @@ final class WorkspaceMutationLock {
 		$skipped  = array();
 
 		foreach ( $files as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$mtime = filemtime($file);
 			if ( false === $mtime || $mtime >= $cutoff ) {
 				$skipped[] = array(
@@ -1137,6 +1179,7 @@ final class WorkspaceMutationLock {
 			'removed'       => $removed,
 			'skipped_count' => count($skipped),
 			'skipped'       => $skipped,
+			'partial'       => count($removed) + count($skipped) < count($files),
 		);
 	}
 
