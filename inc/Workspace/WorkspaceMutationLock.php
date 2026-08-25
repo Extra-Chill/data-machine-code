@@ -152,6 +152,20 @@ final class WorkspaceMutationLock {
 		$lock_path = $lock_dir . '/worktree-' . $repo . '.lock';
 		self::prune_stale_requests($lock_dir);
 		$request_path = self::record_request($lock_dir, $repo, $lock_path);
+		if ( '' === $request_path || ! is_file($request_path) ) {
+			return new \WP_Error(
+				'workspace_lock_request_create_failed',
+				sprintf('Failed to persist workspace lock request for "%s".', $repo),
+				array(
+					'status'             => 500,
+					'retryable'          => true,
+					'repo'               => $repo,
+					'scope'              => $repo,
+					'lock_key'           => 'worktree-' . $repo,
+					'mutation_committed' => false,
+				)
+			);
+		}
 		$request_id   = '' === $request_path ? '' : basename($request_path, '.json');
 		$handle       = fopen($lock_path, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		if ( false === $handle ) {
@@ -175,6 +189,9 @@ final class WorkspaceMutationLock {
 			'queue_position'       => self::request_queue_position($lock_dir, $lock_path, $request_path),
 			'wait_timeout_seconds' => $timeout,
 		));
+		if ( 0 < $timeout && ( microtime(true) - $started ) >= $timeout ) {
+			return self::timed_out_error($repo, $lock_path, $request_path, $timeout, $started, $handle, $progress_callback);
+		}
 		$last_progress = null;
 
 		do {
@@ -208,26 +225,12 @@ final class WorkspaceMutationLock {
 			$now = microtime(true);
 			if ( null === $last_progress || ( $now - $last_progress ) >= self::PROGRESS_INTERVAL_SECONDS ) {
 				self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'queued');
+				$now           = microtime(true);
 				$last_progress = $now;
 			}
 
 			if ( 0 === $timeout || ( $now - $started ) >= $timeout ) {
-				$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
-				$error_data['wait_timeout_seconds'] = $timeout;
-				$error_data['timed_out']            = true;
-				self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'timed_out', $error_data);
-				self::remove_request($request_path);
-				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-				return new \WP_Error(
-					'workspace_repo_busy',
-					sprintf(
-						'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes. Inspect lock status with `%s`; prune stale/orphaned locks with `%s` after confirming no active holder remains.',
-						$repo,
-						(string) ( $error_data['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' ),
-						(string) ( $error_data['stale_prune_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )
-					),
-					$error_data
-				);
+				return self::timed_out_error($repo, $lock_path, $request_path, $timeout, $started, $handle, $progress_callback);
 			}
 
 			usleep(self::POLL_USEC);
@@ -287,6 +290,30 @@ final class WorkspaceMutationLock {
 		}
 
 		return $callback($lock);
+	}
+
+	/**
+	 * Close an expired waiter without allowing its protected mutation to run.
+	 *
+	 * @param resource $handle Open filesystem lock handle.
+	 */
+	private static function timed_out_error( string $repo, string $lock_path, string $request_path, int $timeout, float $started, $handle, ?callable $progress_callback ): \WP_Error {
+		$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
+		$error_data['wait_timeout_seconds'] = $timeout;
+		$error_data['timed_out']            = true;
+		self::remove_request($request_path);
+		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'timed_out', $error_data);
+		return new \WP_Error(
+			'workspace_repo_busy',
+			sprintf(
+				'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes. Inspect lock status with `%s`; prune stale/orphaned locks with `%s` after confirming no active holder remains.',
+				$repo,
+				(string) ( $error_data['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' ),
+				(string) ( $error_data['stale_prune_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )
+			),
+			$error_data
+		);
 	}
 
 	/** Emit queue progress without allowing diagnostics to alter lock admission. */
