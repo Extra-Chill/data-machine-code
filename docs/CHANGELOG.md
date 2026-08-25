@@ -2,6 +2,13 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.5] - 2026-08-25
+
+### Fixed
+- enforce shared cleanup budgets
+- preserve decorated SQLite retry
+- bound SQLite lock contention
+
 ## [0.70.4] - 2026-08-25
 
 ### Fixed
