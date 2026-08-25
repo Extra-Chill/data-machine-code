@@ -35,7 +35,7 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_plan( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible' ): array|\WP_Error {
+	public function worktree_plan( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $allow_percentage_byte_floor_exception = false ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -52,6 +52,9 @@ trait WorkspaceWorktreeLifecycle {
 		$reuse_policy = strtolower(trim($reuse_policy));
 		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
 			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_REUSE_POLICIES) . '.', array( 'status' => 400 ));
+		}
+		if ( $force && $allow_percentage_byte_floor_exception ) {
+			return new \WP_Error('worktree_capacity_policy_conflict', '--force bypasses capacity admission; use it separately from --allow-percentage-byte-floor.', array( 'status' => 400 ));
 		}
 		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreeContextInjector::normalize_cleanup_policy($intent['cleanup_policy']) ) {
 			return new \WP_Error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_CLEANUP_POLICIES) . '.', array( 'status' => 400 ));
@@ -74,6 +77,8 @@ trait WorkspaceWorktreeLifecycle {
 		$input                               = $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy);
 		$input['allow_unverified_freshness'] = $allow_unverified_freshness;
 		$input['require_task_tracker']       = $require_task_tracker;
+		$input['force']                      = $force;
+		$input['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
 
 		if ( is_dir($path) ) {
 			$inspection = $this->worktree_get($handle, array(
@@ -161,6 +166,7 @@ trait WorkspaceWorktreeLifecycle {
 			require_once __DIR__ . '/WorktreeDemandCalibration.php';
 		}
 		$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
+		$demand_plan['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
 		$disk_budget = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
 		$candidates  = $this->worktree_reuse_candidates($repo, $task);
 		$disposition = 'create';
@@ -227,7 +233,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( '' === $expected || array() === $input ) {
 			return new \WP_Error('invalid_worktree_plan', 'A digest-addressed worktree plan with apply_intent is required.', array( 'status' => 400 ));
 		}
-		$current = $this->worktree_plan( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ));
+		$current = $this->worktree_plan( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), ! empty($input['allow_percentage_byte_floor_exception']) );
 		if ( is_wp_error($current) ) {
 			return $current;
 		}
@@ -239,7 +245,7 @@ trait WorkspaceWorktreeLifecycle {
 				'disposition'     => $current['disposition'] ?? null,
 			));
 		}
-		$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), false, false, null, (array) ( $plan['freshness']['identity'] ?? array() ) );
+		$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), false, false, null, (array) ( $plan['freshness']['identity'] ?? array() ), ! empty($input['allow_percentage_byte_floor_exception']) );
 		if ( is_wp_error($result) && 'stale_worktree_freshness' === $result->get_error_code() ) {
 			$error_data = (array) $result->get_error_data();
 			return new \WP_Error(
@@ -874,7 +880,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'replace_isolated' === $mode && array() !== WorktreeContextInjector::missing_isolation_intent( (array) ( $input['intent'] ?? array() )) ) {
 			return new \WP_Error('legacy_handoff_isolation_intent_required', 'An isolated replacement requires purpose, owner_run_ref, and cleanup_policy=remove_on_success before the old candidate can be superseded.', array( 'status' => 400 ));
 		}
-		$current = $this->worktree_plan( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ));
+		$current = $this->worktree_plan( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), ! empty($input['allow_percentage_byte_floor_exception']) );
 		if ( is_wp_error($current) || ! hash_equals($expected, (string) ( $current['digest'] ?? '' )) || 'legacy_handoff_required' !== ( $current['disposition'] ?? null ) ) {
 			return new \WP_Error('stale_legacy_handoff_plan', 'The legacy handoff plan no longer has complete safety proof.', array(
 				'status'  => 409,
@@ -926,7 +932,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($stored) ) {
 				return $stored;
 			}
-			$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), 'isolated');
+			$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), 'isolated', false, false, null, array(), ! empty($input['allow_percentage_byte_floor_exception']) );
 			if ( is_wp_error($result) ) {
 				return $result;
 			}
@@ -966,11 +972,8 @@ trait WorkspaceWorktreeLifecycle {
 				'target_ref'  => $plan['freshness']['target_ref'] ?? null,
 				'target_head' => $plan['freshness']['target_head'] ?? null,
 			),
-			'capacity'         => array(
-				'status'                  => $plan['capacity']['status'] ?? null,
-				'projected_demand_bytes'  => $plan['capacity']['projected_demand_bytes'] ?? null,
-				'projected_demand_inodes' => $plan['capacity']['projected_demand_inodes'] ?? null,
-			),
+			'capacity'         => $this->worktree_plan_capacity_identity((array) ( $plan['capacity'] ?? array() )),
+			'bootstrap_demand' => $plan['bootstrap_demand'] ?? null,
 			'destination'      => $plan['destination'] ?? null,
 			'ownership'        => $plan['ownership'] ?? null,
 			'reuse_candidates' => $plan['reuse_candidates'] ?? null,
@@ -986,6 +989,49 @@ trait WorkspaceWorktreeLifecycle {
 			),
 		);
 		return $plan;
+	}
+
+	/** Bind the measured admission decision while tolerating bounded ambient capacity drift. */
+	private function worktree_plan_capacity_identity( array $capacity ): array {
+		$exception           = (array) ( $capacity['admission_exception'] ?? array() );
+		$projected_exception = (array) ( $exception['projected_post_create_capacity'] ?? array() );
+		if ( array() !== $projected_exception ) {
+			$exception['projected_post_create_capacity'] = array(
+				'free_bytes'  => $this->worktree_plan_capacity_measurement($projected_exception['free_bytes'] ?? null, 64 * 1024 * 1024),
+				'free_inodes' => $this->worktree_plan_capacity_measurement($projected_exception['free_inodes'] ?? null, 1000000),
+			);
+		}
+
+		return array(
+			'status'                       => $capacity['status'] ?? null,
+			'creation_allowed'             => $capacity['creation_allowed'] ?? null,
+			'filesystem_total_bytes'       => $capacity['filesystem_total_bytes'] ?? null,
+			'filesystem_free_bytes'        => $this->worktree_plan_capacity_measurement($capacity['filesystem_free_bytes'] ?? null, 64 * 1024 * 1024),
+			'projected_free_bytes'         => $this->worktree_plan_capacity_measurement($capacity['projected_free_bytes'] ?? null, 64 * 1024 * 1024),
+			'filesystem_total_inodes'      => $this->worktree_plan_capacity_measurement($capacity['filesystem_total_inodes'] ?? null, 1000000),
+			'filesystem_free_inodes'       => $this->worktree_plan_capacity_measurement($capacity['filesystem_free_inodes'] ?? null, 1000000),
+			'projected_free_inodes'        => $this->worktree_plan_capacity_measurement($capacity['projected_free_inodes'] ?? null, 1000000),
+			'refuse_free_bytes'            => $capacity['refuse_free_bytes'] ?? null,
+			'refuse_percent_bytes_floor'   => $capacity['refuse_percent_bytes_floor'] ?? null,
+			'effective_refuse_bytes'       => $capacity['effective_refuse_bytes'] ?? null,
+			'refuse_free_inodes'           => $capacity['refuse_free_inodes'] ?? null,
+			'refuse_percent_inode_floor'   => $capacity['refuse_percent_inode_floor'] ?? null,
+			'effective_refuse_inodes'      => $capacity['effective_refuse_inodes'] ?? null,
+			'trigger_reasons'              => $capacity['trigger_reasons'] ?? null,
+			'typed_trigger_reasons'        => $capacity['typed_trigger_reasons'] ?? null,
+			'admission_exception'          => $exception,
+			'force_override_required'      => $capacity['force_override_required'] ?? null,
+			'force_override_applied'       => $capacity['force_override_applied'] ?? null,
+			'worktree_count'               => $capacity['worktree_count'] ?? null,
+		);
+	}
+
+	private function worktree_plan_capacity_measurement( mixed $value, int $quantum ): mixed {
+		if ( ! is_numeric($value) ) {
+			return $value;
+		}
+		$value = (int) $value;
+		return abs($value) < $quantum ? $value : intdiv($value, $quantum);
 	}
 
 	private function worktree_plan_sort( mixed $value ): mixed {
@@ -1061,9 +1107,10 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
 	 * @param  string      $reuse_policy Existing-handle and same-task allocation policy.
 	 * @param  callable|null $progress_callback Best-effort lifecycle phase observer.
+	 * @param  bool        $allow_percentage_byte_floor_exception Admit a bounded demand past only the percentage byte floor.
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null, array $expected_freshness_identity = array() ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null, array $expected_freshness_identity = array(), bool $allow_percentage_byte_floor_exception = false ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -1089,8 +1136,11 @@ trait WorkspaceWorktreeLifecycle {
 		if ( ! in_array($reuse_policy, WorktreeContextInjector::VALID_REUSE_POLICIES, true) ) {
 			return new \WP_Error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreeContextInjector::VALID_REUSE_POLICIES) . '.', array( 'status' => 400 ));
 		}
-		if ( $force && $remediate_capacity ) {
-			return new \WP_Error('worktree_capacity_policy_conflict', '--force bypasses capacity admission; use it separately from --remediate-capacity.', array( 'status' => 400 ));
+		if ( $force && ( $remediate_capacity || $allow_percentage_byte_floor_exception ) ) {
+			return new \WP_Error('worktree_capacity_policy_conflict', '--force bypasses capacity admission; use it separately from --remediate-capacity and --allow-percentage-byte-floor.', array( 'status' => 400 ));
+		}
+		if ( $remediate_capacity && $allow_percentage_byte_floor_exception ) {
+			return new \WP_Error('worktree_capacity_policy_conflict', '--allow-percentage-byte-floor admits a narrow exception; use it separately from --remediate-capacity.', array( 'status' => 400 ));
 		}
 		if ( $remediate_capacity_dry_run && ! $remediate_capacity ) {
 			return new \WP_Error('worktree_capacity_remediation_dry_run_requires_remediation', 'Capacity remediation dry-run requires remediate_capacity=true.', array( 'status' => 400 ));
@@ -1118,6 +1168,7 @@ trait WorkspaceWorktreeLifecycle {
 			'force'                      => $force,
 			'remediate_capacity'         => $remediate_capacity,
 			'remediate_capacity_dry_run' => $remediate_capacity_dry_run,
+			'allow_percentage_byte_floor_exception' => $allow_percentage_byte_floor_exception,
 			'task'                       => $task,
 			'require_task_tracker'       => $require_task_tracker,
 			'intent'                     => $intent,
@@ -1138,7 +1189,7 @@ trait WorkspaceWorktreeLifecycle {
 		$wt_path   = $this->workspace_path . '/' . $wt_handle;
 
 		if ( $remediate_capacity_dry_run ) {
-			return $this->worktree_capacity_dry_run($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent, $reuse_policy, $wt_handle, $primary_path);
+			return $this->worktree_capacity_dry_run($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent, $reuse_policy, $wt_handle, $primary_path, $allow_percentage_byte_floor_exception);
 		}
 
 		// A remediation dry-run must reach capacity planning before any existing
@@ -1222,7 +1273,8 @@ trait WorkspaceWorktreeLifecycle {
 				$preflight,
 				$capacity_lock,
 				$progress_callback,
-				$expected_freshness_identity
+				$expected_freshness_identity,
+				$allow_percentage_byte_floor_exception
 			),
 			$capacity_timeout,
 			array(
@@ -1326,7 +1378,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * lock acquisition records durable request/lifecycle evidence, which a preview
 	 * must not create.
 	 */
-	private function worktree_capacity_dry_run( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent, string $reuse_policy, string $wt_handle, string $primary_path ): array|\WP_Error {
+	private function worktree_capacity_dry_run( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, array $intent, string $reuse_policy, string $wt_handle, string $primary_path, bool $allow_percentage_byte_floor_exception ): array|\WP_Error {
 		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$target_ref   = $exists_local
 			? 'refs/heads/' . $branch
@@ -1336,6 +1388,7 @@ trait WorkspaceWorktreeLifecycle {
 			return $demand_plan;
 		}
 
+		$demand_plan['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
 		$disk_budget          = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
 		$capacity_remediation = 'refused' === ( $disk_budget['status'] ?? '' )
 			? $this->remediate_capacity_refusal($repo, $branch, $demand_plan, $disk_budget, true)
@@ -1454,7 +1507,8 @@ trait WorkspaceWorktreeLifecycle {
 		array $preflight = array(),
 		?WorkspaceMutationLock $capacity_lock = null,
 		?callable $progress_callback = null,
-		array $expected_freshness_identity = array()
+		array $expected_freshness_identity = array(),
+		bool $allow_percentage_byte_floor_exception = false
 	): array|\WP_Error {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
@@ -1600,6 +1654,7 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
 		}
+		$demand_plan['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
 		$deadline_error = $this->worktree_operation_deadline_error('demand_disk_planning', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
 			return $deadline_error;
@@ -1821,6 +1876,7 @@ trait WorkspaceWorktreeLifecycle {
 			$post_rebase_demand = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
 			$measurement_plan   = $post_rebase_demand;
 			$post_rebase_demand = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
+			$post_rebase_demand['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
 			$this->worktree_add_progress($progress_callback, 'post_rebase_capacity_inspection');
 			$post_rebase_budget = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
 			$this->worktree_add_progress($progress_callback, 'post_rebase_artifact_reclamation');

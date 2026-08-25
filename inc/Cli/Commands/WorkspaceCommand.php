@@ -127,7 +127,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'add'                   => array(
 				'shortdesc' => 'Create an isolated, managed worktree.',
-				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, disk-budget evaluation, and required `handoff_freshness` contract. A verified result includes a proof for immediate revalidation; an unverified result is refused unless `--allow-unverified-freshness` is explicit. `--force` is the explicit disk-budget override. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
+				'longdesc'  => "Creates `<repo>@<branch-slug>` and reports its handle, path, disk-budget evaluation, and required `handoff_freshness` contract. A verified result includes a proof for immediate revalidation; an unverified result is refused unless `--allow-unverified-freshness` is explicit. `--force` is the unrestricted disk-budget override. `--allow-percentage-byte-floor` is a narrow, demand-bounded exception for a percentage-byte-only refusal. `--remediate-capacity` instead runs bounded safe reclamation after a refusal and retries the exact add once when capacity recovers.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --from=origin/main --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1025\n    wp datamachine-code workspace worktree add data-machine-code fix/1025 --skip-bootstrap",
 				'synopsis'  => array(
 					array(
 						'type'        => 'positional',
@@ -190,6 +190,11 @@ class WorkspaceCommand extends BaseCommand {
 						'type'        => 'flag',
 						'name'        => 'force',
 						'description' => 'Override the disk-budget refusal threshold.',
+					),
+					array(
+						'type'        => 'flag',
+						'name'        => 'allow-percentage-byte-floor',
+						'description' => 'Admit only a trusted, bounded demand past a percentage-byte-only refusal.',
 					),
 					array(
 						'type'        => 'flag',
@@ -5037,7 +5042,7 @@ class WorkspaceCommand extends BaseCommand {
 			case 'add':
 			case 'plan':
 				if ( empty( $args[1] ) || empty( $args[2] ) ) {
-					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal|claim_expired] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]' );
+					WP_CLI::error( 'Usage: worktree add <repo> <branch> [--from=<ref>|--base=<ref>|--base-ref=<ref>|--base-branch=<branch>] [--skip-context-injection] [--skip-bootstrap] [--allow-stale] [--allow-unverified-freshness] [--rebase-base] [--force|--allow-percentage-byte-floor|--remediate-capacity [--remediate-capacity-dry-run]] [--reuse-policy=reuse_compatible|isolated|recycle_terminal|claim_expired] [--task-url=<url>|--task-ref=<ref>] [--require-task-tracker]' );
 					return;
 				}
 				$input['repo']    = $args[1];
@@ -5075,6 +5080,7 @@ class WorkspaceCommand extends BaseCommand {
 				$input['rebase_base'] = ! empty( $assoc_args['rebase-base'] );
 				// --force is an explicit disk-budget override for add.
 				$input['force']                      = ! empty( $assoc_args['force'] );
+				$input['allow_percentage_byte_floor_exception'] = ! empty( $assoc_args['allow-percentage-byte-floor'] );
 				$input['remediate_capacity']         = ! empty( $assoc_args['remediate-capacity'] );
 				$input['remediate_capacity_dry_run'] = ! empty( $assoc_args['remediate-capacity-dry-run'] );
 				$input['verbose']                    = ! empty( $assoc_args['verbose'] );

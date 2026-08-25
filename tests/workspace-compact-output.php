@@ -65,6 +65,18 @@ $worktree_add = WorkspaceCompactOutput::worktree_add_result(
 			'projected_demand_bytes' => 200000,
 			'trigger_reasons'        => array( 'low_free_space' ),
 			'typed_trigger_reasons'  => array( array( 'code' => 'worktree_count_warning_threshold', 'severity' => 'advisory', 'resource' => 'worktree_count', 'threshold' => 'warning_floor' ) ),
+			'admission_exception'    => array(
+				'type'                           => 'percentage_byte_floor_demand_bounded',
+				'operator_intent'                => true,
+				'status'                         => 'admitted',
+				'waived_trigger'                 => 'projected_free_bytes_percentage_refusal_floor',
+				'blocking_triggers'              => array( 'projected_free_bytes_percentage_refusal_floor' ),
+				'demand_bytes'                   => 200000,
+				'maximum_demand_bytes'           => 67108864,
+				'demand_source'                  => 'conservative_defaults',
+				'projected_post_create_capacity' => array( 'free_bytes' => 300000, 'free_inodes' => 1000 ),
+				'retained_hard_floors'           => array( 'refuse_free_bytes' => 100000, 'refuse_free_inodes' => 100, 'refuse_free_inode_percent' => 1.0 ),
+			),
 			'diagnostic_id'          => 'workspace_capacity',
 			'advisory_fingerprint'   => 'fingerprint-1',
 			'evidence_reference'     => 'workspace_capacity@fingerprint',
@@ -87,6 +99,9 @@ compact_output_assert('warn' === ( $worktree_add['capacity']['status'] ?? null )
 compact_output_assert(true === ( $worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact worktree add output must expose admission permission.');
 compact_output_assert(false === ( $worktree_add['capacity']['force_override_required'] ?? null ), 'Compact worktree add output must expose whether force is required.');
 compact_output_assert('advisory' === ( $worktree_add['capacity']['typed_trigger_reasons'][0]['severity'] ?? null ), 'Compact worktree add output must expose typed trigger severity.');
+compact_output_assert('admitted' === ( $worktree_add['capacity']['admission_exception']['status'] ?? null ), 'Compact worktree add output must preserve an admitted exception.');
+compact_output_assert('projected_free_bytes_percentage_refusal_floor' === ( $worktree_add['capacity']['admission_exception']['waived_trigger'] ?? null ), 'Compact worktree add output must name the waived floor.');
+compact_output_assert(100000 === ( $worktree_add['capacity']['admission_exception']['retained_hard_floors']['refuse_free_bytes'] ?? null ), 'Compact worktree add output must retain hard floors.');
 compact_output_assert('fingerprint-1' === ( $worktree_add['capacity']['advisory_fingerprint'] ?? null ) && 'workspace_capacity@fingerprint' === ( $worktree_add['capacity']['evidence_reference'] ?? null ), 'Compact worktree add output must retain advisory suppression identity.');
 compact_output_assert('inspect' === ( $worktree_add['capacity']['recovery_actions'][0]['action'] ?? null ), 'Compact worktree add output must retain structured recovery actions.');
 compact_output_assert('unverified' === ( $worktree_add['handoff_freshness']['status'] ?? null ) && 'remote_freshness_probe_unsupported' === ( $worktree_add['handoff_freshness']['reason'] ?? null ), 'Compact worktree add output must preserve the explicit freshness decision.');
