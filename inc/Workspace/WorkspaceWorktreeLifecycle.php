@@ -3088,7 +3088,7 @@ trait WorkspaceWorktreeLifecycle {
 			'new_purpose'            => $intent['purpose'],
 			'base_ref'               => $base,
 		);
-		$metadata                   = array_merge($metadata, array(
+		$metadata                   = WorktreeContextInjector::reactivate_for_reuse($metadata, array(
 			'lifecycle_state'   => WorktreeContextInjector::STATE_ACTIVE,
 			'last_seen_at'      => gmdate('c'),
 			'observed_at'       => gmdate('c'),
@@ -3098,7 +3098,7 @@ trait WorkspaceWorktreeLifecycle {
 			'ownership_lineage' => array_merge( (array) ( $metadata['ownership_lineage'] ?? array() ), array( $lineage )),
 		));
 		$metadata['reuse_contract'] = array_merge($contract, $intent);
-		$stored                     = WorktreeContextInjector::store_lifecycle_metadata($handle, $metadata);
+		$stored                     = WorktreeContextInjector::restore_lifecycle_metadata($handle, $metadata);
 		if ( is_wp_error($stored) ) {
 			return new \WP_Error('worktree_claim_metadata_persistence_failed', 'Claim ownership metadata could not be persisted.', array(
 				'status' => 500,

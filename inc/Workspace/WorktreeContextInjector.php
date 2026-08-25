@@ -301,7 +301,33 @@ class WorktreeContextInjector {
 		return self::CLEANUP_POLICY_REMOVE_ON_SUCCESS === ( $metadata['cleanup_policy'] ?? null )
 			&& null !== self::normalize_scalar_metadata_value($metadata['purpose'] ?? null)
 			&& null !== self::normalize_scalar_metadata_value($metadata['owner_run_ref'] ?? null)
-			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null );
+			&& 'success' === ( $metadata['owner_terminal_outcome'] ?? null )
+			&& self::terminal_evidence_matches_current_ownership($metadata, 'owner_terminal_at', 'owner_terminal_owner_run_ref');
+	}
+
+	/** Remove terminal authority when a clean worktree starts a new lifecycle. */
+	public static function reactivate_for_reuse( array $metadata, array $active_metadata ): array {
+		foreach ( array(
+			'finalized_at',
+			'finalized_state',
+			'finalized_owner_run_ref',
+			'cleanup_eligible_at',
+			'owner_terminal_outcome',
+			'owner_terminal_at',
+			'owner_terminal_owner_run_ref',
+			'auto_finalized_by',
+			'auto_finalized_signal',
+			'auto_finalized_reason',
+			'cleanup_eligibility_evidence',
+			'pr_ref',
+			'pr_url',
+			'pr_number',
+			'pr_repo',
+		) as $field ) {
+			unset($metadata[ $field ]);
+		}
+
+		return array_merge($metadata, $active_metadata);
 	}
 
 	private static function optional_intent_value( mixed $value ): ?string {
@@ -946,6 +972,10 @@ class WorktreeContextInjector {
 			'lifecycle_state' => $normalized,
 			'finalized_at'    => gmdate('c'),
 		);
+		$finalized_owner_run_ref = self::normalize_scalar_metadata_value($existing['owner_run_ref'] ?? null);
+		if ( null !== $finalized_owner_run_ref ) {
+			$metadata['finalized_owner_run_ref'] = $finalized_owner_run_ref;
+		}
 
 		$pr_metadata = self::parse_pr_reference($pr);
 		if ( ! empty($pr_metadata) ) {
@@ -956,6 +986,9 @@ class WorktreeContextInjector {
 		if ( '' !== $owner_terminal_outcome ) {
 			$metadata['owner_terminal_outcome'] = $owner_terminal_outcome;
 			$metadata['owner_terminal_at']      = $metadata['finalized_at'];
+			if ( null !== $finalized_owner_run_ref ) {
+				$metadata['owner_terminal_owner_run_ref'] = $finalized_owner_run_ref;
+			}
 		}
 
 		if ( self::should_mark_cleanup_eligible($normalized, $pr_metadata) || self::has_owner_terminal_disposable_cleanup_signal(array_merge($existing, $metadata)) ) {
@@ -1003,7 +1036,9 @@ class WorktreeContextInjector {
 		}
 
 		$finalized_state = isset($metadata['finalized_state']) ? self::normalize_state( (string) $metadata['finalized_state']) : null;
-		return null !== $finalized_state && self::should_mark_cleanup_eligible($finalized_state, self::extract_pr_metadata($metadata));
+		return null !== $finalized_state
+			&& self::terminal_evidence_matches_current_ownership($metadata, 'finalized_at', 'finalized_owner_run_ref')
+			&& self::should_mark_cleanup_eligible($finalized_state, self::extract_pr_metadata($metadata));
 	}
 
 	/**
@@ -1182,6 +1217,9 @@ class WorktreeContextInjector {
 		if ( empty($metadata['cleanup_eligible_at']) || false === strtotime( (string) $metadata['cleanup_eligible_at'] ) || empty($metadata['finalized_at']) || false === strtotime( (string) $metadata['finalized_at'] ) ) {
 			return false;
 		}
+		if ( ! self::terminal_evidence_matches_current_ownership($metadata, 'finalized_at', 'finalized_owner_run_ref') ) {
+			return false;
+		}
 
 		$finalized_state = isset($metadata['finalized_state']) ? self::normalize_state( (string) $metadata['finalized_state'] ) : null;
 		if ( null !== $finalized_state && in_array($finalized_state, array( self::STATE_MERGED, self::STATE_CLOSED, self::STATE_ABANDONED, self::STATE_CLEANUP_ELIGIBLE ), true) ) {
@@ -1189,6 +1227,33 @@ class WorktreeContextInjector {
 		}
 
 		return array() !== self::extract_pr_metadata($metadata);
+	}
+
+	/** Reject terminal evidence recorded by an owner superseded by a later claim. */
+	private static function terminal_evidence_matches_current_ownership( array $metadata, string $timestamp_field, string $owner_field ): bool {
+		$terminal_owner = self::normalize_scalar_metadata_value($metadata[ $owner_field ] ?? null);
+		$current_owner  = self::normalize_scalar_metadata_value($metadata['owner_run_ref'] ?? null);
+		if ( null !== $terminal_owner && $terminal_owner !== $current_owner ) {
+			return false;
+		}
+
+		$latest_claim = 0;
+		foreach ( (array) ( $metadata['ownership_lineage'] ?? array() ) as $transition ) {
+			if ( ! is_array($transition) || ! array_key_exists('claimed_at', $transition) ) {
+				continue;
+			}
+			$claimed_at = is_scalar($transition['claimed_at']) ? strtotime((string) $transition['claimed_at']) : false;
+			if ( false === $claimed_at ) {
+				return false;
+			}
+			$latest_claim = max($latest_claim, $claimed_at);
+		}
+		if ( 0 === $latest_claim ) {
+			return true;
+		}
+
+		$terminal_at = is_scalar($metadata[ $timestamp_field ] ?? null) ? strtotime((string) $metadata[ $timestamp_field ]) : false;
+		return false !== $terminal_at && $terminal_at >= $latest_claim;
 	}
 
 	/**

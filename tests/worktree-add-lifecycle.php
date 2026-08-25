@@ -761,6 +761,7 @@ try {
 	assert_true(is_wp_error($disposable_mismatch) && 'disposable_intent_mismatch' === ( $disposable_mismatch->get_error_data()['reuse']['reason_code'] ?? '' ), 'incompatible disposable reuse did not return typed intent evidence');
 	$disposable_finalized = $workspace->worktree_finalize('homeboy@purpose-owned-disposable', 'active', null, 'success');
 	assert_true(! is_wp_error($disposable_finalized) && 'cleanup_eligible' === ( $disposable_finalized['lifecycle_state'] ?? '' ), 'successful owner terminal outcome did not make disposable worktree cleanup eligible');
+	assert_true('run-991' === ( $disposable_finalized['metadata']['finalized_owner_run_ref'] ?? null ) && 'run-991' === ( $disposable_finalized['metadata']['owner_terminal_owner_run_ref'] ?? null ), 'terminal finalization did not bind its cleanup authority to the current owner');
 	assert_true(strtotime((string) ( $disposable_finalized['metadata']['last_seen_at'] ?? '' )) < strtotime((string) ( $disposable_finalized['metadata']['finalized_at'] ?? '' )), 'terminal finalization must not refresh heartbeat activity');
 	$GLOBALS['datamachine_code_test_filters']['datamachine_code_remote_workspace_backend_should_handle'] = static fn(): bool => true;
 	$disposable_show = WorkspaceAbilities::showRepo(array( 'name' => 'homeboy@purpose-owned-disposable' ));
@@ -813,9 +814,26 @@ try {
 	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c'), 'origin_agent' => '', 'origin_session' => '', 'origin_user' => '', 'owner_run_ref' => '' ));
 	$fresh_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
 	assert_true(is_wp_error($fresh_claim) && 'fresh_unattributed_heartbeat' === ( $fresh_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 0 <= (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_age_seconds'] ?? -1 ) && WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS === (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_ttl_seconds'] ?? 0 ) && array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ) === ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['missing_ownership_fields'] ?? null ), 'fresh unattributed heartbeat did not refuse with complete deterministic evidence');
-	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1) ));
+	$owner_a_finalized_at = gmdate('c', time() - 3600);
+	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array(
+		'last_seen_at'                    => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1),
+		'lifecycle_state'                 => WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
+		'purpose'                         => 'previous-owner',
+		'owner_run_ref'                   => 'old-run',
+		'cleanup_policy'                  => WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS,
+		'owner_terminal_outcome'          => 'success',
+		'owner_terminal_at'               => $owner_a_finalized_at,
+		'owner_terminal_owner_run_ref'    => 'old-run',
+		'finalized_at'                    => $owner_a_finalized_at,
+		'finalized_state'                 => WorktreeContextInjector::STATE_ACTIVE,
+		'finalized_owner_run_ref'         => 'old-run',
+		'cleanup_eligible_at'             => $owner_a_finalized_at,
+	));
 	$claimed = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
-	assert_true(! is_wp_error($claimed) && true === ( $claimed['claimed'] ?? false ) && 'expired_unattributed_heartbeat' === ( $claimed['claim']['reason_code'] ?? null ) && 'claim-run-1' === ( $claimed['metadata']['owner_run_ref'] ?? null ) && '' === ( $claimed['metadata']['ownership_lineage'][0]['previous_owner_run_ref'] ?? 'not-empty' ), is_wp_error($claimed) ? $claimed->get_error_message() : 'expired anonymous heartbeat was not safely claimed with ownership lineage');
+	assert_true(! is_wp_error($claimed) && true === ( $claimed['claimed'] ?? false ) && 'terminal_exact_handle' === ( $claimed['claim']['reason_code'] ?? null ) && WorktreeContextInjector::STATE_ACTIVE === ( $claimed['metadata']['lifecycle_state'] ?? null ) && 'claim-run-1' === ( $claimed['metadata']['owner_run_ref'] ?? null ) && 'old-run' === ( $claimed['metadata']['ownership_lineage'][0]['previous_owner_run_ref'] ?? null ), is_wp_error($claimed) ? $claimed->get_error_message() : 'owner B could not claim owner A terminal worktree with ownership lineage');
+	foreach ( array( 'owner_terminal_outcome', 'owner_terminal_at', 'owner_terminal_owner_run_ref', 'finalized_at', 'finalized_state', 'finalized_owner_run_ref', 'cleanup_eligible_at' ) as $terminal_field ) {
+		assert_true(! array_key_exists($terminal_field, $claimed['metadata']), sprintf('ownership claim retained stale terminal field %s', $terminal_field));
+	}
 	// Simulate a caller being terminated after checkout materialization and after
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.
@@ -1018,7 +1036,7 @@ try {
 	putenv('DMC_FINALIZER_STATUS_DELAY');
 	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds']);
-	assert_true(! is_wp_error($clean_finalization), 'clean terminal worktree finalization failed');
+	assert_true(! is_wp_error($clean_finalization), is_wp_error($clean_finalization) ? 'clean terminal worktree finalization failed: ' . $clean_finalization->get_error_code() . ' ' . $clean_finalization->get_error_message() : 'clean terminal worktree finalization failed');
 	assert_true('cleanup_eligible' === ( $clean_finalization['lifecycle_state'] ?? '' ), 'clean terminal finalization did not expose cleanup eligibility');
 	assert_true($elapsed >= 5.5 && $elapsed < 8.5, sprintf('large clean-worktree finalization did not honor its deterministic process budget: %.3fs', $elapsed));
 
