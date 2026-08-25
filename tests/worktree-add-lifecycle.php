@@ -300,6 +300,21 @@ function create_primary_checkout( string $workspace_root ): void {
 	run_command('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $workspace_root . '/homeboy');
 }
 
+/** @return array<string,string> */
+function plan_filesystem_snapshot( string $root ): array {
+	$snapshot = array();
+	$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+	foreach ( $iterator as $entry ) {
+		$path = $entry->getPathname();
+		if ( 'plan-git.log' === $entry->getFilename() ) {
+			continue;
+		}
+		$snapshot[substr($path, strlen($root))] = $entry->isDir() ? 'dir' : hash_file('sha256', $path);
+	}
+	ksort($snapshot);
+	return $snapshot;
+}
+
 try {
 	$workspace = new Workspace();
 	assert_true($workspace_root === $workspace->get_path(), 'worktree-add-lifecycle resolved a workspace outside its owned fixture before lifecycle operations.');
@@ -310,8 +325,36 @@ try {
 
 	$source_path = $workspace_root . '/source';
 	$primary_path = $workspace_root . '/homeboy';
+	$refresh_required = $workspace->worktree_plan('homeboy', 'planned-before-refresh', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-before-refresh' ));
+	assert_true(is_wp_error($refresh_required) && 'freshness_refresh_required' === $refresh_required->get_error_code() && 'wp datamachine-code workspace git pull homeboy --allow-primary-refresh' === ( $refresh_required->get_error_data()['refresh_command'] ?? null ), 'plan without explicit freshness evidence did not return the typed exact refresh command');
+	$refreshed = $workspace->git_pull('homeboy', false, true);
+	assert_true(! is_wp_error($refreshed), is_wp_error($refreshed) ? $refreshed->get_error_message() : 'explicit primary refresh did not establish plan freshness evidence');
+	$plan_fake_bin = $workspace_root . '/plan-fake-bin';
+	mkdir($plan_fake_bin, 0700);
+	$plan_git_log = $workspace_root . '/plan-git.log';
+	$real_git = trim((string) shell_exec('command -v git'));
+	assert_true('' !== $real_git, 'test fixture could not resolve git for plan network verification');
+	file_put_contents($plan_fake_bin . '/git', "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> " . escapeshellarg($plan_git_log) . "\nexec " . escapeshellarg($real_git) . " \"\$@\"\n");
+	chmod($plan_fake_bin . '/git', 0755);
+	file_put_contents($plan_git_log, '');
+	$plan_remote_refs = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path);
+	$plan_reflogs = run_command('git reflog --all', $primary_path);
+	$plan_config = run_command('git config --list --show-origin', $primary_path);
+	$plan_index = run_command('git diff --cached --binary', $primary_path);
+	$plan_inventory = $wpdb->rows;
+	$plan_filesystem = plan_filesystem_snapshot($workspace_root);
+	$plan_original_path = getenv('PATH');
+	putenv('PATH=' . $plan_fake_bin . ':' . ( false === $plan_original_path ? '' : $plan_original_path ));
 	$create_plan = $workspace->worktree_plan('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' ));
+	putenv('PATH=' . ( false === $plan_original_path ? '' : $plan_original_path ));
 	assert_true(! is_wp_error($create_plan) && 'create' === ( $create_plan['disposition'] ?? null ) && ! empty($create_plan['digest']) && 'homeboy@planned-create' === ( $create_plan['handle'] ?? null ) && ! is_dir($workspace_root . '/homeboy@planned-create'), 'create plan was not a non-mutating typed allocation');
+	assert_true(! str_contains((string) file_get_contents($plan_git_log), 'fetch'), 'worktree plan performed a network fetch');
+	assert_true($plan_remote_refs === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/remotes", $primary_path), 'worktree plan changed remote refs');
+	assert_true($plan_reflogs === run_command('git reflog --all', $primary_path), 'worktree plan changed reflogs');
+	assert_true($plan_config === run_command('git config --list --show-origin', $primary_path), 'worktree plan changed git config');
+	assert_true($plan_index === run_command('git diff --cached --binary', $primary_path), 'worktree plan changed the index');
+	assert_true($plan_inventory === $wpdb->rows, 'worktree plan changed inventory rows');
+	assert_true($plan_filesystem === plan_filesystem_snapshot($workspace_root), 'worktree plan changed the workspace filesystem');
 	$applied_plan = $workspace->worktree_apply_plan($create_plan);
 	assert_true(! is_wp_error($applied_plan) && is_dir($workspace_root . '/homeboy@planned-create'), is_wp_error($applied_plan) ? $applied_plan->get_error_message() : 'unchanged create plan did not apply');
 	$capacity_planner = new class extends Workspace {

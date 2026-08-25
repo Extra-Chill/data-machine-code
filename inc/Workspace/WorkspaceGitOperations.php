@@ -159,6 +159,9 @@ trait WorkspaceGitOperations {
 
 		if ( empty($parsed['is_worktree']) ) {
 			$this->emit_workspace_changed('primary_refresh', $parsed['repo'], $parsed['dir_name'], $repo_path);
+			if ( method_exists($this, 'remember_primary_freshness_evidence') ) {
+				$this->remember_primary_freshness_evidence($repo_path, $parsed['dir_name']);
+			}
 		}
 
 		$response = array(

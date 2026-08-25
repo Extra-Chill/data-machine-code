@@ -114,23 +114,34 @@ trait WorkspaceWorktreeLifecycle {
 			));
 		}
 
-		$fetch = WorktreeStalenessProbe::fetch($primary_path);
-		if ( ! $fetch['ok'] && ! $allow_unverified_freshness ) {
-			return new \WP_Error('worktree_freshness_unverified', 'Refusing to plan worktree creation because remote freshness could not be verified.', array(
-				'status' => 409,
-				'fetch'  => $fetch,
-			));
-		}
 		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
-		$target_head  = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$evidence     = $this->primary_freshness_evidence($primary_path, $repo);
+		$identity     = $this->primary_freshness_identity($primary_path, $target_ref);
+		if ( null === $evidence || null === $identity ) {
+			$refresh_command = $this->primary_refresh_command($repo);
+			return new \WP_Error(
+				'freshness_refresh_required',
+				sprintf('Refusing to plan worktree creation without verified freshness evidence. Refresh the primary explicitly with `%s`, then re-run this plan.', $refresh_command),
+				array(
+					'status'          => 409,
+					'refresh_command' => $refresh_command,
+					'freshness'       => array(
+						'status'     => 'refresh_required',
+						'verified'   => false,
+						'target_ref' => $target_ref,
+					),
+				)
+			);
+		}
 		$freshness    = array(
-			'verified'    => ! empty($fetch['ok']),
-			'fetch'       => $fetch,
+			'verified'    => true,
+			'evidence'    => $evidence,
+			'identity'    => $identity,
 			'target_ref'  => $target_ref,
-			'target_head' => is_wp_error($target_head) ? null : trim( (string) ( $target_head['output'] ?? '' )),
+			'target_head' => $identity['target_head'],
 		);
-		if ( ! $allow_stale && ! $rebase_base && ! empty($fetch['ok']) ) {
+		if ( ! $allow_stale && ! $rebase_base ) {
 			$guard = $this->assert_ref_current_with_default_branch($primary_path, $target_ref, $repo, $branch, $exists_local ? 'branch' : 'base');
 			if ( is_wp_error($guard) ) {
 				return $this->worktree_plan_result($input, $handle, $path, $slug, 'stale', array(
@@ -228,7 +239,20 @@ trait WorkspaceWorktreeLifecycle {
 				'disposition'     => $current['disposition'] ?? null,
 			));
 		}
-		return $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ));
+		$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), false, false, null, (array) ( $plan['freshness']['identity'] ?? array() ) );
+		if ( is_wp_error($result) && 'stale_worktree_freshness' === $result->get_error_code() ) {
+			$error_data = (array) $result->get_error_data();
+			return new \WP_Error(
+				'stale_worktree_plan',
+				'The worktree plan no longer matches live remote freshness state.',
+				array(
+					'status'                      => 409,
+					'expected_freshness_identity' => $plan['freshness']['identity'] ?? null,
+					'actual_freshness_identity'   => $error_data['actual_freshness_identity'] ?? null,
+				)
+			);
+		}
+		return $result;
 	}
 
 	private const HANDOFF_REMOTE_PROBE_TIMEOUT = 5;
@@ -936,6 +960,7 @@ trait WorkspaceWorktreeLifecycle {
 			'apply_intent'     => $input,
 			'freshness'        => array(
 				'verified'    => $plan['freshness']['verified'] ?? null,
+				'identity'    => $plan['freshness']['identity'] ?? null,
 				'target_ref'  => $plan['freshness']['target_ref'] ?? null,
 				'target_head' => $plan['freshness']['target_head'] ?? null,
 			),
@@ -1036,7 +1061,7 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  callable|null $progress_callback Best-effort lifecycle phase observer.
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null ): array|\WP_Error {
+	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null, array $expected_freshness_identity = array() ): array|\WP_Error {
 		$visible = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
@@ -1194,7 +1219,8 @@ trait WorkspaceWorktreeLifecycle {
 				$operation_started,
 				$preflight,
 				$capacity_lock,
-				$progress_callback
+				$progress_callback,
+				$expected_freshness_identity
 			),
 			$capacity_timeout,
 			array(
@@ -1425,7 +1451,8 @@ trait WorkspaceWorktreeLifecycle {
 		float $operation_started = 0.0,
 		array $preflight = array(),
 		?WorkspaceMutationLock $capacity_lock = null,
-		?callable $progress_callback = null
+		?callable $progress_callback = null,
+		array $expected_freshness_identity = array()
 	): array|\WP_Error {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
@@ -1531,6 +1558,20 @@ trait WorkspaceWorktreeLifecycle {
 
 		$exists_local = array_key_exists('exists_local', $preflight) ? (bool) $preflight['exists_local'] : GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$target_ref   = (string) ( $preflight['target_ref'] ?? ( $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) ) );
+		if ( array() !== $expected_freshness_identity ) {
+			$actual_freshness_identity = $this->primary_freshness_identity($primary_path, $target_ref);
+			if ( $expected_freshness_identity !== $actual_freshness_identity ) {
+				return new \WP_Error(
+					'stale_worktree_freshness',
+					'The reviewed freshness identity changed after apply refreshed remote refs.',
+					array(
+						'status'                      => 409,
+						'expected_freshness_identity' => $expected_freshness_identity,
+						'actual_freshness_identity'   => $actual_freshness_identity,
+					)
+				);
+			}
+		}
 		$demand_plan  = $preflight['demand_plan'] ?? WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
 			if ( 'worktree_target_ref_invalid' === $demand_plan->get_error_code() && ! $exists_local && null !== $from && '' !== trim($from) ) {
