@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.3] - 2026-08-25
+
+### Fixed
+- retry decorated SQLite contention
+
 ## [0.70.2] - 2026-08-25
 
 ### Fixed
