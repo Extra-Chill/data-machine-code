@@ -18,6 +18,9 @@ if ( ! class_exists( JsonCodec::class ) ) {
 if ( ! interface_exists( CleanupRunRepositoryInterface::class ) ) {
 	require_once __DIR__ . '/CleanupRunRepositoryInterface.php';
 }
+if ( ! class_exists( SqliteBusyRetry::class ) ) {
+	require_once __DIR__ . '/SqliteBusyRetry.php';
+}
 
 class CleanupRunRepository implements CleanupRunRepositoryInterface {
 
@@ -32,9 +35,11 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 
 		$run_id = (string) ( $run['run_id'] ?? $this->new_run_id() );
 		$now    = gmdate( 'Y-m-d H:i:s' );
-		$ok     = $wpdb->insert(
-			CleanupSchema::runs_table(),
-			array(
+		$ok     = SqliteBusyRetry::run(
+			'cleanup_run_create',
+			fn() => $wpdb->insert(
+				CleanupSchema::runs_table(),
+				array(
 				'run_id'                => $run_id,
 				'mode'                  => (string) ( $run['mode'] ?? 'cleanup_plan' ),
 				'status'                => (string) ( $run['status'] ?? 'planned' ),
@@ -47,12 +52,16 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 				'started_at'            => $run['started_at'] ?? null,
 				'completed_at'          => $run['completed_at'] ?? null,
 				'summary'               => $this->encode( $run['summary'] ?? array() ),
-			),
-			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s' )
+				),
+				array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s' )
+			)
 		);
 
+		if ( is_wp_error( $ok ) ) {
+			return $ok;
+		}
 		if ( false === $ok ) {
-			return new \WP_Error( 'cleanup_run_insert_failed', 'Failed to create cleanup run.' );
+			return new \WP_Error( 'cleanup_run_insert_failed', 'Failed to create cleanup run.', array( 'status' => 500, 'run_id' => $run_id, 'wpdb_error' => (string) ( $wpdb->last_error ?? '' ) ) );
 		}
 
 		return $run_id;
@@ -76,9 +85,11 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 				continue;
 			}
 
-			$ok = $wpdb->insert(
-				CleanupSchema::items_table(),
-				array(
+			$ok = SqliteBusyRetry::run(
+				'cleanup_item_create',
+				fn() => $wpdb->insert(
+					CleanupSchema::items_table(),
+					array(
 					'run_id'          => $run_id,
 					'handle'          => (string) ( $item['handle'] ?? '' ),
 					'worktree_id'     => isset( $item['worktree_id'] ) ? (int) $item['worktree_id'] : null,
@@ -93,20 +104,28 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 					'planned_at'      => (string) ( $item['planned_at'] ?? $now ),
 					'applied_at'      => $item['applied_at'] ?? null,
 					'evidence'        => $this->encode( $item['evidence'] ?? $item ),
-				),
-				array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+					),
+					array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+				)
 			);
 
-			if ( false === $ok ) {
+			if ( is_wp_error( $ok ) || false === $ok ) {
 				if ( $transaction_started ) {
 					$wpdb->query( 'ROLLBACK' );
+				}
+				if ( is_wp_error( $ok ) ) {
+					return $ok;
 				}
 				return new \WP_Error( 'cleanup_item_insert_failed', 'Failed to create cleanup item.' );
 			}
 			++$count;
 		}
-		if ( $transaction_started && false === $wpdb->query( 'COMMIT' ) ) {
+		$committed = $transaction_started ? SqliteBusyRetry::run('cleanup_item_commit', static fn() => $wpdb->query( 'COMMIT' )) : true;
+		if ( is_wp_error( $committed ) || false === $committed ) {
 			$wpdb->query( 'ROLLBACK' );
+			if ( is_wp_error( $committed ) ) {
+				return $committed;
+			}
 			return new \WP_Error( 'cleanup_item_commit_failed', 'Failed to commit cleanup items.' );
 		}
 
@@ -210,7 +229,10 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 			return true;
 		}
 
-		$result = $wpdb->update( CleanupSchema::runs_table(), $data, $where );
+		$result = SqliteBusyRetry::run('cleanup_run_update', static fn() => $wpdb->update( CleanupSchema::runs_table(), $data, $where ));
+		if ( is_wp_error( $result ) ) {
+			return false;
+		}
 		return array_key_exists( 'expected_status', $fields ) ? 1 === $result : false !== $result;
 	}
 

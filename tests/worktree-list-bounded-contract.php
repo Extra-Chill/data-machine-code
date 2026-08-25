@@ -48,6 +48,8 @@ namespace {
 		public int $max_bounded_rows = 0;
 		public bool $fail_probes = false;
 		public bool $timeout_inventory_probe = false;
+		public bool $advance_probe_clock = false;
+		public float $probe_clock = 0.0;
 		public function __construct( private string $workspace_path ) {}
 		private function parse_handle( string $handle ): array {
 			$parts = explode('@', $handle, 2);
@@ -66,11 +68,13 @@ namespace {
 				return array( 'output' => implode("\n\n", $blocks) );
 			}
 			if ( $this->fail_probes ) { throw new RuntimeException('A task overflow must not run a probe.'); }
+			if ( $this->advance_probe_clock ) { $this->probe_clock += 0.6; }
 			++$this->expensive_probes;
 			return array( 'output' => '' );
 		}
-		private function count_unpushed_commits( string $path ): int { ++$this->expensive_probes; return 0; }
-		private function build_primary_freshness_report( string $path, string $handle ): array { ++$this->expensive_probes; return array( 'status' => 'current' ); }
+		private function count_unpushed_commits( string $path ): int { if ( $this->advance_probe_clock ) { $this->probe_clock += 0.6; } ++$this->expensive_probes; return 0; }
+		private function build_primary_freshness_report( string $path, string $handle ): array { if ( $this->advance_probe_clock ) { $this->probe_clock += 0.6; } ++$this->expensive_probes; return array( 'status' => 'current' ); }
+		protected function worktree_list_budget_clock(): ?callable { return $this->advance_probe_clock ? fn(): float => $this->probe_clock : null; }
 		private function calculate_age_days( ?string $created_at ): ?int { return null; }
 		protected function detect_worktree_stale_reason( bool $is_worktree, int $dirty, ?int $age, ?string $created, array $probes = array() ): ?string { return null; }
 		protected function worktree_list_insert_bounded_row( array &$rows, array $row, int $limit ): void {
@@ -142,6 +146,12 @@ namespace {
 
 		$with_status = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'limit' => 2 ));
 		bounded_worktree_assert(true === $with_status['status_requested'] && 5 === $harness->expensive_probes, 'Explicit status requests must probe only returned rows, including primary freshness.');
+		$harness->advance_probe_clock = true;
+		$harness->probe_clock         = 0.0;
+		$slow_partial = $harness->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'limit' => 2, 'until_budget' => '1s' ));
+		$harness->advance_probe_clock = false;
+		bounded_worktree_assert(true === ($slow_partial['partial'] ?? false) && 339 === ($slow_partial['total'] ?? null), 'Slow requested probes must return a typed partial envelope without losing the complete 339-row inventory total.');
+		bounded_worktree_assert('status' === ($slow_partial['diagnostics']['phase'] ?? null) && 'budget_exhausted_status' === ($slow_partial['continuation']['reason'] ?? null), 'Slow probe exhaustion must identify its stage and return continuation evidence.');
 		$all = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true ));
 		bounded_worktree_assert(339 === $all['returned'] && null === $all['next_cursor'], 'Explicit all must retain exhaustive inventory access.');
 		$all_with_cursor = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'all' => true, 'cursor' => $first['next_cursor'] ));

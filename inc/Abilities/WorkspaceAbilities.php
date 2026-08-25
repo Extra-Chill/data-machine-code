@@ -2056,6 +2056,10 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum seconds for the complete size pass. Default 30.',
 							),
+							'until_budget'            => array(
+								'type'        => 'string',
+								'description' => 'Shared wall-clock budget for inventory, optional probes, lock status, and cleanup review. Defaults to 30s.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -2076,6 +2080,9 @@ class WorkspaceAbilities {
 							'locks'                  => array( 'type' => 'object' ),
 							'cleanup'                => array( 'type' => 'object' ),
 							'notes'                  => array( 'type' => 'array' ),
+							'partial'                => array( 'type' => 'boolean' ),
+							'continuation'           => array( 'type' => 'object' ),
+							'evidence'               => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceHygieneReport' ),
@@ -2402,18 +2409,25 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Return every matching row.',
 							),
+							'until_budget'   => array(
+								'type'        => 'string',
+								'description' => 'Shared wall-clock budget for inventory and requested probes. Defaults to 5s, or 30s with all=true.',
+							),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
 							'success'          => array( 'type' => 'boolean' ),
-							'total'            => array( 'type' => 'integer' ),
+							'total'            => array( 'type' => array( 'integer', 'null' ) ),
 							'returned'         => array( 'type' => 'integer' ),
 							'next_cursor'      => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
 							'disk_requested'   => array( 'type' => 'boolean' ),
 							'summary'          => array( 'type' => 'object' ),
+							'partial'          => array( 'type' => 'boolean' ),
+							'continuation'     => array( 'type' => 'object' ),
+							'diagnostics'      => array( 'type' => 'object' ),
 							'fields_skipped'   => array(
 								'type'        => 'array',
 								'description' => 'Probe groups skipped on this listing (e.g. "status", "disk"). Empty when full data is requested.',
@@ -3123,6 +3137,10 @@ class WorkspaceAbilities {
 							'include_repaired_metadata' => array(
 								'type'        => 'boolean',
 								'description' => 'Also include repaired metadata rows. Requires explicit opt-in and still runs fresh safety probes before removal.',
+							),
+							'until_budget'              => array(
+								'type'        => 'string',
+								'description' => 'Shared wall-clock budget for discovery, safety probes, lock admission, and removals. Defaults to 30s.',
 							),
 							'scope'                     => array(
 								'type'        => 'string',
@@ -5042,6 +5060,9 @@ class WorkspaceAbilities {
 		if ( isset( $input['cursor'] ) ) {
 			$opts['cursor'] = (string) $input['cursor'];
 		}
+		if ( isset( $input['until_budget'] ) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
+		}
 
 		return $workspace->worktree_list( $repo, $state, $opts );
 	}
@@ -5075,6 +5096,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['size_total_timeout'] ) ) {
 			$opts['size_total_timeout'] = (int) $input['size_total_timeout'];
+		}
+		if ( isset( $input['until_budget'] ) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
 		}
 
 		return $workspace->workspace_hygiene_report( $opts );
@@ -5303,7 +5327,15 @@ class WorkspaceAbilities {
 		);
 		if ( is_wp_error( $created_run_id ) ) {
 			$existing = $repository->get_run( $run_id );
-			return is_array( $existing ) ? self::safeCleanupRunEnvelope( $existing, $request_id ) : $created_run_id;
+			if ( is_array( $existing ) ) {
+				return self::safeCleanupRunEnvelope( $existing, $request_id );
+			}
+			$cause_data = (array) $created_run_id->get_error_data();
+			return new \WP_Error(
+				'safe_cleanup_run_persist_failed',
+				'Failed to persist the safe cleanup run before scheduling. No cleanup mutation was started.',
+				array_merge($cause_data, array( 'status' => (int) ( $cause_data['status'] ?? 503 ), 'phase' => 'run_persistence', 'run_id' => $run_id, 'request_id' => $request_id, 'mutation_committed' => false, 'retryable' => true ))
+			);
 		}
 
 		$params = array(
@@ -5329,7 +5361,7 @@ class WorkspaceAbilities {
 					'completed_at' => gmdate( 'Y-m-d H:i:s' ),
 				)
 			);
-			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ) );
+			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup. The durable failed run remains available for evidence and retry.', array( 'status' => 503, 'phase' => 'scheduling', 'run_id' => $run_id, 'request_id' => $request_id, 'mutation_committed' => false, 'durable_run_persisted' => true, 'commands' => self::safeCleanupRunCommands($run_id, $request_id) ) );
 		}
 		$job_id = (int) ( $scheduled['job_ids'][0] ?? $scheduled['batch_job_id'] ?? 0 );
 		if ( $job_id <= 0 ) {
@@ -5340,7 +5372,7 @@ class WorkspaceAbilities {
 					'completed_at' => gmdate( 'Y-m-d H:i:s' ),
 				)
 			);
-			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ) );
+			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup. The durable failed run remains available for evidence and retry.', array( 'status' => 503, 'phase' => 'scheduling', 'run_id' => $run_id, 'request_id' => $request_id, 'mutation_committed' => false, 'durable_run_persisted' => true, 'commands' => self::safeCleanupRunCommands($run_id, $request_id) ) );
 		}
 		$repository->update_run( $run_id, array( 'parent_job_id' => $job_id ) );
 		$commands = self::safeCleanupRunCommands( $run_id, $request_id );
@@ -5758,6 +5790,12 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['remove_timeout'] ) ) {
 			$opts['remove_timeout'] = (int) $input['remove_timeout'];
+		}
+		if ( isset( $input['until_budget'] ) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
+		}
+		if ( isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ) {
+			$opts['progress_callback'] = $input['progress_callback'];
 		}
 		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
 			$opts['source'] = trim( (string) $input['source'] );

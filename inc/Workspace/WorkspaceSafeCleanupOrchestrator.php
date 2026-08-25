@@ -7,7 +7,13 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined( 'ABSPATH' ) || exit;
+
+if ( ! class_exists(WallClockBudget::class) ) {
+	require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
+}
 
 /**
  * Composes existing DMC-safe cleanup primitives into one bounded entrypoint.
@@ -15,6 +21,7 @@ defined( 'ABSPATH' ) || exit;
 class WorkspaceSafeCleanupOrchestrator {
 
 	private const DEFAULT_SOURCE = 'workspace_safe_cleanup';
+	private const DEFAULT_BUDGET = '45s';
 
 	/** @var callable */
 	private $ability_resolver;
@@ -27,15 +34,19 @@ class WorkspaceSafeCleanupOrchestrator {
 
 	private string $active_run_id = '';
 
+	/** @var callable():float|null */
+	private $clock;
+
 	/**
 	 * @param callable|null                                               $ability_resolver Resolver receiving an ability name.
 	 * @param callable|null                                               $lock_pruner      Callback receiving a dry-run bool.
 	 * @param \DataMachineCode\Storage\CleanupRunRepositoryInterface|null $run_repository Cleanup run repository override for tests.
 	 */
-	public function __construct( ?callable $ability_resolver = null, ?callable $lock_pruner = null, ?\DataMachineCode\Storage\CleanupRunRepositoryInterface $run_repository = null ) {
+	public function __construct( ?callable $ability_resolver = null, ?callable $lock_pruner = null, ?\DataMachineCode\Storage\CleanupRunRepositoryInterface $run_repository = null, ?callable $clock = null ) {
 		$this->ability_resolver = $ability_resolver ? $ability_resolver : static fn( string $name ) => function_exists( 'wp_get_ability' ) ? wp_get_ability( $name ) : null;
 		$this->lock_pruner      = $lock_pruner ? $lock_pruner : array( $this, 'prune_locks' );
 		$this->run_repository   = $run_repository;
+		$this->clock            = $clock;
 	}
 
 	/**
@@ -59,6 +70,10 @@ class WorkspaceSafeCleanupOrchestrator {
 		$inventory_after   = isset( $input['inventory_after'] ) ? trim( (string) $input['inventory_after'] ) : '';
 		$source            = isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ? trim( (string) $input['source'] ) : self::DEFAULT_SOURCE;
 		$progress_callback = isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null;
+		$budget            = WallClockBudget::from_duration( $input['until_budget'] ?? null, self::DEFAULT_BUDGET, 'invalid_safe_cleanup_budget', $this->clock );
+		if ( is_wp_error( $budget ) ) {
+			return $budget;
+		}
 
 		$cleanup_eligible = $this->resolve_ability( 'datamachine-code/workspace-worktree-cleanup-eligible-drain' );
 		if ( is_wp_error( $cleanup_eligible ) ) {
@@ -129,14 +144,22 @@ class WorkspaceSafeCleanupOrchestrator {
 			'note'             => 'If the client disconnects, inspect this run_id and rerun the resume command. Safe cleanup remains bounded and preserves dirty/unpushed blockers.',
 			'pending_stages'   => array(),
 		);
+		$result['evidence']['wall_clock_budget'] = $budget->evidence();
 		$this->checkpoint_progress( $run_id, $result, 'applying' );
 		if ( null !== $progress_callback ) {
-			$progress_callback( $this->early_progress_result( $result ) );
+			try {
+				$progress_callback( $this->early_progress_result( $result ) );
+			} catch ( \Throwable ) {
+				// A disconnected output stream cannot alter the durable cleanup run.
+			}
 		}
 
-		$lock_start = ( $this->lock_pruner )( $dry_run );
+		if ( $budget->expired() ) {
+			return $this->budget_partial_result( $result, $run_id, 'lock_prune_start', $budget );
+		}
+		$lock_start = ( $this->lock_pruner )( $dry_run, $budget );
 		if ( is_wp_error( $lock_start ) ) {
-			return $lock_start;
+			return $this->progress_error( $run_id, $result, 'lock_prune_start', $lock_start );
 		}
 		$result['steps']['lock_prune_start']      = $this->summarize_lock_step( $lock_start );
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_start']['removed_count'] ?? 0 );
@@ -156,9 +179,18 @@ class WorkspaceSafeCleanupOrchestrator {
 				'limit'      => $limit,
 				'max_passes' => $passes,
 			);
+		$remaining_budget = $budget->remaining_duration();
+		if ( null === $remaining_budget ) {
+			return $this->budget_partial_result( $result, $run_id, 'artifact_cleanup', $budget );
+		}
+		if ( $dry_run ) {
+			$artifact_input['until_budget'] = $remaining_budget;
+		} else {
+			$artifact_input['budget_seconds'] = max( 1, (int) floor( $budget->remaining_seconds() ) );
+		}
 		$artifacts      = $this->execute_ability( $artifact_cleanup, $artifact_input );
 		if ( is_wp_error( $artifacts ) ) {
-			return $artifacts;
+			return $this->progress_error( $run_id, $result, 'artifact_cleanup', $artifacts );
 		}
 		$result['steps']['artifact_cleanup']             = $this->summarize_artifact_step( $artifacts, $dry_run );
 		$result['blockers_by_stage']['artifact_cleanup'] = (array) ( $result['steps']['artifact_cleanup']['blockers'] ?? array() );
@@ -174,34 +206,53 @@ class WorkspaceSafeCleanupOrchestrator {
 			'passes'           => $passes,
 			'source'           => $source,
 		);
-		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
-			$common['until_budget'] = trim( (string) $input['until_budget'] );
-		}
+		$common['progress_callback'] = function ( array $event ) use ( $run_id ): bool {
+			return $this->checkpoint_candidate_event( $run_id, $event );
+		};
 		$current_cycle_blockers     = array();
 		$has_incomplete_child_drain = false;
 
 		for ( $cycle = 1; $cycle <= $cycles; ++$cycle ) {
+			$remaining_budget = $budget->remaining_duration();
+			if ( null === $remaining_budget ) {
+				return $this->budget_partial_result( $result, $run_id, 'cleanup_eligible', $budget );
+			}
+			$common['until_budget'] = $remaining_budget;
 			$result['summary']['cycles'] = $cycle;
 			$cycle_progress              = 0;
 			$current_cycle_blockers      = array();
 			$has_incomplete_child_drain  = false;
+			unset($result['continuation']['cleanup_eligible'], $result['continuation']['pending_stages']['cleanup_eligible']);
 
 			$eligible = $this->execute_ability( $cleanup_eligible, $common );
 			if ( is_wp_error( $eligible ) ) {
-				return $eligible;
+				return $this->progress_error( $run_id, $result, 'cleanup_eligible', $eligible );
 			}
 			$result['steps'][ 'cleanup_eligible_' . $cycle ]             = $this->summarize_cleanup_step( $eligible );
 			$result['blockers_by_stage'][ 'cleanup_eligible_' . $cycle ] = (array) ( $result['steps'][ 'cleanup_eligible_' . $cycle ]['blockers'] ?? array() );
 
 			$current_cycle_blockers     = $this->merge_blocker_counts( $current_cycle_blockers, $this->extract_current_blocker_counts( $eligible ) );
 			$has_incomplete_child_drain = $this->child_drain_is_incomplete( $eligible );
+			if ( is_array($eligible['continuation'] ?? null) && array() !== $eligible['continuation'] ) {
+				$result['continuation']['cleanup_eligible']                   = $eligible['continuation'];
+				$result['continuation']['pending_stages']['cleanup_eligible'] = $eligible['continuation'];
+				if ( ! empty($eligible['continuation']['next_command']) ) {
+					$result['continuation']['next_command'] = (string) $eligible['continuation']['next_command'];
+					$result['continuation']['reason']       = (string) ( $eligible['continuation']['reason'] ?? 'cleanup_eligible_page_incomplete' );
+				}
+			}
 
 			$cycle_progress += $this->accumulate_cleanup_step( $result, $eligible );
 			$this->checkpoint_progress( $run_id, $result, 'applying' );
 
+			$remaining_budget = $budget->remaining_duration();
+			if ( null === $remaining_budget ) {
+				return $this->budget_partial_result( $result, $run_id, 'active_no_signal', $budget );
+			}
+			$common['until_budget'] = $remaining_budget;
 			$active = $this->execute_ability( $active_no_signal, $common );
 			if ( is_wp_error( $active ) ) {
-				return $active;
+				return $this->progress_error( $run_id, $result, 'active_no_signal', $active );
 			}
 			$result['steps'][ 'active_no_signal_' . $cycle ]             = $this->summarize_cleanup_step( $active );
 			$result['blockers_by_stage'][ 'active_no_signal_' . $cycle ] = (array) ( $result['steps'][ 'active_no_signal_' . $cycle ]['blockers'] ?? array() );
@@ -232,12 +283,14 @@ class WorkspaceSafeCleanupOrchestrator {
 			'limit'        => $limit,
 			'after_handle' => $inventory_after,
 		);
-		if ( isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ) {
-			$inventory_input['until_budget'] = trim( (string) $input['until_budget'] );
+		$remaining_budget = $budget->remaining_duration();
+		if ( null === $remaining_budget ) {
+			return $this->budget_partial_result( $result, $run_id, 'inventory_prune_missing', $budget );
 		}
+		$inventory_input['until_budget'] = $remaining_budget;
 		$inventory = $this->execute_ability( $inventory_prune, $inventory_input );
 		if ( is_wp_error( $inventory ) ) {
-			return $inventory;
+			return $this->progress_error( $run_id, $result, 'inventory_prune_missing', $inventory );
 		}
 		$result['steps']['inventory_prune_missing']             = $this->summarize_inventory_prune_step( $inventory, $dry_run );
 		$result['blockers_by_stage']['inventory_prune_missing'] = (array) ( $result['steps']['inventory_prune_missing']['blockers'] ?? array() );
@@ -259,9 +312,12 @@ class WorkspaceSafeCleanupOrchestrator {
 		ksort( $result['continuation']['pending_stages'] );
 		$this->checkpoint_progress( $run_id, $result, 'applying' );
 
-		$lock_end = ( $this->lock_pruner )( $dry_run );
+		if ( $budget->expired() ) {
+			return $this->budget_partial_result( $result, $run_id, 'lock_prune_end', $budget );
+		}
+		$lock_end = ( $this->lock_pruner )( $dry_run, $budget );
 		if ( is_wp_error( $lock_end ) ) {
-			return $lock_end;
+			return $this->progress_error( $run_id, $result, 'lock_prune_end', $lock_end );
 		}
 		$result['steps']['lock_prune_end']        = $this->summarize_lock_step( $lock_end );
 		$result['summary']['lock_files_removed'] += (int) ( $result['steps']['lock_prune_end']['removed_count'] ?? 0 );
@@ -276,6 +332,7 @@ class WorkspaceSafeCleanupOrchestrator {
 		$result['summary']['current_blocker_count']       = array_sum( $current_blocker_counts );
 		$result['summary']['current_blockers_by_reason']  = $current_blocker_counts;
 		$result['summary']['current_blocker_count_scope'] = 'final_cycle_per_reason_observations';
+		$result['evidence']['wall_clock_budget']          = $budget->evidence();
 
 		$has_current_blockers = array() !== $current_blocker_counts;
 		if ( ! $dry_run && ( $has_current_blockers || $has_incomplete_child_drain ) ) {
@@ -332,6 +389,94 @@ class WorkspaceSafeCleanupOrchestrator {
 			$fields['completed_at'] = gmdate( 'Y-m-d H:i:s' );
 		}
 		$repository->update_run( $run_id, $fields );
+	}
+
+	/** Persist one candidate boundary as append-only evidence. */
+	private function checkpoint_candidate_event( string $run_id, array $event ): bool {
+		$repository = $this->progress_repository();
+		if ( ! method_exists( $repository, 'add_items' ) ) {
+			return true;
+		}
+		$candidate = (array) ( $event['candidate'] ?? array() );
+		$handle    = (string) ( $candidate['handle'] ?? '' );
+		if ( '' === $handle ) {
+			return true;
+		}
+		$phase  = (string) ( $event['phase'] ?? 'candidate_progress' );
+		$action = (string) ( $event['action'] ?? '' );
+		$status = match ( true ) {
+			'mutation_committed' === $phase, 'removed' === $action => 'applied',
+			'candidate_terminal' === $phase, 'skipped' === $action => 'skipped',
+			default => 'applying',
+		};
+		$inserted = $repository->add_items(
+			$run_id,
+			array(
+				array(
+					'handle'         => $handle,
+					'item_type'      => 'safe_cleanup_candidate_checkpoint',
+					'planned_action' => 'remove_worktree',
+					'status'         => $status,
+					'reason_code'    => (string) ( $event['outcome']['reason_code'] ?? $phase ),
+					'applied_at'     => 'applied' === $status ? gmdate( 'Y-m-d H:i:s' ) : null,
+					'evidence'       => $event,
+				)
+			)
+		);
+
+		return ! is_wp_error( $inserted );
+	}
+
+	/** Return a durable resumable page instead of starting work outside the budget. */
+	private function budget_partial_result( array $result, string $run_id, string $stage, WallClockBudget $budget ): array {
+		$result['state']                                    = 'partial';
+		$result['evidence']['wall_clock_budget']            = $budget->evidence();
+		$result['continuation']['reason']                   = 'budget_exhausted';
+		$result['continuation']['next_command']             = (string) ( $result['commands']['resume'] ?? '' );
+		$result['continuation']['resumable']                = true;
+		$result['continuation']['pending_stages'][ $stage ] = array(
+			'reason'       => 'budget_exhausted_before_stage',
+			'next_command' => (string) ( $result['commands']['resume'] ?? '' ),
+		);
+		ksort( $result['continuation']['pending_stages'] );
+		$this->checkpoint_progress( $run_id, $result, 'partial' );
+
+		return $result;
+	}
+
+	/** Preserve the durable run and partial evidence on a typed child failure. */
+	private function progress_error( string $run_id, array $result, string $stage, \WP_Error $error ): \WP_Error {
+		$cause_data                                         = method_exists( $error, 'get_error_data' ) ? (array) $error->get_error_data() : array();
+		$result['state']                                    = 'failed';
+		$result['failure']                                  = array(
+			'code'               => $error->get_error_code(),
+			'phase'              => $stage,
+			'mutation_committed' => ! empty($cause_data['mutation_committed']),
+			'data'               => $cause_data,
+		);
+		$result['continuation']['reason']                   = 'stage_failed';
+		$result['continuation']['next_command']             = (string) ( $result['commands']['resume'] ?? '' );
+		$result['continuation']['pending_stages'][ $stage ] = array(
+			'reason'       => 'stage_failed',
+			'error_code'   => $error->get_error_code(),
+			'next_command' => (string) ( $result['commands']['resume'] ?? '' ),
+		);
+		$this->checkpoint_progress( $run_id, $result, 'failed' );
+
+		return new \WP_Error(
+			$error->get_error_code(),
+			$error->get_error_message(),
+			array_merge(
+				$cause_data,
+				array(
+					'status'           => (int) ( $cause_data['status'] ?? 500 ),
+					'run_id'           => $run_id,
+					'phase'            => $stage,
+					'partial_evidence' => $this->early_progress_result( $result ),
+					'continuation'     => $result['continuation'],
+				)
+			)
+		);
 	}
 
 	private function progress_repository(): \DataMachineCode\Storage\CleanupRunRepositoryInterface {
@@ -426,9 +571,9 @@ class WorkspaceSafeCleanupOrchestrator {
 		return is_array( $run ) && 'cancelled' === (string) ( $run['status'] ?? '' );
 	}
 
-	private function prune_locks( bool $dry_run ): array {
+	private function prune_locks( bool $dry_run, ?WallClockBudget $budget = null ): array {
 		$workspace = new Workspace();
-		return WorkspaceMutationLock::prune_stale( $workspace->get_path(), $dry_run );
+		return WorkspaceMutationLock::prune_stale( $workspace->get_path(), $dry_run, $budget );
 	}
 
 	/** @return array<string,mixed> */

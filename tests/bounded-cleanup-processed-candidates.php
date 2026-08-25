@@ -8,7 +8,7 @@ if ( ! defined('ABSPATH') ) {
 
 if ( ! class_exists('WP_Error') ) {
 	class WP_Error {
-		public function __construct(private string $code, private string $message = '') {}
+		public function __construct(private string $code, private string $message = '', private array $data = array()) {}
 
 		public function get_error_code(): string {
 			return $this->code;
@@ -16,6 +16,10 @@ if ( ! class_exists('WP_Error') ) {
 
 		public function get_error_message(): string {
 			return $this->message;
+		}
+
+		public function get_error_data(): array {
+			return $this->data;
 		}
 	}
 }
@@ -59,6 +63,19 @@ final class BoundedCleanupRemovalCallbackHarness {
 
 	public function remove( array $candidate ): array|WP_Error {
 		return $this->remove_revalidated_cleanup_candidate($candidate, false, false, 60, false);
+	}
+
+	public function remove_with_checkpoint_failure( array $candidate ): array|WP_Error {
+		return $this->remove_revalidated_cleanup_candidate(
+			$candidate,
+			false,
+			false,
+			60,
+			false,
+			null,
+			null,
+			static fn( array $event ): bool => 'mutation_committed' !== (string) ( $event['phase'] ?? '' )
+		);
 	}
 
 	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null, bool $require_removable_lifecycle = true ): array {
@@ -144,6 +161,13 @@ bounded_cleanup_processed_candidates_assert_same(false, $locked['remove']['local
 bounded_cleanup_processed_candidates_assert_same($branch_delete_error, $locked['remove']['branch_delete_error'] ?? null, 'normalized removal records branch deletion failure');
 bounded_cleanup_processed_candidates_assert_same('refs/dmc/recovery/0123456789abcdef0123456789abcdef01234567', $locked['remove']['recovery_ref'] ?? null, 'removal records retain the durable recovery ref');
 bounded_cleanup_processed_candidates_assert_same(true, str_contains((string) ($locked['remove']['recovery_command'] ?? ''), 'worktree add --detach'), 'removal records expose a reconstruction command');
+
+$committed_failure_path = $callback_path . '-checkpoint-failure';
+mkdir($committed_failure_path);
+$committed_failure = $callback_harness->remove_with_checkpoint_failure(array_merge($callback_candidate, array( 'path' => $committed_failure_path )));
+bounded_cleanup_processed_candidates_assert_same(false, is_dir($committed_failure_path), 'committed-checkpoint failure fixture crosses the removal boundary');
+bounded_cleanup_processed_candidates_assert_same('cleanup_committed_checkpoint_failed', is_wp_error($committed_failure) ? $committed_failure->get_error_code() : null, 'committed-checkpoint failure remains a typed terminal error');
+bounded_cleanup_processed_candidates_assert_same(true, $committed_failure->get_error_data()['mutation_committed'] ?? null, 'committed-checkpoint failure explicitly records that removal already committed');
 
 $removed_outcome = array_merge($locked['remove'], array( 'path_exists_after' => false ));
 $removed_processed = $harness->processed($locked['validated'], 'removed', $removed_outcome);

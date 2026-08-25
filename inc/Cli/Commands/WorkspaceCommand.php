@@ -3146,6 +3146,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * default: 30
 	 * ---
 	 *
+	 * [--until-budget=<duration>]
+	 * : Shared wall-clock budget for the complete report. Default 30s.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp datamachine-code workspace hygiene
@@ -3174,6 +3177,9 @@ class WorkspaceCommand extends BaseCommand {
 		}
 		if ( isset( $assoc_args['size-total-timeout'] ) ) {
 			$input['size_total_timeout'] = (int) $assoc_args['size-total-timeout'];
+		}
+		if ( isset( $assoc_args['until-budget'] ) ) {
+			$input['until_budget'] = (string) $assoc_args['until-budget'];
 		}
 
 		$result = $ability->execute( $input );
@@ -4930,9 +4936,14 @@ class WorkspaceCommand extends BaseCommand {
 			$workspace      = new Workspace();
 			$workspace_path = $workspace->get_path();
 			$dry_run        = ! empty( $assoc_args['dry-run'] ) || empty( $assoc_args['prune-stale'] );
+			$lock_budget    = \DataMachineCode\Support\WallClockBudget::from_duration( $assoc_args['until-budget'] ?? null, '5s', 'invalid_workspace_lock_budget' );
+			if ( is_wp_error( $lock_budget ) ) {
+				$this->render_workspace_error( $lock_budget, (string) ( $assoc_args['format'] ?? 'table' ) );
+				return;
+			}
 			$result         = ! empty( $assoc_args['prune-stale'] )
-				? WorkspaceMutationLock::prune_stale( $workspace_path, $dry_run )
-				: WorkspaceMutationLock::status( $workspace_path );
+				? WorkspaceMutationLock::prune_stale( $workspace_path, $dry_run, $lock_budget )
+				: WorkspaceMutationLock::status( $workspace_path, $lock_budget );
 			$this->render_workspace_lock_result( $result, $assoc_args, ! empty( $assoc_args['prune-stale'] ) );
 			return;
 		}
@@ -5209,6 +5220,9 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset( $assoc_args['cursor'] ) ) {
 					$input['cursor'] = (string) $assoc_args['cursor'];
 				}
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
+				}
 				$input['all'] = ! empty( $assoc_args['all'] ) || ( in_array( $format, array( 'json', 'csv', 'yaml' ), true ) && empty( $assoc_args['envelope'] ) );
 				// Cheap inventory by default — opt in to expensive probes via flags.
 				// `--full` is a shorthand for both, `--stale` requires status to detect dirty.
@@ -5409,6 +5423,9 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				if ( isset( $assoc_args['remove-timeout'] ) && '' !== trim( (string) $assoc_args['remove-timeout'] ) ) {
 					$input['remove_timeout'] = (int) $assoc_args['remove-timeout'];
+				}
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
 				if ( isset( $assoc_args['scope'] ) && '' !== trim( (string) $assoc_args['scope'] ) ) {
 					$input['scope'] = trim( (string) $assoc_args['scope'] );
