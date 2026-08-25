@@ -3002,7 +3002,241 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return string Stable task identity used only to guard exact-handle reuse. */
 	private function worktree_reuse_task_identity( array $task ): string {
-		return (string) ( $task['task_url'] ?? $task['task_ref'] ?? '' );
+		return isset($task['task_url']) ? (string) $task['task_url'] : strtolower((string) ( $task['task_ref'] ?? '' ));
+	}
+
+	/** Preview or attach tracker ownership for one exact active allocation without changing Git state. */
+	public function worktree_attach_tracker( string $handle, array $task, bool $dry_run = false ): array|\WP_Error {
+		$visible = $this->require_workspace_visible();
+		if ( null !== $visible ) {
+			return $visible;
+		}
+		$parsed = $this->parse_handle(trim($handle));
+		if ( ! $parsed['is_worktree'] || $handle !== $parsed['dir_name'] ) {
+			return new \WP_Error('not_a_worktree', 'An exact canonical managed worktree handle is required.', array( 'status' => 400 ));
+		}
+		$task = array_filter(array(
+			'task_url' => TaskUrl::canonicalize($task['task_url'] ?? null),
+			'task_ref' => null !== WorktreeContextInjector::normalize_scalar_metadata_value($task['task_ref'] ?? null) && ! preg_match('/\s/', (string) $task['task_ref']) ? strtolower(trim((string) $task['task_ref'])) : null,
+		), static fn( mixed $value ): bool => null !== $value);
+		$task_identity = $this->worktree_reuse_task_identity($task);
+		if ( '' === $task_identity ) {
+			return new \WP_Error('worktree_tracker_required', 'A valid task_url or task_ref is required.', array( 'status' => 400 ));
+		}
+
+		$assess = fn(): array|\WP_Error => $this->worktree_tracker_attachment_assessment($parsed, $task, $task_identity);
+		if ( $dry_run ) {
+			$assessment = $assess();
+			if ( is_wp_error($assessment) ) {
+				return $assessment;
+			}
+			return array(
+				'success'             => true,
+				'dry_run'             => true,
+				'status'              => '' === $assessment['existing_identity'] ? 'eligible' : 'already_attached',
+				'handle'              => $assessment['handle'],
+				'path'                => $assessment['path'],
+				'branch'              => $assessment['branch'],
+				'worktree_sha'        => $assessment['worktree_sha'],
+				'tracker'             => $task,
+				'task_identity'       => $task_identity,
+				'allocation_identity' => $assessment['allocation_identity'],
+				'provider_resolution' => $assessment['provider_resolution'],
+			);
+		}
+
+		return WorkspaceMutationLock::with_repo($this->workspace_path, (string) $parsed['repo'], function () use ( $assess, $task, $task_identity ) {
+			$assessment = $assess();
+			if ( is_wp_error($assessment) ) {
+				return $assessment;
+			}
+			$handle            = $assessment['handle'];
+			$path              = $assessment['path'];
+			$metadata          = $assessment['metadata'];
+			$authorization     = $assessment['authorization'];
+			$existing_identity = $assessment['existing_identity'];
+			$before_head       = $assessment['worktree_sha'];
+			$before_branch     = $assessment['branch'];
+
+			$status = '' === $existing_identity ? 'attached' : 'already_attached';
+			if ( 'attached' === $status ) {
+				$stored = WorktreeContextInjector::store_lifecycle_metadata($handle, array(
+					'origin_task'         => $task,
+					'tracker_attached_at' => gmdate('c'),
+					'tracker_attached_by' => $authorization,
+				));
+				if ( is_wp_error($stored) || ! $stored ) {
+					$readback  = WorktreeContextInjector::get_metadata_fresh($handle);
+					$committed = is_array($readback) && $task_identity === $this->worktree_reuse_task_identity((array) ( $readback['origin_task'] ?? array() ));
+					return new \WP_Error('worktree_tracker_persist_failed', 'Tracker metadata could not be completely persisted.', array( 'status' => 500, 'handle' => $handle, 'mutation_committed' => $committed, 'retry_safe' => true, 'cause_code' => is_wp_error($stored) ? $stored->get_error_code() : null ));
+				}
+			}
+
+			$readback = WorktreeContextInjector::get_metadata_fresh($handle);
+			if ( ! is_array($readback) || $task_identity !== $this->worktree_reuse_task_identity((array) ( $readback['origin_task'] ?? array() )) || ! WorktreeContextInjector::standalone_worktree_tracker_is_current($readback) ) {
+				return new \WP_Error('worktree_tracker_readback_failed', 'The attached tracker could not be verified across managed metadata stores.', array( 'status' => 500, 'handle' => $handle, 'mutation_committed' => true, 'retry_safe' => true ));
+			}
+
+			$final_head   = $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$final_branch = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$final_dirty  = $this->worktree_tracker_dirty_paths($path);
+			if ( is_wp_error($final_head) || is_wp_error($final_branch) || is_wp_error($final_dirty)
+				|| ! hash_equals($before_head, trim((string) ( $final_head['output'] ?? '' )))
+				|| ! hash_equals($before_branch, trim((string) ( $final_branch['output'] ?? '' )))
+				|| array() !== $final_dirty ) {
+				return new \WP_Error('worktree_tracker_git_state_changed', 'The worktree Git state changed during tracker attachment.', array( 'status' => 409, 'handle' => $handle, 'mutation_committed' => 'attached' === $status ));
+			}
+
+			$provider = ( new StandaloneWorktreeProvider() )->resolve_identity($this->workspace_path, $handle);
+			if ( 'owned' !== ( $provider['status'] ?? null ) || $task_identity !== (string) ( $provider['task_url'] ?? $provider['task_ref'] ?? '' ) ) {
+				return new \WP_Error('worktree_tracker_provider_resolution_failed', 'A fresh standalone provider resolution could not prove the attached tracker.', array( 'status' => 500, 'handle' => $handle, 'mutation_committed' => 'attached' === $status, 'retry_safe' => true, 'provider_resolution' => $provider ));
+			}
+
+			$receipt = array(
+				'version'       => 1,
+				'proof_id'      => bin2hex(random_bytes(16)),
+				'allocation_id' => (string) $readback['allocation_id'],
+				'handle'        => $handle,
+				'path'          => $path,
+				'branch'        => $before_branch,
+				'worktree_sha'  => $before_head,
+				'tracker'       => $task,
+				'provider_token' => (string) $provider['token'],
+				'resolved_at'   => gmdate('c'),
+			);
+			$receipt['digest'] = hash('sha256', $this->worktree_handoff_proof_canonical_json($receipt));
+			return array(
+				'success'             => true,
+				'status'              => $status,
+				'handle'              => $handle,
+				'tracker'             => $task,
+				'allocation_identity' => array_intersect_key($receipt, array_flip(array( 'allocation_id', 'handle', 'path', 'branch', 'worktree_sha' ))),
+				'provider_resolution' => $provider,
+				'receipt'             => $receipt,
+			);
+		});
+	}
+
+	/** Run every non-mutating eligibility predicate shared by preview and apply. */
+	private function worktree_tracker_attachment_assessment( array $parsed, array $task, string $task_identity ): array|\WP_Error {
+		$handle   = (string) $parsed['dir_name'];
+		$path     = $this->workspace_path . '/' . $handle;
+		$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+		if ( ! is_array($metadata) || '' === (string) ( $metadata['allocation_id'] ?? '' ) ) {
+			return new \WP_Error('worktree_tracker_metadata_missing', 'The exact worktree has no durable managed allocation identity.', array( 'status' => 409, 'handle' => $handle ));
+		}
+		if ( WorktreeContextInjector::STATE_ACTIVE !== (string) ( $metadata['lifecycle_state'] ?? '' ) ) {
+			return new \WP_Error('worktree_tracker_lifecycle_not_active', 'Tracker attachment requires an active managed allocation.', array( 'status' => 409, 'handle' => $handle, 'lifecycle_state' => $metadata['lifecycle_state'] ?? null ));
+		}
+		if ( ! is_dir($path) || ! file_exists($path . '/.git') || $path !== (string) ( $metadata['path'] ?? '' ) ) {
+			return new \WP_Error('worktree_not_found', 'The metadata-bound exact worktree is not present at its canonical path.', array( 'status' => 404, 'handle' => $handle, 'path' => $path ));
+		}
+
+		$authorization = $this->worktree_tracker_authorization($metadata);
+		if ( is_wp_error($authorization) ) {
+			return $authorization;
+		}
+		$existing_task     = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
+		$existing_identity = $this->worktree_reuse_task_identity($existing_task);
+		if ( '' !== $existing_identity && ! hash_equals($existing_identity, $task_identity) ) {
+			return new \WP_Error('worktree_tracker_conflict', 'The exact worktree already has conflicting tracker ownership.', array( 'status' => 409, 'handle' => $handle, 'existing_task' => $existing_task, 'requested_task' => $task ));
+		}
+
+		$allocations = $this->worktree_tracker_allocations((string) $parsed['repo'], $task_identity);
+		if ( is_wp_error($allocations) ) {
+			return $allocations;
+		}
+		$duplicates = array_values(array_filter(
+			$allocations,
+			static fn( array $candidate ): bool => (string) ( $candidate['handle'] ?? '' ) !== $handle
+		));
+		if ( array() !== $duplicates ) {
+			return new \WP_Error('worktree_tracker_allocation_ambiguous', 'Another managed allocation already owns the requested tracker.', array( 'status' => 409, 'handle' => $handle, 'conflicts' => $duplicates ));
+		}
+
+		$head   = $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$branch = $this->run_git($path, 'branch --show-current', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$dirty  = $this->worktree_tracker_dirty_paths($path);
+		if ( is_wp_error($head) || is_wp_error($branch) || is_wp_error($dirty) ) {
+			return new \WP_Error('worktree_tracker_probe_failed', 'Could not prove the exact worktree Git state before attachment.', array( 'status' => 409, 'handle' => $handle ));
+		}
+		if ( array() !== $dirty ) {
+			return new \WP_Error('worktree_dirty', 'Tracker attachment requires a clean worktree.', array( 'status' => 409, 'handle' => $handle, 'dirty_count' => count($dirty), 'dirty_paths' => array_slice($dirty, 0, 25) ));
+		}
+		$before_head   = trim((string) ( $head['output'] ?? '' ));
+		$before_branch = trim((string) ( $branch['output'] ?? '' ));
+		if ( ! hash_equals((string) ( $metadata['branch'] ?? '' ), $before_branch) ) {
+			return new \WP_Error('worktree_tracker_identity_drift', 'The metadata branch does not match the exact worktree.', array( 'status' => 409, 'handle' => $handle ));
+		}
+
+		$provider = ( new StandaloneWorktreeProvider() )->resolve_identity($this->workspace_path, $handle);
+		if ( 'owned' !== ( $provider['status'] ?? null ) || $handle !== (string) ( $provider['handle'] ?? '' ) || $path !== (string) ( $provider['path'] ?? '' ) || ! hash_equals($before_branch, (string) ( $provider['branch'] ?? '' )) ) {
+			return new \WP_Error('worktree_tracker_provider_resolution_failed', 'A fresh standalone provider resolution could not prove the exact worktree identity.', array( 'status' => 500, 'handle' => $handle, 'mutation_committed' => false, 'retry_safe' => true, 'provider_resolution' => $provider ));
+		}
+
+		return array(
+			'handle'              => $handle,
+			'path'                => $path,
+			'branch'              => $before_branch,
+			'worktree_sha'        => $before_head,
+			'metadata'            => $metadata,
+			'authorization'       => $authorization,
+			'existing_identity'   => $existing_identity,
+			'provider_resolution' => $provider,
+			'allocation_identity' => array(
+				'allocation_id' => (string) $metadata['allocation_id'],
+				'handle'        => $handle,
+				'path'          => $path,
+				'branch'        => $before_branch,
+				'worktree_sha'  => $before_head,
+			),
+		);
+	}
+
+	/** Probe attachment cleanliness without allowing Git to refresh index metadata. */
+	private function worktree_tracker_dirty_paths( string $path ): array|\WP_Error {
+		$result = $this->run_git($path, '--no-optional-locks status --porcelain', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($result) ) {
+			return $result;
+		}
+		return array_values(array_filter(array_map('trim', explode("\n", (string) ( $result['output'] ?? '' )))));
+	}
+
+	/** Require complete exact site, agent, and session ownership. */
+	private function worktree_tracker_authorization( array $metadata ): array|\WP_Error {
+		$current = WorktreeContextInjector::current_ownership_identity();
+		$stored  = array_intersect_key($metadata, array_flip(array( 'origin_site_url', 'origin_agent', 'origin_session' )));
+		foreach ( array( 'origin_site_url', 'origin_agent', 'origin_session' ) as $field ) {
+			if ( empty($stored[ $field ]) || empty($current[ $field ]) ) {
+				return new \WP_Error('worktree_tracker_owner_unattributed', 'Tracker attachment requires complete current and stored site, agent, and session ownership.', array( 'status' => 409, 'field' => $field ));
+			}
+			if ( $this->worktree_handoff_proof_canonical_json((array) array( $stored[ $field ] )) !== $this->worktree_handoff_proof_canonical_json((array) array( $current[ $field ] )) ) {
+				return new \WP_Error('worktree_tracker_owner_mismatch', 'The current site, agent, or session does not own this worktree allocation.', array( 'status' => 409, 'field' => $field, 'stored' => $stored[ $field ], 'current' => $current[ $field ] ));
+			}
+		}
+		return $current;
+	}
+
+	/** @return array<int,array{handle:string,path:string}>|\WP_Error */
+	private function worktree_tracker_allocations( string $repo, string $task_identity ): array|\WP_Error {
+		$listing = $this->run_git($this->workspace_path . '/' . $repo, 'worktree list --porcelain', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($listing) ) {
+			return new \WP_Error('worktree_tracker_allocations_unverified', 'Could not prove that the requested tracker has no conflicting managed allocation.', array( 'status' => 409, 'repo' => $repo ));
+		}
+		$matches = array();
+		foreach ( $this->worktree_list_blocks((string) ( $listing['output'] ?? '' )) as $block ) {
+			$worktree = $this->parse_worktree_block($block);
+			if ( null === $worktree || ! str_starts_with($worktree['path'], $this->workspace_path . '/') ) {
+				continue;
+			}
+			$handle   = substr($worktree['path'], strlen($this->workspace_path . '/'));
+			$metadata  = WorktreeContextInjector::get_metadata_fresh($handle);
+			$candidate = is_array($metadata) && is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
+			if ( $task_identity === $this->worktree_reuse_task_identity($candidate) ) {
+				$matches[] = array( 'handle' => $handle, 'path' => $worktree['path'] );
+			}
+		}
+		return $matches;
 	}
 
 	/**

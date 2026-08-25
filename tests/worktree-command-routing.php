@@ -47,6 +47,7 @@ namespace {
 	$artifact_ability = new WorktreeCommandFakeAbility();
 	$cleanup_eligible_drain_ability = new WorktreeCommandFakeAbility();
 	$handoff_resume_ability = new WorktreeCommandFakeAbility();
+	$attach_tracker_ability = new WorktreeCommandFakeAbility();
 	$GLOBALS['worktree_command_abilities'] = array(
 		'datamachine-code/workspace-worktree-abandoned-cleanup' => $ability,
 		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_drain_ability,
@@ -54,6 +55,7 @@ namespace {
 		'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
 		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible_drain_ability,
 		'datamachine-code/workspace-worktree-handoff-resume' => $handoff_resume_ability,
+		'datamachine-code/workspace-worktree-attach-tracker' => $attach_tracker_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	try {
@@ -151,6 +153,16 @@ namespace {
 	}
 	worktree_command_routing_assert('data-machine-code@fix-1205' === ( $handoff_resume_ability->calls[0]['handle'] ?? null ), 'handoff resume lost the exact committed handle.');
 	worktree_command_routing_assert($allocation_identity === ( $handoff_resume_ability->calls[0]['allocation_identity'] ?? null ), 'handoff resume lost the exact server-issued allocation identity.');
+
+	try {
+		$command->__worktree_operation('attach-tracker', array( 'data-machine-code@feat-1221' ), array( 'task-url' => 'https://github.com/Extra-Chill/data-machine-code/issues/1221', 'dry-run' => true ));
+		throw new \RuntimeException('attach tracker command did not execute its owning ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'attach tracker command did not render the routed ability result.');
+	}
+	worktree_command_routing_assert('data-machine-code@feat-1221' === ( $attach_tracker_ability->calls[0]['handle'] ?? null ), 'attach tracker lost the exact managed handle.');
+	worktree_command_routing_assert('https://github.com/Extra-Chill/data-machine-code/issues/1221' === ( $attach_tracker_ability->calls[0]['task_url'] ?? null ), 'attach tracker lost the task URL.');
+	worktree_command_routing_assert(true === ( $attach_tracker_ability->calls[0]['dry_run'] ?? false ), 'attach tracker lost the dry-run preview input.');
 
 	echo "worktree-command-routing: ok\n";
 }

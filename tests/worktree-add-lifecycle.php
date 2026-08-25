@@ -583,6 +583,66 @@ try {
 	assert_true('https://example.test/issues/environment' === ( $wpdb->rows['homeboy@audit-primitives-environment-tracker']['task_url'] ?? '' ), 'environment tracker metadata was not persisted');
 	putenv('DATAMACHINE_TASK_URL');
 
+	$attach_fixture = $workspace->worktree_add('homeboy', 'attach-tracker', 'origin/main', false, false, false, false, true);
+	assert_true(! is_wp_error($attach_fixture), is_wp_error($attach_fixture) ? $attach_fixture->get_error_message() : 'tracker attachment fixture creation failed');
+	$attach_handle = 'homeboy@attach-tracker';
+	$owner_identity = array(
+		'origin_site_url' => 'https://example.test',
+		'origin_agent'    => 'fixture-agent',
+		'origin_session'  => array( 'primary_id' => 'fixture-session', 'ids' => array( 'fixture' => array( 'session_id' => 'fixture-session' ) ) ),
+	);
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity'] = static fn( array $identity ): array => $owner_identity;
+	$owner_stored = WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
+	assert_true(true === $owner_stored, 'tracker attachment fixture ownership could not be persisted');
+	$before_attach = WorktreeContextInjector::get_metadata_fresh($attach_handle);
+	$before_head     = trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path']));
+	$before_branch   = trim(run_command('git branch --show-current', (string) $attach_fixture['path']));
+	$before_status   = run_command('git status --porcelain', (string) $attach_fixture['path']);
+	$attach_git_dir  = trim(run_command('git rev-parse --git-dir', (string) $attach_fixture['path']));
+	$attach_git_dir  = str_starts_with($attach_git_dir, '/') ? $attach_git_dir : (string) $attach_fixture['path'] . '/' . $attach_git_dir;
+	$tracker_path    = (string) realpath($attach_git_dir) . '/datamachine-code-task.json';
+	$before_tracker  = is_file($tracker_path) ? file_get_contents($tracker_path) : null;
+	$before_row      = $wpdb->rows[ $attach_handle ];
+	$before_options  = $GLOBALS['datamachine_code_test_options'];
+	$before_locks    = $wpdb->lock_rows;
+	$preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ), true);
+	assert_true(! is_wp_error($preview) && true === ( $preview['dry_run'] ?? false ) && 'eligible' === ( $preview['status'] ?? null ), is_wp_error($preview) ? $preview->get_error_message() : 'clean tracker attachment preview was not eligible');
+	assert_true($attach_handle === ( $preview['handle'] ?? null ) && (string) $attach_fixture['path'] === ( $preview['path'] ?? null ) && $before_branch === ( $preview['branch'] ?? null ) && $before_head === ( $preview['worktree_sha'] ?? null ), 'attachment preview omitted exact handle, path, branch, or HEAD identity');
+	assert_true('https://github.com/Example/Homeboy/issues/1221' === ( $preview['task_identity'] ?? null ) && ( $preview['tracker'] ?? null ) === array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), 'attachment preview omitted canonical task identity');
+	assert_true($before_attach === WorktreeContextInjector::get_metadata_fresh($attach_handle) && $before_row === $wpdb->rows[ $attach_handle ] && $before_options === $GLOBALS['datamachine_code_test_options'], 'attachment preview mutated lifecycle metadata');
+	assert_true($before_locks === $wpdb->lock_rows, 'attachment preview acquired a mutation lock');
+	assert_true($before_head === trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path'])) && $before_branch === trim(run_command('git branch --show-current', (string) $attach_fixture['path'])) && $before_status === run_command('git status --porcelain', (string) $attach_fixture['path']), 'attachment preview changed Git state');
+	assert_true($before_tracker === ( is_file($tracker_path) ? file_get_contents($tracker_path) : null ), 'attachment preview wrote standalone Git tracker metadata');
+	$attached = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ));
+	assert_true(! is_wp_error($attached) && 'attached' === ( $attached['status'] ?? null ), is_wp_error($attached) ? $attached->get_error_message() : 'clean tracker attachment was not admitted');
+	assert_true($preview['allocation_identity'] === $attached['allocation_identity'] && $preview['tracker'] === $attached['tracker'], 'eligible preview and apply did not bind the same allocation and task predicates');
+	assert_true('https://github.com/Example/Homeboy/issues/1221' === ( $attached['provider_resolution']['task_url'] ?? null ), 'attachment did not return a fresh canonical provider resolution');
+	assert_true($before_head === trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path'])), 'tracker attachment changed HEAD');
+	$after_attach = WorktreeContextInjector::get_metadata_fresh($attach_handle);
+	foreach ( array( 'lifecycle_state', 'branch', 'reuse_contract', 'provisioning' ) as $preserved_field ) {
+		assert_true(($before_attach[ $preserved_field ] ?? null) === ($after_attach[ $preserved_field ] ?? null), 'tracker attachment changed preserved metadata field ' . $preserved_field);
+	}
+	$replay_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	assert_true(! is_wp_error($replay_preview) && 'already_attached' === ( $replay_preview['status'] ?? null ), 'same-tracker preview was not typed as already_attached');
+	$replayed = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(! is_wp_error($replayed) && 'already_attached' === ( $replayed['status'] ?? null ) && ! empty($replayed['receipt']['proof_id']), 'same-tracker replay was not idempotent with a fresh proof');
+	$conflict_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_ref' => 'example/homeboy#1222' ), true);
+	$conflict = $workspace->worktree_attach_tracker($attach_handle, array( 'task_ref' => 'example/homeboy#1222' ));
+	assert_true(is_wp_error($conflict_preview) && is_wp_error($conflict) && $conflict_preview->get_error_code() === $conflict->get_error_code() && 'worktree_tracker_conflict' === $conflict->get_error_code(), 'preview/apply conflict predicates diverged');
+	file_put_contents((string) $attach_fixture['path'] . '/dirty-attachment.txt', "dirty\n");
+	$dirty_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$dirty_attachment = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($dirty_preview) && is_wp_error($dirty_attachment) && $dirty_preview->get_error_code() === $dirty_attachment->get_error_code() && 'worktree_dirty' === $dirty_attachment->get_error_code(), 'preview/apply cleanliness predicates diverged');
+	unlink((string) $attach_fixture['path'] . '/dirty-attachment.txt');
+	$foreign_owner = $owner_identity;
+	$foreign_owner['origin_session']['primary_id'] = 'foreign-session';
+	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $foreign_owner);
+	$foreign_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$foreign_attachment = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($foreign_preview) && is_wp_error($foreign_attachment) && $foreign_preview->get_error_code() === $foreign_attachment->get_error_code() && 'worktree_tracker_owner_mismatch' === $foreign_attachment->get_error_code(), 'preview/apply owner predicates diverged');
+	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity']);
+
 	$reusable = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($reusable), is_wp_error($reusable) ? $reusable->get_error_message() : 'reuse fixture creation failed');
 	$invalid_reuse_policy = $workspace->worktree_add('homeboy', 'invalid-reuse-policy', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'recycle-terminal');

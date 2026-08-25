@@ -28,6 +28,7 @@ use DataMachineCode\Support\SystemTaskDrainability;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
+use DataMachineCode\Workspace\StandaloneWorktreeProvider;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -46,6 +47,7 @@ class WorkspaceCommand extends BaseCommand {
 	private const WORKTREE_OPERATIONS = array(
 		'provider'                                => array(),
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
+		'attach-tracker'                          => array( 'ability' => 'datamachine-code/workspace-worktree-attach-tracker' ),
 		'plan'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-plan' ),
 		'apply-plan'                              => array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan' ),
 		'handoff-resume'                          => array( 'ability' => 'datamachine-code/workspace-worktree-handoff-resume' ),
@@ -239,6 +241,22 @@ class WorkspaceCommand extends BaseCommand {
 						'name'        => 'verbose',
 						'description' => 'Include full capacity and capped bootstrap evidence in JSON output.',
 					),
+					$format,
+				),
+			),
+			'attach-tracker'        => array(
+				'shortdesc' => 'Attach tracker ownership to an exact managed worktree.',
+				'longdesc'  => "Previews or attaches a task URL or reference only when the exact active worktree is clean and owned by the current site, agent, and session. Preview executes the same predicates without metadata, lock, or Git mutation. Git branch, HEAD, working tree, bootstrap evidence, and lifecycle state are preserved.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree attach-tracker data-machine-code@feat-1221 --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1221 --dry-run --format=json\n    wp datamachine-code workspace worktree attach-tracker data-machine-code@feat-1221 --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1221 --format=json",
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Exact managed worktree handle.',
+						'required'    => true,
+					),
+					$option('task-url', 'Task or issue URL to attach.'),
+					$option('task-ref', 'Short task reference to attach.'),
+					$flag('dry-run', 'Preview attachment eligibility without mutation.'),
 					$format,
 				),
 			),
@@ -619,6 +637,14 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return $resolved;
+	}
+
+	/** @return array<string,mixed> */
+	public static function standalone_worktree_provider_capabilities(): array {
+		if ( ! class_exists(StandaloneWorktreeProvider::class) ) {
+			require_once dirname(__DIR__, 2) . '/Workspace/StandaloneWorktreeProvider.php';
+		}
+		return ( new StandaloneWorktreeProvider() )->capabilities();
 	}
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
@@ -4807,7 +4833,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|get|list|remove|prune|locks|handoff-resume|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|attach-tracker|get|list|remove|prune|locks|handoff-resume|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -4825,6 +4851,7 @@ class WorkspaceCommand extends BaseCommand {
 			$payload = array(
 				'schema'     => 'datamachine-code/standalone-worktree-provider-command/v1',
 				'executable' => $executable,
+				'capabilities' => self::standalone_worktree_provider_capabilities(),
 			);
 			if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json( $payload );
@@ -5038,6 +5065,21 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$input['handle'] = (string) $args[1];
 				$input['proof']  = $proof;
+				break;
+
+			case 'attach-tracker':
+				if ( empty($args[1]) || ( empty($assoc_args['task-url']) && empty($assoc_args['task-ref']) ) ) {
+					WP_CLI::error('Usage: worktree attach-tracker <handle> (--task-url=<url>|--task-ref=<ref>)');
+					return;
+				}
+				$input['handle'] = (string) $args[1];
+				if ( isset($assoc_args['task-url']) ) {
+					$input['task_url'] = (string) $assoc_args['task-url'];
+				}
+				if ( isset($assoc_args['task-ref']) ) {
+					$input['task_ref'] = (string) $assoc_args['task-ref'];
+				}
+				$input['dry_run'] = ! empty($assoc_args['dry-run']);
 				break;
 
 			case 'handoff-resume':

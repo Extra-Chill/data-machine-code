@@ -32,6 +32,7 @@ use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 use DataMachineCode\Runtime\RuntimeSourceSkewDiagnostic;
 use DataMachineCode\Workspace\WorkspaceSourceResolver;
+use DataMachineCode\Workspace\StandaloneWorktreeProvider;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -1756,6 +1757,67 @@ class WorkspaceAbilities {
 						'required'   => array( 'success', 'handoff_freshness' ),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-attach-tracker',
+				array(
+					'label'               => 'Attach Worktree Tracker Ownership',
+					'description'         => 'Preview or attach a task URL or reference for one exact active, clean, same-site/agent/session managed allocation without changing Git state.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle'   => array( 'type' => 'string' ),
+							'task_url' => array( 'type' => 'string' ),
+							'task_ref' => array( 'type' => 'string' ),
+							'dry_run'  => array(
+								'type'        => 'boolean',
+								'description' => 'If true, execute every attachment predicate and return eligible or already_attached without metadata, lock, or Git mutation.',
+							),
+						),
+						'required'   => array( 'handle' ),
+						'anyOf'      => array(
+							array( 'required' => array( 'task_url' ) ),
+							array( 'required' => array( 'task_ref' ) ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'             => array( 'type' => 'boolean' ),
+							'dry_run'             => array( 'type' => 'boolean' ),
+							'status'              => array( 'type' => 'string', 'enum' => array( 'eligible', 'attached', 'already_attached' ) ),
+							'handle'              => array( 'type' => 'string' ),
+							'path'                => array( 'type' => 'string' ),
+							'branch'              => array( 'type' => 'string' ),
+							'worktree_sha'        => array( 'type' => 'string' ),
+							'tracker'             => array( 'type' => 'object' ),
+							'task_identity'       => array( 'type' => 'string' ),
+							'allocation_identity' => array( 'type' => 'object' ),
+							'provider_resolution' => array( 'type' => 'object' ),
+							'receipt'             => array( 'type' => 'object' ),
+						),
+						'required' => array( 'success', 'status', 'handle', 'tracker', 'allocation_identity', 'provider_resolution' ),
+					),
+					'execute_callback'    => array( self::class, 'worktreeAttachTracker' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-provider-capabilities',
+				array(
+					'label'               => 'Inspect Standalone Worktree Provider Capabilities',
+					'description'         => 'Return the generic standalone provider operations, tracker fields, and managed attachment ability contract.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'worktreeProviderCapabilities' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -4604,6 +4666,18 @@ class WorkspaceAbilities {
 
 	public static function worktreeHandoffRevalidate( array $input ): array|\WP_Error {
 		return ( new Workspace() )->worktree_handoff_revalidate( (string) ( $input['handle'] ?? '' ), (array) ( $input['proof'] ?? array() ) );
+	}
+
+	public static function worktreeAttachTracker( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_attach_tracker((string) ( $input['handle'] ?? '' ), array_filter(array(
+			'task_url' => $input['task_url'] ?? null,
+			'task_ref' => $input['task_ref'] ?? null,
+		), static fn( mixed $value ): bool => is_string($value) && '' !== trim($value)), ! empty($input['dry_run']));
+	}
+
+	/** @return array<string,mixed> */
+	public static function worktreeProviderCapabilities( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		return ( new StandaloneWorktreeProvider() )->capabilities();
 	}
 
 	public static function worktreeHandoffResume( array $input ): array|\WP_Error {
