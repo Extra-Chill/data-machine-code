@@ -2,6 +2,14 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.71.0] - 2026-08-25
+
+### Added
+- bound percentage-floor admission
+
+### Fixed
+- serialize empty worktree envelopes
+
 ## [0.70.11] - 2026-08-25
 
 ### Changed
