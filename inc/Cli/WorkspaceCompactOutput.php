@@ -70,12 +70,16 @@ class WorkspaceCompactOutput {
 		$has_blocking_trigger  = array() !== array_filter($typed_trigger_reasons, static fn( array $trigger ): bool => 'blocking' === $trigger['severity']);
 
 		return self::filter_empty(array(
+			'diagnostic_id'           => $capacity['diagnostic_id'] ?? null,
+			'advisory_fingerprint'    => $capacity['advisory_fingerprint'] ?? null,
+			'evidence_reference'      => $capacity['evidence_reference'] ?? null,
 			'status'                  => $capacity['status'] ?? null,
 			'force_override'          => isset( $capacity['force_override'] ) ? (bool) $capacity['force_override'] : null,
 			'creation_allowed'        => array_key_exists('creation_allowed', $capacity) ? (bool) $capacity['creation_allowed'] : ( 'refused' !== ( $capacity['status'] ?? '' ) ),
 			'force_override_required' => array_key_exists('force_override_required', $capacity) ? (bool) $capacity['force_override_required'] : $has_blocking_trigger,
 			'force_override_applied'  => array_key_exists('force_override_applied', $capacity) ? (bool) $capacity['force_override_applied'] : ( ! empty($capacity['forced']) && $has_blocking_trigger ),
 			'typed_trigger_reasons'   => $typed_trigger_reasons,
+			'recovery_actions'        => $capacity['recovery_actions'] ?? null,
 		));
 	}
 

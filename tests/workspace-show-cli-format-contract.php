@@ -24,6 +24,7 @@ namespace DataMachineCode\Workspace {
 	class WorktreeDiskBudget {
 		public static function format_summary( array $capacity ): string { return (string) ( $capacity['summary'] ?? '' ); }
 		public static function format_trigger_reasons( array $capacity ): array { return $capacity['trigger_reasons'] ?? array(); }
+		public static function format_advisory( array $capacity ): string { return (string) ( $capacity['advisory'] ?? '' ); }
 	}
 }
 
@@ -88,9 +89,37 @@ namespace {
 	);
 
 	WP_CLI::$logs = array();
+	WorkspaceAbilities::$result['workspace_capacity'] = array(
+		'status'                  => 'warning',
+		'creation_allowed'        => true,
+		'force_override_required' => false,
+		'trigger_reasons'         => array( 'worktree_count_warning_threshold' ),
+		'advisory'                => 'Capacity advisory [workspace_capacity@abc]: admission allowed.',
+		'summary'                 => 'full capacity summary',
+	);
+	$command->show( array( 'example' ), array() );
+	workspace_show_cli_assert('Dirty:    no' === WP_CLI::$logs[5] && 'Capacity advisory [workspace_capacity@abc]: admission allowed.' === WP_CLI::$logs[6] && 7 === count(WP_CLI::$logs), 'Default workspace show must lead with repository state and emit exactly one compact advisory.');
+
+	WP_CLI::$logs = array();
+	$command->show( array( 'example' ), array( 'full' => true ) );
+	workspace_show_cli_assert(in_array('full capacity summary', WP_CLI::$logs, true), 'Workspace show --full must retain complete capacity evidence.');
+
+	WP_CLI::$logs = array();
+	WorkspaceAbilities::$result['workspace_capacity'] = array(
+		'status'                  => 'refused',
+		'creation_allowed'        => false,
+		'force_override_required' => true,
+		'trigger_reasons'         => array( 'blocking capacity remediation' ),
+		'advisory'                => 'compact output must not hide this state',
+		'summary'                 => 'blocking capacity summary',
+	);
+	$command->show( array( 'example' ), array() );
+	workspace_show_cli_assert(in_array('blocking capacity summary', WP_CLI::$logs, true) && in_array('blocking capacity remediation', WP_CLI::$logs, true), 'Default workspace show must retain full immediate evidence and remediation for blocking capacity.');
+
+	WP_CLI::$logs = array();
 	$command->show( array( 'example' ), array( 'format' => 'json' ) );
 	$payload = json_decode( WP_CLI::$lines[0] ?? '', true );
-	workspace_show_cli_assert( WorkspaceAbilities::$result === $payload, 'Workspace show JSON did not retain the ability result.' );
+	workspace_show_cli_assert( WorkspaceAbilities::$result === $payload, 'Workspace show JSON did not retain the lossless ability result.' );
 
 	WP_CLI::$lines = array();
 	WorkspaceAbilities::$result = new WP_Error( 'workspace_not_found', 'Repository "missing" not found.', array( 'name' => 'missing' ) );

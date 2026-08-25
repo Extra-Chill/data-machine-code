@@ -16,9 +16,8 @@ defined('ABSPATH') || exit;
 
 final class WorktreeDiskBudget {
 
-
-
 	private const BYTES_PER_GIB = 1073741824;
+	private const DIAGNOSTIC_ID = 'workspace_capacity';
 
 	/**
 	 * Default warning threshold: 20 GiB free.
@@ -220,6 +219,9 @@ final class WorktreeDiskBudget {
 		$status              = $refused ? 'refused' : ( empty($warnings) ? 'ok' : 'warning' );
 		$trigger_reasons     = array();
 		$diagnostic_messages = array();
+		if ( null === $projected_free_bytes ) {
+			$trigger_reasons[] = 'filesystem_free_bytes_measurement_unavailable';
+		}
 		if ( $shared_usage_detected ) {
 			$diagnostic_messages[] = sprintf(
 				'Filesystem usage includes an estimated %.1f GiB outside the measured workspace subtree.',
@@ -277,7 +279,7 @@ final class WorktreeDiskBudget {
 			'warn_inodes_percentage'   => null === $projected_free_inodes || null === $warn_percent_inodes ? null : max(0, $warn_percent_inodes - $projected_free_inodes + 1),
 		);
 
-		return array(
+		$budget = array(
 			'workspace_path'               => (string) ( $metrics['workspace_path'] ?? '' ),
 			'filesystem_total_bytes'       => $total_bytes,
 			'filesystem_used_bytes'        => $filesystem_used_bytes,
@@ -359,6 +361,64 @@ final class WorktreeDiskBudget {
 			'cleanup_recommendations'      => self::cleanup_recommendations($projected_free_bytes, $effective_refuse_bytes),
 			'force_override_required'      => array() !== $has_blocking_trigger,
 			'force_override_applied'       => $forced && array() !== $has_blocking_trigger,
+		);
+		$budget['diagnostic_id']        = self::DIAGNOSTIC_ID;
+		$budget['advisory_fingerprint'] = self::advisory_fingerprint( $budget );
+		$budget['evidence_reference']   = sprintf( '%s@%s', self::DIAGNOSTIC_ID, substr( $budget['advisory_fingerprint'], 0, 12 ) );
+		$budget['evidence_command']     = 'studio wp datamachine-code workspace hygiene --format=json';
+		$budget['recovery_actions']     = array(
+			array(
+				'action'  => 'inspect_full_capacity_evidence',
+				'command' => $budget['evidence_command'],
+			),
+			array(
+				'action'  => 'review_bounded_workspace_sizes',
+				'command' => 'studio wp datamachine-code workspace hygiene --include-sizes --size-limit=100 --format=json',
+			),
+		);
+
+		return $budget;
+	}
+
+	/** Build a state-level fingerprint so unchanged advisories can be suppressed safely. */
+	private static function advisory_fingerprint( array $budget ): string {
+		$thresholds = array();
+		foreach ( (array) ( $budget['typed_trigger_reasons'] ?? array() ) as $trigger ) {
+			$trigger   = (array) $trigger;
+			$threshold = (string) ( $trigger['threshold'] ?? '' );
+			$resource  = (string) ( $trigger['resource'] ?? '' );
+			$key       = $threshold . ':' . $resource;
+			switch ( $key ) {
+				case 'warning_floor:worktree_count':
+					$thresholds['warn_worktree_count'] = $budget['warn_worktree_count'] ?? null;
+					break;
+				case 'warning_floor:bytes':
+					$thresholds['effective_warn_bytes'] = $budget['effective_warn_bytes'] ?? null;
+					break;
+				case 'refusal_floor:bytes':
+					$thresholds['effective_refuse_bytes'] = $budget['effective_refuse_bytes'] ?? null;
+					break;
+				case 'warning_floor:inodes':
+					$thresholds['effective_warn_inodes'] = $budget['effective_warn_inodes'] ?? null;
+					break;
+				case 'refusal_floor:inodes':
+					$thresholds['effective_refuse_inodes'] = $budget['effective_refuse_inodes'] ?? null;
+					break;
+			}
+		}
+
+		return hash(
+			'sha256',
+			serialize(
+				array(
+					'status'                  => (string) ( $budget['status'] ?? 'unknown' ),
+					'creation_allowed'        => (bool) ( $budget['creation_allowed'] ?? false ),
+					'force_override_required' => (bool) ( $budget['force_override_required'] ?? false ),
+					'force_override_applied'  => (bool) ( $budget['force_override_applied'] ?? false ),
+					'trigger_reasons'         => array_values( array_map( 'strval', (array) ( $budget['trigger_reasons'] ?? array() ) ) ),
+					'thresholds'               => $thresholds,
+				)
+			)
 		);
 	}
 
@@ -528,6 +588,25 @@ final class WorktreeDiskBudget {
 		return $summary;
 	}
 
+	/** Format one bounded advisory that references the complete structured evidence. */
+	public static function format_advisory( array $budget ): string {
+		$codes = array_values( array_filter( array_map( 'strval', (array) ( $budget['trigger_reasons'] ?? array() ) ) ) );
+		if ( array() === $codes ) {
+			return '';
+		}
+		$reference = (string) ( $budget['evidence_reference'] ?? self::DIAGNOSTIC_ID );
+		$admission = ! empty( $budget['creation_allowed'] ) ? 'admission allowed' : 'admission blocked';
+
+		return sprintf(
+			'Capacity advisory [%s]: status=%s; %s; triggers=%s. Full evidence: %s',
+			$reference,
+			(string) ( $budget['status'] ?? 'unknown' ),
+			$admission,
+			implode(',', $codes),
+			(string) ( $budget['evidence_command'] ?? 'studio wp datamachine-code workspace hygiene --format=json' )
+		);
+	}
+
 	/** @return array<int,array{code:string,severity:string,resource:string,threshold:string}> */
 	private static function typed_trigger_reasons( array $trigger_reasons ): array {
 		return array_map(
@@ -566,6 +645,9 @@ final class WorktreeDiskBudget {
 					break;
 				case 'projected_free_bytes_percentage_warning_floor':
 					$formatted_reasons[] = sprintf('%s: projected free filesystem space is %.1f%%; advisory warning threshold is %.1f%%. Creation remains allowed.', $reason, (float) ( $budget['projected_free_percent'] ?? 0 ), (float) ( $budget['warn_free_percent'] ?? 0 ));
+					break;
+				case 'filesystem_free_bytes_measurement_unavailable':
+					$formatted_reasons[] = $reason . ': free filesystem space could not be measured. Creation remains allowed, but capacity evidence requires review.';
 					break;
 				case 'projected_free_inodes_absolute_refusal_floor':
 					$formatted_reasons[] = sprintf('%s: projected free filesystem inodes are %s; blocking refusal threshold is %s. Creation is blocked unless --force is explicit.', $reason, number_format( (int) ( $budget['projected_free_inodes'] ?? 0 )), number_format( (int) ( $budget['refuse_free_inodes'] ?? 0 )));
