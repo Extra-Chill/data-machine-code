@@ -317,7 +317,7 @@ try {
 	$setup->exec('COMMIT');
 	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($finalize['error'] ?? null) && 'workspace_lock_register' === ($finalize['data']['operation'] ?? null), 'Finalization did not preserve canonical lock-registration contention: ' . json_encode($finalize));
 	lock_sqlite_assert(false === ($finalize['data']['lock_callback_started'] ?? null), 'Contended finalization did not prove its metadata callback remained unstarted.');
-	$finalize_retry = "wp datamachine-code workspace worktree finalize 'lifecycle-repo@finalize-contention' --state='pr_opened' --pr='https://example.test/pull/1250' --owner-terminal-outcome='success'";
+	$finalize_retry = "wp datamachine-code workspace worktree finalize 'lifecycle-repo@finalize-contention' --state='" . WorktreeContextInjector::STATE_PR_OPENED . "' --pr='https://example.test/pull/1250' --owner-terminal-outcome='success'";
 	lock_sqlite_assert($finalize_retry === ($finalize['data']['retry_command'] ?? null), 'Contended finalization omitted its exact normalized replay command: ' . json_encode($finalize));
 	$finalize_lock = fopen($workspace . '/.locks/worktree-lifecycle-repo.lock', 'c');
 	lock_sqlite_assert(is_resource($finalize_lock) && flock($finalize_lock, LOCK_EX | LOCK_NB), 'Contended finalization retained the authoritative OS flock.');
@@ -331,7 +331,7 @@ try {
 	lock_sqlite_assert(null === ($discovery['success']['worktrees'][0]['metadata'] ?? null), 'Contended read-only discovery invented unavailable registry metadata.');
 	lock_sqlite_assert($elapsed < 2, 'Read-only exact discovery exceeded its bounded registry recovery window.');
 	$replayed = lock_sqlite_finish(lock_sqlite_start(array('finalize', $database, $workspace, 'lifecycle-repo', '100')));
-	lock_sqlite_assert(true === ($replayed['success']['success'] ?? null) && 'cleanup_eligible' === ($replayed['success']['lifecycle_state'] ?? null) && 'pr_opened' === ($replayed['success']['metadata']['finalized_state'] ?? null), 'Finalization replay did not recover after SQLite contention cleared: ' . json_encode($replayed));
+	lock_sqlite_assert(true === ($replayed['success']['success'] ?? null) && 'cleanup_eligible' === ($replayed['success']['lifecycle_state'] ?? null) && WorktreeContextInjector::STATE_PR_OPENED === ($replayed['success']['metadata']['finalized_state'] ?? null), 'Finalization replay did not recover after SQLite contention cleared: ' . json_encode($replayed));
 
 	// Heartbeat retries through a short lock, then reports both writes if exhausted.
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);
