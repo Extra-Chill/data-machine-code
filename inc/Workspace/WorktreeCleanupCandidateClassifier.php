@@ -240,16 +240,15 @@ final class WorktreeCleanupCandidateClassifier {
 			return false;
 		}
 
-		$state           = isset($metadata['lifecycle_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['lifecycle_state']) : null;
-		$finalized_state = isset($metadata['finalized_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['finalized_state']) : null;
-		$removable       = array(
+		$state     = WorktreeContextInjector::project_lifecycle_state($metadata);
+		$removable = array(
 			WorktreeContextInjector::STATE_CLEANUP_ELIGIBLE,
 			WorktreeContextInjector::STATE_MERGED,
 			WorktreeContextInjector::STATE_CLOSED,
 			WorktreeContextInjector::STATE_ABANDONED,
 		);
 
-		return in_array($state, $removable, true) || in_array($finalized_state, $removable, true);
+		return in_array($state, $removable, true);
 	}
 
 	/**

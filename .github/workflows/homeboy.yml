@@ -37,4 +37,6 @@ jobs:
     with:
       commands: review audit,review lint,review test
       expected-commands: review audit,review lint,review test
+      differential-gating: 'true'
+      baseline-commands: review lint,review test
     secrets: inherit

@@ -11,9 +11,9 @@ defined('ABSPATH') || exit;
 
 class WorkspaceCompactOutput {
 
-	private const ROW_SAMPLE_LIMIT = 5;
+	private const ROW_SAMPLE_LIMIT              = 5;
 	private const WORKTREE_BOOTSTRAP_STEP_LIMIT = 5;
-	private const WORKTREE_WARNING_CODE_LIMIT = 10;
+	private const WORKTREE_WARNING_CODE_LIMIT   = 10;
 
 	/** Project a worktree-add result for bounded public JSON responses. */
 	public static function worktree_add_result( array $result ): array {
@@ -22,21 +22,24 @@ class WorkspaceCompactOutput {
 
 		return self::filter_empty(
 			array(
-				'success'        => (bool) ( $result['success'] ?? true ),
-				'handle'         => $result['handle'] ?? null,
-				'path'           => $result['path'] ?? null,
-				'branch'         => $result['branch'] ?? null,
-				'base'           => $result['base'] ?? $result['metadata']['base_ref'] ?? null,
-				'slug'           => $result['slug'] ?? null,
-				'created_branch' => isset( $result['created_branch'] ) ? (bool) $result['created_branch'] : null,
-				'reused'         => isset( $result['reused'] ) ? (bool) $result['reused'] : null,
-				'recycled'       => isset( $result['recycled'] ) ? (bool) $result['recycled'] : null,
-				'adopted'        => isset( $result['adopted'] ) ? (bool) $result['adopted'] : null,
-				'message'        => $result['message'] ?? null,
-				'capacity'       => self::worktree_capacity_summary( $capacity ),
-				'bootstrap'      => self::worktree_bootstrap_summary( $bootstrap ),
-				'warning_codes'  => self::worktree_warning_codes( $result, $capacity, $bootstrap ),
-				'evidence'       => array(
+				'success'           => (bool) ( $result['success'] ?? true ),
+				'dry_run'           => isset( $result['dry_run'] ) ? (bool) $result['dry_run'] : null,
+				'created'           => isset( $result['created'] ) ? (bool) $result['created'] : null,
+				'handle'            => $result['handle'] ?? null,
+				'path'              => $result['path'] ?? null,
+				'branch'            => $result['branch'] ?? null,
+				'base'              => $result['base'] ?? $result['metadata']['base_ref'] ?? null,
+				'slug'              => $result['slug'] ?? null,
+				'created_branch'    => isset( $result['created_branch'] ) ? (bool) $result['created_branch'] : null,
+				'reused'            => isset( $result['reused'] ) ? (bool) $result['reused'] : null,
+				'recycled'          => isset( $result['recycled'] ) ? (bool) $result['recycled'] : null,
+				'adopted'           => isset( $result['adopted'] ) ? (bool) $result['adopted'] : null,
+				'handoff_freshness' => $result['handoff_freshness'] ?? null,
+				'message'           => $result['message'] ?? null,
+				'capacity'          => self::worktree_capacity_summary( $capacity ),
+				'bootstrap'         => self::worktree_bootstrap_summary( $bootstrap ),
+				'warning_codes'     => self::worktree_warning_codes( $result, $capacity, $bootstrap ),
+				'evidence'          => array(
 					'verbose' => array(
 						'input'    => array( 'verbose' => true ),
 						'includes' => array( 'capacity_model', 'capacity_reclaim', 'bootstrap_step_output', 'metadata' ),
@@ -64,22 +67,26 @@ class WorkspaceCompactOutput {
 				},
 				array_values(array_map('strval', (array) ( $capacity['trigger_reasons'] ?? array() )))
 			);
-		$has_blocking_trigger = array() !== array_filter($typed_trigger_reasons, static fn( array $trigger ): bool => 'blocking' === $trigger['severity']);
+		$has_blocking_trigger  = array() !== array_filter($typed_trigger_reasons, static fn( array $trigger ): bool => 'blocking' === $trigger['severity']);
 
 		return self::filter_empty(array(
+			'diagnostic_id'           => $capacity['diagnostic_id'] ?? null,
+			'advisory_fingerprint'    => $capacity['advisory_fingerprint'] ?? null,
+			'evidence_reference'      => $capacity['evidence_reference'] ?? null,
 			'status'                  => $capacity['status'] ?? null,
 			'force_override'          => isset( $capacity['force_override'] ) ? (bool) $capacity['force_override'] : null,
 			'creation_allowed'        => array_key_exists('creation_allowed', $capacity) ? (bool) $capacity['creation_allowed'] : ( 'refused' !== ( $capacity['status'] ?? '' ) ),
 			'force_override_required' => array_key_exists('force_override_required', $capacity) ? (bool) $capacity['force_override_required'] : $has_blocking_trigger,
 			'force_override_applied'  => array_key_exists('force_override_applied', $capacity) ? (bool) $capacity['force_override_applied'] : ( ! empty($capacity['forced']) && $has_blocking_trigger ),
 			'typed_trigger_reasons'   => $typed_trigger_reasons,
-			'admission_exception'     => self::admission_exception_summary((array) ($capacity['admission_exception'] ?? array())),
+			'admission_exception'     => self::admission_exception_summary((array) ( $capacity['admission_exception'] ?? array() )),
+			'recovery_actions'        => $capacity['recovery_actions'] ?? null,
 		));
 	}
 
-	/** Preserve the required operator-facing exception proof without full diagnostics. */
+	/** Preserve the operator-facing exception proof without full diagnostics. */
 	private static function admission_exception_summary( array $exception ): array {
-		if ( array() === $exception || 'not_requested' === ($exception['status'] ?? null) ) {
+		if ( array() === $exception || 'not_requested' === ( $exception['status'] ?? null ) ) {
 			return array();
 		}
 		return self::filter_empty(array(
@@ -103,15 +110,15 @@ class WorkspaceCompactOutput {
 		}
 		$steps = array();
 		foreach ( array_slice( (array) ( $bootstrap['steps'] ?? array() ), 0, self::WORKTREE_BOOTSTRAP_STEP_LIMIT ) as $step ) {
-			$step = (array) $step;
+			$step    = (array) $step;
 			$steps[] = self::filter_empty(array(
-				'step'             => $step['step'] ?? null,
-				'relative'         => $step['relative'] ?? null,
-				'status'           => $step['status'] ?? null,
-				'reason'           => $step['reason'] ?? null,
-				'exit_code'        => $step['exit_code'] ?? null,
-				'timed_out'        => $step['timed_out'] ?? null,
-				'duration_ms'      => $step['duration_ms'] ?? null,
+				'step'        => $step['step'] ?? null,
+				'relative'    => $step['relative'] ?? null,
+				'status'      => $step['status'] ?? null,
+				'reason'      => $step['reason'] ?? null,
+				'exit_code'   => $step['exit_code'] ?? null,
+				'timed_out'   => $step['timed_out'] ?? null,
+				'duration_ms' => $step['duration_ms'] ?? null,
 			));
 		}
 
@@ -139,8 +146,8 @@ class WorkspaceCompactOutput {
 				$codes[] = 'bootstrap_' . (string) ( $step['reason'] ?? 'failed' );
 			}
 		}
-		foreach ( array( 'fetch_failed', 'fetch_timed_out', 'rebase_succeeded' ) as $field ) {
-			if ( array_key_exists($field, $result) && false === $result[ $field ] ) {
+		foreach ( array( 'fetch_failed', 'fetch_timed_out' ) as $field ) {
+			if ( ! empty($result[ $field ]) ) {
 				$codes[] = $field;
 			}
 		}
@@ -216,25 +223,25 @@ class WorkspaceCompactOutput {
 
 		return self::filter_empty(
 			array(
-				'success'                   => (bool) ( $report['success'] ?? true ),
-				'generated_at'              => $report['generated_at'] ?? null,
-				'workspace_path'            => $report['workspace_path'] ?? null,
-				'destructive'               => (bool) ( $report['destructive'] ?? false ),
-				'fast_stats'                => $report['fast_stats'] ?? null,
-				'disk'                      => $report['disk'] ?? null,
-				'recovery'                  => $report['recovery'] ?? null,
-				'inventory'                 => $report['inventory'] ?? null,
-				'worktrees'                 => $report['worktrees'] ?? null,
-				'worktree_status_mode'      => $report['worktree_status_mode'] ?? null,
-				'locks'                     => isset( $report['locks'] ) ? self::lock_result( (array) $report['locks'] ) : null,
-				'cleanup'                   => array(
+				'success'              => (bool) ( $report['success'] ?? true ),
+				'generated_at'         => $report['generated_at'] ?? null,
+				'workspace_path'       => $report['workspace_path'] ?? null,
+				'destructive'          => (bool) ( $report['destructive'] ?? false ),
+				'fast_stats'           => $report['fast_stats'] ?? null,
+				'disk'                 => $report['disk'] ?? null,
+				'recovery'             => $report['recovery'] ?? null,
+				'inventory'            => $report['inventory'] ?? null,
+				'worktrees'            => $report['worktrees'] ?? null,
+				'worktree_status_mode' => $report['worktree_status_mode'] ?? null,
+				'locks'                => isset( $report['locks'] ) ? self::lock_result( (array) $report['locks'] ) : null,
+				'cleanup'              => array(
 					'blocker_probe_source' => $cleanup['blocker_probe_source'] ?? null,
 					'blocker_counts'       => $cleanup['blocker_counts'] ?? null,
 					'expected_outcome'     => $cleanup['expected_outcome'] ?? null,
 					'summary'              => (array) ( $cleanup['summary'] ?? array() ),
 					'biggest_candidates'   => self::compact_rows( (array) ( $cleanup['biggest_candidates'] ?? array() ) ),
 				),
-				'size'                      => array(
+				'size'                 => array(
 					'mode'                 => $size['mode'] ?? null,
 					'total_bytes'          => $size['total_bytes'] ?? null,
 					'total_human'          => $size['total_human'] ?? null,
@@ -246,8 +253,8 @@ class WorkspaceCompactOutput {
 					'entry_count_scan'     => $size['entry_count_scan'] ?? null,
 					'top_entries_by_count' => self::compact_rows( (array) ( $size['top_entries_by_count'] ?? array() ) ),
 				),
-				'notes'                     => $report['notes'] ?? null,
-				'full_detail_hint'          => 'Re-run with --verbose --format=json for full hygiene arrays.',
+				'notes'                => $report['notes'] ?? null,
+				'full_detail_hint'     => 'Re-run with --verbose --format=json for full hygiene arrays.',
 			)
 		);
 	}

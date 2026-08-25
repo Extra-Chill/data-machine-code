@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.php';
+require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.inc';
 
 function fixture_guard_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
@@ -58,6 +58,13 @@ $fixture = array(
 );
 
 try {
+	$malformed_repository = $root . '/malformed-marker';
+	fixture_guard_assert(mkdir($malformed_repository, 0700), 'Could not create the malformed marker fixture.');
+	fixture_guard_assert(false !== file_put_contents($malformed_repository . '/.git', 'not a Git directory marker\n'), 'Could not create the malformed Git marker fixture.');
+	fixture_guard_assert(! worktree_lifecycle_fixture_is_inspectable_repository($malformed_repository), 'Malformed Git marker was treated as an inspectable repository.');
+	worktree_lifecycle_assert_fixture_cleanup_safe($root, $fixture);
+	fixture_guard_assert(unlink($malformed_repository . '/.git') && rmdir($malformed_repository), 'Could not clean the malformed marker fixture after registry inspection.');
+
 	$alias = $root . '-alias';
 	fixture_guard_assert(symlink($root, $alias), 'Could not create the fixture symlink alias.');
 	fixture_guard_refuses(static fn() => worktree_lifecycle_assert_fixture_cleanup_safe($alias, $fixture, static fn(): array => array()), 'Symlink fixture alias was not refused.');
@@ -73,6 +80,12 @@ try {
 	$outside_fixture['sentinel_identity'] = realpath($outside_sentinel) ?: '';
 	fixture_guard_refuses(static fn() => worktree_lifecycle_assert_fixture_cleanup_safe($root, $outside_fixture, static fn(): array => array()), 'Outside-fixture sentinel was not refused.');
 } finally {
+	if ( is_file(($malformed_repository ?? '') . '/.git') && ! is_link($malformed_repository) ) {
+		unlink($malformed_repository . '/.git');
+	}
+	if ( is_dir($malformed_repository ?? '') && ! is_link($malformed_repository) ) {
+		rmdir($malformed_repository);
+	}
 	if ( is_link($alias ?? '') ) {
 		unlink($alias);
 	}

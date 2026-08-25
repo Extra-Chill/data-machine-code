@@ -33,6 +33,7 @@ require_once dirname(__DIR__) . '/inc/Workspace/WorktreeAgeFilter.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupCandidateClassifier.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupSignal.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeCleanupEngine.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeInventoryCleanup.php';
 
 function active_no_signal_scope_assert_same( mixed $expected, mixed $actual, string $message ): void {
@@ -43,6 +44,7 @@ function active_no_signal_scope_assert_same( mixed $expected, mixed $actual, str
 
 $cleanup = new class {
 	use DataMachineCode\Workspace\WorkspaceCoreUtilities;
+	use DataMachineCode\Workspace\WorkspaceWorktreeCleanupEngine;
 	use DataMachineCode\Workspace\WorkspaceWorktreeInventoryCleanup;
 
 	public function expose( string $scope ): array|WP_Error {

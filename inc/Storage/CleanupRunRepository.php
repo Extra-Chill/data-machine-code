@@ -9,14 +9,17 @@ namespace DataMachineCode\Storage;
 
 use DataMachineCode\Support\JsonCodec;
 
-defined('ABSPATH') || exit;
+defined( 'ABSPATH' ) || exit;
 
-if ( ! class_exists(JsonCodec::class) ) {
-	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
+if ( ! class_exists( JsonCodec::class ) ) {
+	require_once dirname( __DIR__ ) . '/Support/JsonCodec.php';
 }
 
-if ( ! interface_exists(CleanupRunRepositoryInterface::class) ) {
+if ( ! interface_exists( CleanupRunRepositoryInterface::class ) ) {
 	require_once __DIR__ . '/CleanupRunRepositoryInterface.php';
+}
+if ( ! class_exists( SqliteBusyRetry::class ) ) {
+	require_once __DIR__ . '/SqliteBusyRetry.php';
 }
 
 class CleanupRunRepository implements CleanupRunRepositoryInterface {
@@ -31,28 +34,34 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 		global $wpdb;
 
 		$run_id = (string) ( $run['run_id'] ?? $this->new_run_id() );
-		$now    = gmdate('Y-m-d H:i:s');
-		$ok     = $wpdb->insert(
-			CleanupSchema::runs_table(),
-			array(
+		$now    = gmdate( 'Y-m-d H:i:s' );
+		$ok     = SqliteBusyRetry::run(
+			'cleanup_run_create',
+			fn() => $wpdb->insert(
+				CleanupSchema::runs_table(),
+				array(
 				'run_id'                => $run_id,
 				'mode'                  => (string) ( $run['mode'] ?? 'cleanup_plan' ),
 				'status'                => (string) ( $run['status'] ?? 'planned' ),
-				'policy'                => $this->encode($run['policy'] ?? array()),
-				'requested_by_user_id'  => isset($run['requested_by_user_id']) ? (int) $run['requested_by_user_id'] : null,
-				'requested_by_agent_id' => isset($run['requested_by_agent_id']) ? (int) $run['requested_by_agent_id'] : null,
-				'parent_job_id'         => isset($run['parent_job_id']) ? (int) $run['parent_job_id'] : null,
-				'batch_job_id'          => isset($run['batch_job_id']) ? (int) $run['batch_job_id'] : null,
+				'policy'                => $this->encode( $run['policy'] ?? array() ),
+				'requested_by_user_id'  => isset( $run['requested_by_user_id'] ) ? (int) $run['requested_by_user_id'] : null,
+				'requested_by_agent_id' => isset( $run['requested_by_agent_id'] ) ? (int) $run['requested_by_agent_id'] : null,
+				'parent_job_id'         => isset( $run['parent_job_id'] ) ? (int) $run['parent_job_id'] : null,
+				'batch_job_id'          => isset( $run['batch_job_id'] ) ? (int) $run['batch_job_id'] : null,
 				'created_at'            => (string) ( $run['created_at'] ?? $now ),
 				'started_at'            => $run['started_at'] ?? null,
 				'completed_at'          => $run['completed_at'] ?? null,
-				'summary'               => $this->encode($run['summary'] ?? array()),
-			),
-			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s' )
+				'summary'               => $this->encode( $run['summary'] ?? array() ),
+				),
+				array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s' )
+			)
 		);
 
+		if ( is_wp_error( $ok ) ) {
+			return $ok;
+		}
 		if ( false === $ok ) {
-			return new \WP_Error('cleanup_run_insert_failed', 'Failed to create cleanup run.');
+			return new \WP_Error( 'cleanup_run_insert_failed', 'Failed to create cleanup run.', array( 'status' => 500, 'run_id' => $run_id, 'wpdb_error' => (string) ( $wpdb->last_error ?? '' ) ) );
 		}
 
 		return $run_id;
@@ -68,38 +77,56 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	public function add_items( string $run_id, array $items ): int|\WP_Error {
 		global $wpdb;
 
-		$count = 0;
-		$now   = gmdate('Y-m-d H:i:s');
+		$count               = 0;
+		$now                 = gmdate( 'Y-m-d H:i:s' );
+		$transaction_started = false !== $wpdb->query( 'START TRANSACTION' );
 		foreach ( $items as $item ) {
-			if ( ! is_array($item) ) {
+			if ( ! is_array( $item ) ) {
 				continue;
 			}
 
-			$ok = $wpdb->insert(
-				CleanupSchema::items_table(),
-				array(
+			$ok = SqliteBusyRetry::run(
+				'cleanup_item_create',
+				fn() => $wpdb->insert(
+					CleanupSchema::items_table(),
+					array(
 					'run_id'          => $run_id,
 					'handle'          => (string) ( $item['handle'] ?? '' ),
-					'worktree_id'     => isset($item['worktree_id']) ? (int) $item['worktree_id'] : null,
+					'worktree_id'     => isset( $item['worktree_id'] ) ? (int) $item['worktree_id'] : null,
 					'item_type'       => (string) ( $item['item_type'] ?? $item['row_type'] ?? 'unknown' ),
-					'planned_action'  => (string) ( $item['planned_action'] ?? $this->planned_action_for_type( (string) ( $item['item_type'] ?? $item['row_type'] ?? '' )) ),
+					'planned_action'  => (string) ( $item['planned_action'] ?? $this->planned_action_for_type( (string) ( $item['item_type'] ?? $item['row_type'] ?? '' ) ) ),
 					'status'          => (string) ( $item['status'] ?? 'pending' ),
 					'reason_code'     => (string) ( $item['reason_code'] ?? '' ),
-					'reason'          => isset($item['reason']) ? (string) $item['reason'] : null,
-					'bytes_reclaimed' => max(0, (int) ( $item['bytes_reclaimed'] ?? 0 )),
-					'job_id'          => isset($item['job_id']) ? (int) $item['job_id'] : null,
-					'chunk_index'     => isset($item['chunk_index']) ? (int) $item['chunk_index'] : null,
+					'reason'          => isset( $item['reason'] ) ? (string) $item['reason'] : null,
+					'bytes_reclaimed' => max( 0, (int) ( $item['bytes_reclaimed'] ?? 0 ) ),
+					'job_id'          => isset( $item['job_id'] ) ? (int) $item['job_id'] : null,
+					'chunk_index'     => isset( $item['chunk_index'] ) ? (int) $item['chunk_index'] : null,
 					'planned_at'      => (string) ( $item['planned_at'] ?? $now ),
 					'applied_at'      => $item['applied_at'] ?? null,
-					'evidence'        => $this->encode($item['evidence'] ?? $item),
-				),
-				array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+					'evidence'        => $this->encode( $item['evidence'] ?? $item ),
+					),
+					array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+				)
 			);
 
-			if ( false === $ok ) {
-					return new \WP_Error('cleanup_item_insert_failed', 'Failed to create cleanup item.');
+			if ( is_wp_error( $ok ) || false === $ok ) {
+				if ( $transaction_started ) {
+					$wpdb->query( 'ROLLBACK' );
+				}
+				if ( is_wp_error( $ok ) ) {
+					return $ok;
+				}
+				return new \WP_Error( 'cleanup_item_insert_failed', 'Failed to create cleanup item.' );
 			}
 			++$count;
+		}
+		$committed = $transaction_started ? SqliteBusyRetry::run('cleanup_item_commit', static fn() => $wpdb->query( 'COMMIT' )) : true;
+		if ( is_wp_error( $committed ) || false === $committed ) {
+			$wpdb->query( 'ROLLBACK' );
+			if ( is_wp_error( $committed ) ) {
+				return $committed;
+			}
+			return new \WP_Error( 'cleanup_item_commit_failed', 'Failed to commit cleanup items.' );
 		}
 
 		return $count;
@@ -115,9 +142,46 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 		global $wpdb;
 
         // phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
-		$row = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . CleanupSchema::runs_table() . ' WHERE run_id = %s', $run_id), ARRAY_A);
+		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . CleanupSchema::runs_table() . ' WHERE run_id = %s', $run_id ), ARRAY_A );
         // phpcs:enable WordPress.DB.PreparedSQL
-		return is_array($row) ? $this->decode_run($row) : null;
+		return is_array( $row ) ? $this->decode_run( $row ) : null;
+	}
+
+	/**
+	 * Return a bounded newest-first page of cleanup runs.
+	 *
+	 * @param array<string,mixed> $filters Supported mode, status, source, request_id, since, and limit filters.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_runs( array $filters = array() ): array {
+		global $wpdb;
+
+		$limit  = max( 1, min( 100, (int) ( $filters['limit'] ?? 25 ) ) );
+		$where  = array( '1=1' );
+		$values = array();
+		foreach ( array( 'mode', 'status' ) as $field ) {
+			if ( isset( $filters[ $field ] ) && '' !== trim( (string) $filters[ $field ] ) ) {
+				$where[]  = $field . ' = %s';
+				$values[] = trim( (string) $filters[ $field ] );
+			}
+		}
+		if ( isset( $filters['since'] ) && '' !== trim( (string) $filters['since'] ) ) {
+			$where[]  = 'created_at >= %s';
+			$values[] = trim( (string) $filters['since'] );
+		}
+		// Source and request ID live in policy to keep the run schema generic.
+		foreach ( array( 'source', 'request_id' ) as $field ) {
+			if ( isset( $filters[ $field ] ) && '' !== trim( (string) $filters[ $field ] ) ) {
+				$where[]  = 'policy LIKE %s';
+				$values[] = '%"' . $field . '":"' . $wpdb->esc_like( trim( (string) $filters[ $field ] ) ) . '"%';
+			}
+		}
+		$values[] = $limit;
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table name derives from $wpdb prefix; predicates are prepared.
+		$sql  = 'SELECT * FROM ' . CleanupSchema::runs_table() . ' WHERE ' . implode( ' AND ', $where ) . ' ORDER BY created_at DESC, id DESC LIMIT %d';
+		$rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$values ), ARRAY_A );
+		// phpcs:enable WordPress.DB.PreparedSQL
+		return array_map( fn( $row ) => $this->decode_run( (array) $row ), is_array( $rows ) ? $rows : array() );
 	}
 
 	/**
@@ -130,9 +194,9 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 		global $wpdb;
 
         // phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
-		$rows = $wpdb->get_results($wpdb->prepare('SELECT * FROM ' . CleanupSchema::items_table() . ' WHERE run_id = %s ORDER BY id ASC', $run_id), ARRAY_A);
+		$rows = $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . CleanupSchema::items_table() . ' WHERE run_id = %s ORDER BY id ASC', $run_id ), ARRAY_A );
         // phpcs:enable WordPress.DB.PreparedSQL
-		return array_map(fn( $row ) => $this->decode_item( (array) $row), is_array($rows) ? $rows : array());
+		return array_map( fn( $row ) => $this->decode_item( (array) $row ), is_array( $rows ) ? $rows : array() );
 	}
 
 	/**
@@ -145,20 +209,31 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	public function update_run( string $run_id, array $fields ): bool {
 		global $wpdb;
 
-		$data = array();
+		$data  = array();
+		$where = array( 'run_id' => $run_id );
+		if ( array_key_exists( 'expected_status', $fields ) ) {
+			$where['status'] = (string) $fields['expected_status'];
+		}
 		foreach ( array( 'status', 'started_at', 'completed_at', 'parent_job_id', 'batch_job_id' ) as $field ) {
-			if ( array_key_exists($field, $fields) ) {
+			if ( array_key_exists( $field, $fields ) ) {
 				$data[ $field ] = $fields[ $field ];
 			}
 		}
-		if ( array_key_exists('summary', $fields) ) {
-			$data['summary'] = $this->encode($fields['summary']);
+		if ( array_key_exists( 'policy', $fields ) ) {
+			$data['policy'] = $this->encode( $fields['policy'] );
+		}
+		if ( array_key_exists( 'summary', $fields ) ) {
+			$data['summary'] = $this->encode( $fields['summary'] );
 		}
 		if ( array() === $data ) {
 			return true;
 		}
 
-		return false !== $wpdb->update(CleanupSchema::runs_table(), $data, array( 'run_id' => $run_id ));
+		$result = SqliteBusyRetry::run('cleanup_run_update', static fn() => $wpdb->update( CleanupSchema::runs_table(), $data, $where ));
+		if ( is_wp_error( $result ) ) {
+			return false;
+		}
+		return array_key_exists( 'expected_status', $fields ) ? 1 === $result : false !== $result;
 	}
 
 	/**
@@ -173,38 +248,38 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 
 		$data = array();
 		foreach ( array( 'status', 'bytes_reclaimed', 'job_id', 'chunk_index', 'applied_at', 'reason_code', 'reason' ) as $field ) {
-			if ( array_key_exists($field, $fields) ) {
+			if ( array_key_exists( $field, $fields ) ) {
 				$data[ $field ] = $fields[ $field ];
 			}
 		}
-		if ( array_key_exists('evidence', $fields) ) {
-			$data['evidence'] = $this->encode($fields['evidence']);
+		if ( array_key_exists( 'evidence', $fields ) ) {
+			$data['evidence'] = $this->encode( $fields['evidence'] );
 		}
 
-		return array() === $data || false !== $wpdb->update(CleanupSchema::items_table(), $data, array( 'id' => $id ));
+		return array() === $data || false !== $wpdb->update( CleanupSchema::items_table(), $data, array( 'id' => $id ) );
 	}
 
 	private function decode_run( array $row ): array {
-		$row['policy']  = $this->decode($row['policy'] ?? '');
-		$row['summary'] = $this->decode($row['summary'] ?? '');
+		$row['policy']  = $this->decode( $row['policy'] ?? '' );
+		$row['summary'] = $this->decode( $row['summary'] ?? '' );
 		return $row;
 	}
 
 	private function decode_item( array $row ): array {
-		$row['evidence'] = $this->decode($row['evidence'] ?? '');
+		$row['evidence'] = $this->decode( $row['evidence'] ?? '' );
 		return $row;
 	}
 
 	private function encode( mixed $value ): string {
-		return JsonCodec::encode_or_default($value, '{}', JSON_UNESCAPED_SLASHES);
+		return JsonCodec::encode_or_default( $value, '{}', JSON_UNESCAPED_SLASHES );
 	}
 
 	private function decode( mixed $value ): array {
-		return JsonCodec::decode_array($value, array());
+		return JsonCodec::decode_array( $value, array() );
 	}
 
 	private function new_run_id(): string {
-		return 'cleanup-run-' . gmdate('YmdHis') . '-' . substr(wp_generate_password(12, false, false), 0, 12);
+		return 'cleanup-run-' . gmdate( 'YmdHis' ) . '-' . substr( wp_generate_password( 12, false, false ), 0, 12 );
 	}
 
 	private function planned_action_for_type( string $type ): string {

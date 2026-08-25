@@ -2,11 +2,23 @@
 
 declare(strict_types=1);
 
+namespace {
+	define('ABSPATH', __DIR__ . '/fixtures/');
+}
+
 namespace DataMachineCode\Workspace {
 	final class WorktreeContextInjector {
 		public const LIVENESS_LIVE = 'live';
 		public const LIVENESS_STOPPED = 'stopped';
 		public const LIVENESS_STALE = 'stale';
+
+		public static function normalize_scalar_metadata_value( mixed $value ): ?string {
+			if ( ! is_scalar($value) ) {
+				return null;
+			}
+			$value = trim((string) $value);
+			return '' === $value ? null : $value;
+		}
 	}
 }
 

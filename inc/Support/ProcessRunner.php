@@ -101,11 +101,11 @@ final class ProcessRunner {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	private static function run_via_proc_open( string|array $command, array $options, int $timeout_seconds, int $output_cap, ?callable $on_output, ?string $cwd, ?array $env ): array|\WP_Error {
-		$descriptor_spec = array(
+		$descriptor_spec         = array(
 			1 => array( 'pipe', 'w' ),
 			2 => array( 'pipe', 'w' ),
 		);
-		$stdin = isset($options['stdin']) && is_string($options['stdin']) ? $options['stdin'] : null;
+		$stdin                   = isset($options['stdin']) && is_string($options['stdin']) ? $options['stdin'] : null;
 		$fail_on_output_overflow = ! empty($options['fail_on_output_overflow']);
 		if ( null !== $stdin && strlen($stdin) > 4096 ) {
 			return self::error($options, 'Process command stdin exceeds the supported limit.', array( 'status' => 400 ));
@@ -124,6 +124,11 @@ final class ProcessRunner {
 		if ( ! is_resource($process) ) {
 			return self::error($options, 'Process command failed to start.', array( 'status' => 500 ));
 		}
+		if ( is_callable($options['on_start'] ?? null) ) {
+			$status = proc_get_status($process);
+			$options['on_start'](array( 'pid' => (int) $status['pid'] ));
+		}
+		$process_pid = (int) proc_get_status($process)['pid'];
 		if ( null !== $stdin ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- Process stdin is not a filesystem path.
 			fwrite($pipes[0], $stdin);
@@ -152,7 +157,8 @@ final class ProcessRunner {
 				$output .= $chunk;
 				if ( $fail_on_output_overflow && $output_cap > 0 && strlen($output) > $output_cap ) {
 					$overflow_status = proc_get_status($process);
-					$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) ( $overflow_status['pid'] ?? 0 ), $uses_process_group);
+					$remaining       = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) $overflow_status['pid'], $uses_process_group);
+					self::notify_completion($options, $process_pid);
 					return self::error(
 						$options,
 						'Process command output exceeded the supported limit.',
@@ -176,6 +182,7 @@ final class ProcessRunner {
 
 			if ( null !== $deadline && microtime(true) >= $deadline ) {
 				$remaining = self::terminate_timed_out_process($process, $pipes, $output, $stdout, $stderr, (int) $status['pid'], $uses_process_group);
+				self::notify_completion($options, $process_pid);
 				return self::error(
 					$options,
 					sprintf('Process command timed out after %d second(s).', $timeout_seconds),
@@ -203,6 +210,7 @@ final class ProcessRunner {
 		}
 
 		$close_code = proc_close($process);
+		self::notify_completion($options, $process_pid);
 		if ( -1 === $exit_code ) {
 			$exit_code = $close_code;
 		}
@@ -238,6 +246,19 @@ final class ProcessRunner {
 		}
 
 		return $result;
+	}
+
+	/** Notify optional lifecycle observers after this owned process has ended. */
+	private static function notify_completion( array $options, int $pid ): void {
+		if ( ! is_callable($options['on_complete'] ?? null) ) {
+			return;
+		}
+		try {
+			$options['on_complete'](array( 'pid' => $pid ));
+		} catch ( \Throwable $error ) {
+			unset($error);
+			// Lifecycle observation must not alter process result handling.
+		}
 	}
 
 	/**

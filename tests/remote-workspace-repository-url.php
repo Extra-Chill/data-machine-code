@@ -19,6 +19,10 @@ namespace DataMachineCode\Workspace {
 }
 
 namespace {
+	function get_option( string $key, mixed $default = false ): mixed {
+		return 'github_default_repo' === $key ? 'https://github.example.com/example/project.git' : $default;
+	}
+
 	require_once dirname(__DIR__) . '/inc/Support/GitHubRemote.php';
 	require_once dirname(__DIR__) . '/inc/Workspace/RemoteWorkspaceBackend.php';
 

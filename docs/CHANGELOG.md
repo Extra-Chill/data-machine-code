@@ -2,6 +2,257 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.8] - 2026-08-25
+
+### Fixed
+- unify worktree repository filters
+
+## [0.70.7] - 2026-08-25
+
+### Fixed
+- centralize allocation retry receipts
+- preserve worktree add retry intent
+
+## [0.70.6] - 2026-08-25
+
+### Fixed
+- bound task-owned worktree lookup
+
+## [0.70.5] - 2026-08-25
+
+### Fixed
+- enforce shared cleanup budgets
+- preserve decorated SQLite retry
+- bound SQLite lock contention
+
+## [0.70.4] - 2026-08-25
+
+### Fixed
+- finalize workspace process resources
+
+## [0.70.3] - 2026-08-25
+
+### Fixed
+- retry decorated SQLite contention
+
+## [0.70.2] - 2026-08-25
+
+### Fixed
+- preserve reused cleanup candidates
+
+## [0.70.1] - 2026-08-25
+
+### Changed
+- bound targeted show probes
+
+## [0.70.0] - 2026-08-25
+
+### Added
+- attach tracker ownership
+
+### Fixed
+- reject expired lease renewal
+- suppress lock directory creation races
+- preserve committed handoff lifecycle
+- close capacity lease deadline gaps
+- bound capacity leases to acquisition
+- compact capacity advisories
+- narrow SQLite error suppression
+- harden handoff metadata recovery
+- reject tracker projection drift
+- stabilize committed handoff continuation
+- isolate lock progress timing
+- scale finalizer dirty probe budget
+- stream lock admission progress
+- qualify primary freshness evidence
+
+## [0.69.13] - 2026-08-25
+
+### Changed
+- Preserve typed SQLite workspace lock contention
+
+### Fixed
+- bound worktree list probes
+
+## [0.69.12] - 2026-08-25
+
+### Fixed
+- prefer local workspace git routing
+
+## [0.69.11] - 2026-08-25
+
+### Fixed
+- allow repository-free worktree list
+
+## [0.69.10] - 2026-08-25
+
+### Fixed
+- resume committed worktree handoffs
+
+## [0.69.9] - 2026-08-25
+
+### Fixed
+- backfill standalone tracker identity
+- normalize default task URL ports
+- emit task lookup errors as JSON
+- reject task overflow before probes
+- normalize task URL authority
+- canonicalize task worktree lookup
+- filter worktrees by task ownership
+
+## [0.69.8] - 2026-08-24
+
+### Changed
+- bound worktree plan candidate probes
+
+### Fixed
+- discover registered runtime source
+- accept nullable worktree handoff plans
+- bound emergency cleanup selection
+- project safe worktree candidate actions
+
+## [0.69.7] - 2026-08-24
+
+### Changed
+- reconcile lint and test against PR base
+
+## [0.69.6] - 2026-08-24
+
+### Changed
+- fix cleanup process probe lint
+- fix artifact cleanup lint findings
+- align cleanup telemetry evidence
+
+### Fixed
+- report signed filesystem cleanup delta
+
+## [0.69.5] - 2026-08-24
+
+### Fixed
+- render worktree plans as JSON
+
+## [0.69.4] - 2026-08-24
+
+### Changed
+- Document workspace native shutdown boundary
+
+## [0.69.3] - 2026-08-24
+
+### Changed
+- fix remote workspace lint
+- configure remote workspace repository authority
+- fix changed-scope lint
+
+### Fixed
+- scope configured GitHub remote authority
+- support standalone GitHub host resolution
+- derive GitHub transport hosts from configuration
+- configure SSH transport preflight hosts
+- preflight SSH workspace transport
+
+## [0.69.2] - 2026-08-24
+
+### Changed
+- synchronize FIFO queue admission
+
+### Fixed
+- remove rebase conflict marker
+
+## [0.69.1] - 2026-08-24
+
+### Changed
+- cover show capacity production
+- cover capacity diagnostics by behavior
+
+## [0.69.0] - 2026-08-24
+
+### Added
+- add handoff freshness proof
+
+### Changed
+- advertise fixture default head
+- use stable command cwd
+- satisfy handoff lint
+- satisfy handoff lint contract
+- preserve dry-run allocation state
+
+### Fixed
+- issue handoff proof after bootstrap
+- resolve candidate quality regressions
+- normalize workspace show error code
+- reconcile handoff integration
+- ignore unresolved fixture registry entries
+- avoid duplicate lifecycle fixture creation
+- guard malformed lifecycle fixtures
+- resolve handoff lint blockers
+- bind handoff proof to remote SHA
+- verify handoff remote evidence
+- enforce handoff freshness at allocation
+- require explicit handoff freshness
+- harden handoff proof revalidation
+
+## [0.68.1] - 2026-08-24
+
+### Changed
+- align deferred bootstrap lifecycle
+- verify bootstrap child lock descriptors
+
+### Fixed
+- track bootstrap coordinator and child separately
+- fail closed on unverifiable bootstrap owners
+- reconcile stale bootstrap reservations
+- release worktree locks before bootstrap
+
+## [0.68.0] - 2026-08-24
+
+### Added
+- add workspace show formats
+
+### Changed
+- tolerate workspace contract formatting
+- align cleanup plan assignments
+- align bootstrap dirt handling
+
+### Fixed
+- satisfy cleanup planning lint
+- persist cleanup run before planning
+- verify clone postcondition
+- reject bootstrap-created dirt
+
+## [0.67.0] - 2026-08-24
+
+### Added
+- resolve standalone provider command
+
+### Changed
+- Keep malformed Git fixtures from masking lifecycle tests
+- Report and bound worktree add lifecycle phases
+- Expose runtime and source version skew
+
+## [0.66.2] - 2026-08-23
+
+### Fixed
+- align cleanup command contracts
+
+## [0.66.1] - 2026-08-23
+
+### Changed
+- bound list discovery
+
+## [0.66.0] - 2026-08-23
+
+### Added
+- make safe runs recoverable
+- verify external release convergence
+
+### Fixed
+- queue capacity admissions
+
+## [0.65.4] - 2026-08-23
+
+### Changed
+- Add token-bound standalone worktree convergence
+
 ## [0.65.3] - 2026-08-23
 
 ### Fixed

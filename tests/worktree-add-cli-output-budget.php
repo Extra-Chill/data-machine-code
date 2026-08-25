@@ -24,7 +24,10 @@ namespace {
 	final class WP_CLI {
 		/** @var list<string> */
 		public static array $lines = array();
+		/** @var list<string> */
+		public static array $warnings = array();
 		public static function line( string $message ): void { self::$lines[] = $message; }
+		public static function warning( string $message ): void { self::$warnings[] = $message; }
 		public static function error( string $message ): void { throw new \RuntimeException($message); }
 		public static function halt( int $status ): never { throw new Worktree_Add_Cli_Halt($status); }
 	}
@@ -35,7 +38,16 @@ namespace {
 
 	final class Worktree_Add_Cli_Ability {
 		public function __construct( private array|WP_Error $result ) {}
-		public function execute( array $input ): array|WP_Error { return $this->result; }
+		public function execute( array $input ): array|WP_Error {
+			if ( isset($input['progress_callback']) && is_callable($input['progress_callback']) ) {
+				$input['progress_callback']( array( 'operation' => 'workspace_mutation_lock', 'phase' => 'lock_request', 'request_id' => 'request-123', 'scope' => 'repo', 'queue_position' => 2 ) );
+				$input['progress_callback']( array( 'operation' => 'workspace_mutation_lock', 'phase' => 'lock_wait', 'request_id' => 'request-123', 'scope' => 'repo', 'queue_position' => 2, 'owner' => array( 'owner' => 'run-456' ), 'elapsed_seconds' => 5.001, 'estimated_wait_seconds' => 7 ) );
+				foreach ( array( 'post_create_validation', 'staleness_probe', 'rebase', 'default_branch_probe', 'post_rebase_demand_planning', 'post_rebase_capacity_inspection', 'post_rebase_artifact_reclamation', 'bootstrap_start', 'bootstrap_complete' ) as $phase ) {
+					$input['progress_callback']( array( 'operation' => 'worktree_add', 'phase' => $phase ) );
+				}
+			}
+			return $this->result;
+		}
 	}
 
 	function worktree_add_cli_assert( bool $condition, string $message ): void {
@@ -93,6 +105,7 @@ namespace {
 	worktree_add_cli_assert(! isset($payload['capacity']['worktree_count']) && ! isset($payload['capacity']['free_bytes']) && ! isset($payload['capacity']['projected_demand_bytes']), 'Successful worktree-add JSON exposed detailed capacity projections.');
 	worktree_add_cli_assert(! isset($payload['bootstrap']['steps'][0]['output_tail']) && ! isset($payload['bootstrap']['steps'][0]['output_evidence']), 'Successful worktree-add JSON exposed bootstrap command evidence.');
 	worktree_add_cli_assert('admitted' === ( $payload['capacity']['admission_exception']['status'] ?? null ) && 'projected_free_bytes_percentage_refusal_floor' === ( $payload['capacity']['admission_exception']['waived_trigger'] ?? null ), 'Successful worktree-add JSON lost the required bounded exception evidence.');
+	worktree_add_cli_assert(array( 'Worktree add progress: lock request (request=request-123; scope=repo; queue=2).', 'Worktree add progress: lock wait (request=request-123; scope=repo; queue=2; owner=run-456; waited=5.001s; eta=7s).', 'Worktree add progress: post create validation.', 'Worktree add progress: staleness probe.', 'Worktree add progress: rebase.', 'Worktree add progress: default branch probe.', 'Worktree add progress: post rebase demand planning.', 'Worktree add progress: post rebase capacity inspection.', 'Worktree add progress: post rebase artifact reclamation.', 'Worktree add progress: bootstrap start.', 'Worktree add progress: bootstrap complete.' ) === WP_CLI::$warnings, 'Worktree-add JSON progress was not routed to the stderr warning channel with lock identity and queue evidence.');
 
 	WP_CLI::$lines = array();
 	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(
@@ -107,6 +120,72 @@ namespace {
 	$failure = json_decode(implode("\n", WP_CLI::$lines), true, 512, JSON_THROW_ON_ERROR);
 	worktree_add_cli_assert(false === ( $failure['success'] ?? true ) && 'worktree_disk_budget_exceeded' === ( $failure['error']['code'] ?? null ), 'Refused worktree-add JSON lost its typed diagnostic code.');
 	worktree_add_cli_assert(1 === ( $failure['error']['data']['disk_budget']['projected_free_bytes'] ?? null ), 'Refused worktree-add JSON lost its detailed diagnostic evidence.');
+	worktree_add_cli_assert(! isset($failure['error']['data']['retry_command']), 'Non-retryable worktree-add failure gained an executable retry receipt.');
+
+	WP_CLI::$lines = array();
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(
+		new WP_Error(
+			'workspace_sqlite_lock_contention',
+			'SQLite remained locked while updating workspace ownership.',
+			array(
+				'operation'     => 'workspace_lock_register',
+				'blocker_phase' => 'workspace_lock_register',
+				'request_id'    => 'request-sqlite',
+				'retryable'     => true,
+				'retry_command' => "wp datamachine-code workspace worktree add 'studio' 'resolved-branch' --from='resolved-ref' --task-ref='environment#1247'",
+				'wpdb_error'    => '<div>SQLSTATE[HY000]: database is locked</div>',
+				'debug'         => array( 'backtrace' => '/local/site/wp-content/plugins/sqlite.php:123' ),
+			)
+		)
+	);
+	try {
+		$command->__worktree_operation(
+			'add',
+			array( 'studio', 'iteration/junedigan-pr3952-20260825' ),
+			array(
+				'format'                 => 'json',
+				'from'                   => 'origin/feat/site-artifact-import-cli',
+				'skip-context-injection' => true,
+				'skip-bootstrap'         => true,
+				'allow-stale'            => true,
+				'rebase-base'            => true,
+				'reuse-policy'           => 'isolated',
+				'task-url'               => 'https://GitHub.com:443/example/studio/issues/3952/?token=must-not-leak',
+				'task-ref'               => 'studio#3952',
+				'require-task-tracker'   => true,
+				'purpose'                => 'pull_request',
+				'owner-run-ref'          => 'run-1235',
+				'cleanup-policy'         => 'remove_on_success',
+				'api-token'              => 'must-not-leak',
+			)
+		);
+		throw new \RuntimeException('Contended worktree-add JSON did not halt.');
+	} catch (Worktree_Add_Cli_Halt $halt) {
+		worktree_add_cli_assert(1 === $halt->status, 'Contended worktree-add JSON returned the wrong exit status.');
+	}
+	$contended_output = implode("\n", WP_CLI::$lines);
+	$contended = json_decode($contended_output, true, 512, JSON_THROW_ON_ERROR);
+	worktree_add_cli_assert('workspace_sqlite_lock_contention' === ($contended['error']['code'] ?? null), 'Public CLI envelope lost typed SQLite contention.');
+	worktree_add_cli_assert('workspace_lock_register' === ($contended['error']['data']['blocker_phase'] ?? null) && 'request-sqlite' === ($contended['error']['data']['request_id'] ?? null), 'Public CLI envelope lost blocker or request identity.');
+	$expected_retry = "wp datamachine-code workspace worktree add 'studio' 'resolved-branch' --from='resolved-ref' --task-ref='environment#1247'";
+	worktree_add_cli_assert($expected_retry === ($contended['error']['data']['retry_command'] ?? null), 'CLI rendering replaced the lifecycle-owned retry receipt with unresolved argv.');
+	worktree_add_cli_assert(! str_contains($contended_output, 'must-not-leak') && ! str_contains($contended_output, 'api-token'), 'Public contention receipt leaked an option outside the safe allocation allowlist.');
+	worktree_add_cli_assert(!str_contains(strtolower($contended_output), 'sqlstate') && !str_contains($contended_output, '<div>') && !str_contains($contended_output, '/local/site'), 'Public CLI envelope leaked WordPress database diagnostics.');
+
+	WP_CLI::$lines = array();
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(
+		new WP_Error('workspace_sqlite_lock_contention', 'SQLite remained locked while updating workspace ownership.', array( 'operation' => 'workspace_lock_register', 'retryable' => true ))
+	);
+	try {
+		$command->__worktree_operation('add', array( 'studio', 'unsafe-retry' ), array( 'format' => 'json', 'task-url' => 'https://token:must-not-leak@github.com/example/studio/issues/3952' ));
+		throw new \RuntimeException('Unsafe contended worktree-add JSON did not halt.');
+	} catch (Worktree_Add_Cli_Halt $halt) {
+		worktree_add_cli_assert(1 === $halt->status, 'Unsafe contended worktree-add JSON returned the wrong exit status.');
+	}
+	$unsafe_output = implode("\n", WP_CLI::$lines);
+	$unsafe = json_decode($unsafe_output, true, 512, JSON_THROW_ON_ERROR);
+	worktree_add_cli_assert(! isset($unsafe['error']['data']['retry_command']), 'Credential-bearing allocation request retained an executable retry receipt.');
+	worktree_add_cli_assert(! str_contains($unsafe_output, 'must-not-leak'), 'Credential-bearing allocation request leaked into its public error receipt.');
 
 	echo "worktree-add-cli-output-budget: ok\n";
 }

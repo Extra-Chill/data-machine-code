@@ -8,7 +8,7 @@ if ( ! defined('ABSPATH') ) {
 
 if ( ! class_exists('WP_Error') ) {
 	class WP_Error {
-		public function __construct(private string $code, private string $message = '') {}
+		public function __construct(private string $code, private string $message = '', private array $data = array()) {}
 
 		public function get_error_code(): string {
 			return $this->code;
@@ -16,6 +16,10 @@ if ( ! class_exists('WP_Error') ) {
 
 		public function get_error_message(): string {
 			return $this->message;
+		}
+
+		public function get_error_data(): array {
+			return $this->data;
 		}
 	}
 }
@@ -46,6 +50,7 @@ final class BoundedCleanupProcessedCandidateHarness {
 
 final class BoundedCleanupRemovalCallbackHarness {
 	use WorkspaceWorktreeCleanupEngine;
+	private const RECOVERY_COMMIT = '0123456789abcdef0123456789abcdef01234567';
 
 	protected const CLEANUP_GIT_PROBE_TIMEOUT  = 5;
 	protected const CLEANUP_GIT_REMOVE_TIMEOUT = 60;
@@ -54,9 +59,23 @@ final class BoundedCleanupRemovalCallbackHarness {
 		'success'        => true,
 		'removal_status' => 'complete',
 	);
+	public bool $fail_recovery_write = false;
 
 	public function remove( array $candidate ): array|WP_Error {
 		return $this->remove_revalidated_cleanup_candidate($candidate, false, false, 60, false);
+	}
+
+	public function remove_with_checkpoint_failure( array $candidate ): array|WP_Error {
+		return $this->remove_revalidated_cleanup_candidate(
+			$candidate,
+			false,
+			false,
+			60,
+			false,
+			null,
+			null,
+			static fn( array $event ): bool => 'mutation_committed' !== (string) ( $event['phase'] ?? '' )
+		);
 	}
 
 	private function revalidate_bounded_cleanup_eligible_candidate( array $candidate, bool $force, bool $stale_liveness_only = false, bool $discard_unpushed = false, ?array $reviewed_lifecycle_snapshot = null, bool $require_removable_lifecycle = true ): array {
@@ -77,6 +96,15 @@ final class BoundedCleanupRemovalCallbackHarness {
 	}
 
 	private function run_git( string $path, string $command, int $timeout = 0 ): array|WP_Error {
+		if ( str_starts_with($command, 'rev-parse --verify') ) {
+			if ( $this->fail_recovery_write && str_contains($command, 'refs/dmc/recovery/') ) {
+				return new WP_Error('missing_ref', 'recovery ref does not exist');
+			}
+			return array( 'output' => self::RECOVERY_COMMIT );
+		}
+		if ( str_starts_with($command, 'update-ref ') ) {
+			return $this->fail_recovery_write ? new WP_Error('cannot_write_ref', 'cannot write recovery ref') : array( 'output' => '' );
+		}
 		return new WP_Error('git_failed', 'cannot lock ref');
 	}
 }
@@ -116,7 +144,12 @@ bounded_cleanup_processed_candidates_assert_same('cleanup_eligible', $processed[
 $callback_harness = new BoundedCleanupRemovalCallbackHarness();
 $callback_path    = sys_get_temp_dir() . '/dmc-bounded-cleanup-callback-' . getmypid();
 $callback_candidate = array_merge($candidate, array( 'path' => $callback_path ));
+$callback_harness->fail_recovery_write = true;
 mkdir($callback_path);
+$unpreserved = $callback_harness->remove($callback_candidate);
+bounded_cleanup_processed_candidates_assert_same('cleanup_recovery_ref_failed', is_wp_error($unpreserved) ? $unpreserved->get_error_code() : null, 'cleanup fails closed when durable recovery cannot be written');
+bounded_cleanup_processed_candidates_assert_same(true, is_dir($callback_path), 'failed recovery preservation crossed the worktree removal boundary');
+$callback_harness->fail_recovery_write = false;
 $locked              = $callback_harness->remove($callback_candidate);
 $branch_delete_error = array(
 	'code'    => 'git_failed',
@@ -126,12 +159,22 @@ bounded_cleanup_processed_candidates_assert_same(false, is_dir($callback_path), 
 bounded_cleanup_processed_candidates_assert_same($callback_candidate, $locked['validated'] ?? null, 'branch deletion failure retains the normalized callback envelope');
 bounded_cleanup_processed_candidates_assert_same(false, $locked['remove']['local_branch_deleted'] ?? null, 'normalized removal records retained local branch');
 bounded_cleanup_processed_candidates_assert_same($branch_delete_error, $locked['remove']['branch_delete_error'] ?? null, 'normalized removal records branch deletion failure');
+bounded_cleanup_processed_candidates_assert_same('refs/dmc/recovery/0123456789abcdef0123456789abcdef01234567', $locked['remove']['recovery_ref'] ?? null, 'removal records retain the durable recovery ref');
+bounded_cleanup_processed_candidates_assert_same(true, str_contains((string) ($locked['remove']['recovery_command'] ?? ''), 'worktree add --detach'), 'removal records expose a reconstruction command');
+
+$committed_failure_path = $callback_path . '-checkpoint-failure';
+mkdir($committed_failure_path);
+$committed_failure = $callback_harness->remove_with_checkpoint_failure(array_merge($callback_candidate, array( 'path' => $committed_failure_path )));
+bounded_cleanup_processed_candidates_assert_same(false, is_dir($committed_failure_path), 'committed-checkpoint failure fixture crosses the removal boundary');
+bounded_cleanup_processed_candidates_assert_same('cleanup_committed_checkpoint_failed', is_wp_error($committed_failure) ? $committed_failure->get_error_code() : null, 'committed-checkpoint failure remains a typed terminal error');
+bounded_cleanup_processed_candidates_assert_same(true, $committed_failure->get_error_data()['mutation_committed'] ?? null, 'committed-checkpoint failure explicitly records that removal already committed');
 
 $removed_outcome = array_merge($locked['remove'], array( 'path_exists_after' => false ));
 $removed_processed = $harness->processed($locked['validated'], 'removed', $removed_outcome);
 bounded_cleanup_processed_candidates_assert_same('removed', $removed_processed['final_action'], 'branch deletion failure does not discard successful worktree removal');
 bounded_cleanup_processed_candidates_assert_same(false, $removed_processed['local_branch_deleted'], 'processed evidence records retained local branch');
 bounded_cleanup_processed_candidates_assert_same($branch_delete_error, $removed_processed['branch_delete_error'], 'processed evidence records the branch deletion failure');
+bounded_cleanup_processed_candidates_assert_same($locked['remove']['recovery_ref'], $removed_processed['recovery_ref'], 'processed evidence retains the durable recovery ref');
 
 $callback_harness->remove_result = null;
 mkdir($callback_path);

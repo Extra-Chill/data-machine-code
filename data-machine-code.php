@@ -3,7 +3,7 @@
  * Plugin Name: Data Machine Code
  * Plugin URI: https://github.com/Extra-Chill/data-machine-code
  * Description: Provides the workspace, git, and GitHub coding tools a coding agent uses to make tracked, reviewable changes — whether the agent runtime runs on the host or inside a Codebox sandbox. Owns AGENTS.md and the workspace area. Activation is the declarative "a coding agent lives here" signal.
- * Version: 0.65.3
+ * Version: 0.70.8
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Chris Huber, extrachill
@@ -17,7 +17,7 @@ if ( ! defined('WPINC') ) {
 	die;
 }
 
-define( 'DATAMACHINE_CODE_VERSION', '0.65.3' );
+define( 'DATAMACHINE_CODE_VERSION', '0.70.8' );
 define( 'DATAMACHINE_CODE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DATAMACHINE_CODE_URL', plugin_dir_url( __FILE__ ) );
 
@@ -89,6 +89,28 @@ function datamachine_code_is_minimal_runtime_cli_request( ?array $argv = null ):
 function datamachine_code_finish_minimal_runtime_cli_request(): void {
 	if ( datamachine_code_is_minimal_runtime_cli_request() && function_exists('remove_all_actions') ) {
 		remove_all_actions('shutdown');
+	}
+}
+
+/** Release request-owned resources after a synchronous workspace result. */
+function datamachine_code_finish_bounded_workspace_cli_request(): void {
+	if ( ! datamachine_code_is_bounded_workspace_cli_request() ) {
+		return;
+	}
+
+	if ( defined('STDOUT') ) {
+		@fflush(STDOUT);
+	}
+	if ( defined('STDERR') ) {
+		@fflush(STDERR);
+	}
+	if ( function_exists('remove_all_actions') ) {
+		remove_all_actions('shutdown');
+	}
+
+	global $wpdb;
+	if ( is_object($wpdb) && is_callable(array( $wpdb, 'close' )) ) {
+		$wpdb->close();
 	}
 }
 if ( datamachine_code_is_minimal_runtime_cli_request() ) {
@@ -426,7 +448,8 @@ function datamachine_code_register_cli_commands() {
 
 	\WP_CLI::add_command('datamachine-code github', \DataMachineCode\Cli\Commands\GitHubCommand::class);
 	\WP_CLI::add_command('datamachine-code runtime', \DataMachineCode\Cli\Commands\RuntimeCommand::class);
-	\WP_CLI::add_command('datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class);
+	$bounded_workspace_command = array( 'after_invoke' => 'datamachine_code_finish_bounded_workspace_cli_request' );
+	\WP_CLI::add_command('datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class, $bounded_workspace_command);
 	\WP_CLI::add_command('datamachine-code workspace worktree', \WP_CLI\Dispatcher\CommandNamespace::class);
 	foreach ( \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions() as $operation => $definition ) {
 		\WP_CLI::add_command(
@@ -434,7 +457,7 @@ function datamachine_code_register_cli_commands() {
 			static function ( array $args, array $assoc_args ) use ( $operation ): void {
 				( new \DataMachineCode\Cli\Commands\WorkspaceCommand() )->__worktree_operation($operation, $args, $assoc_args);
 			},
-			$definition
+			array_merge($definition, $bounded_workspace_command)
 		);
 	}
 	\WP_CLI::add_command('datamachine-code code-task', \DataMachineCode\Cli\Commands\CodeTaskCommand::class);

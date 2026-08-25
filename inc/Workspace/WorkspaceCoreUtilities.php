@@ -18,6 +18,9 @@ require_once __DIR__ . '/WorkspaceHandle.php';
 
 trait WorkspaceCoreUtilities {
 
+	/** Aggregate remote-verification budget: fetch (8s) plus status (2s). */
+	private const PRIMARY_FRESHNESS_REFRESH_TIMEOUT_SECONDS = 10;
+
 	/**
 	 * Worktree inventory repository factory.
 	 */
@@ -673,22 +676,29 @@ trait WorkspaceCoreUtilities {
 	 * @param  string $handle    Workspace primary handle.
 	 * @return array<string,mixed>|null
 	 */
-	private function build_primary_freshness_report( string $repo_path, string $handle ): ?array {
+	private function build_primary_freshness_report( string $repo_path, string $handle, int $timeout_seconds = 0 ): ?array {
 		if ( ! file_exists($repo_path . '/.git') ) {
 			return null;
 		}
 
-		$status_result = $this->run_git($repo_path, 'status --porcelain=v1 --branch --untracked-files=no');
+		$status_result = $this->run_git($repo_path, 'status --porcelain=v1 --branch --untracked-files=no', $timeout_seconds);
 		if ( is_wp_error($status_result) ) {
 			return array(
-				'status'        => 'unknown',
-				'branch'        => null,
-				'upstream'      => null,
-				'behind'        => null,
-				'ahead'         => null,
-				'detached'      => false,
-				'local_refs'    => true,
-				'fetch_checked' => false,
+				'status'                         => 'unknown',
+				'verification_scope'             => 'local_tracking',
+				'branch'                         => null,
+				'upstream'                       => null,
+				'behind'                         => null,
+				'ahead'                          => null,
+				'detached'                       => false,
+				'local_refs'                     => true,
+				'fetch_checked'                  => false,
+				'network_verification_attempted' => false,
+				'tracking_ref_observed_at'       => null,
+				'remote_verified_at'             => null,
+				'verification_timeout_seconds'   => null,
+				'verification_error'             => null,
+				'verification_command'           => sprintf('wp datamachine-code workspace show %s --refresh', escapeshellarg($handle)),
 			);
 		}
 
@@ -700,7 +710,14 @@ trait WorkspaceCoreUtilities {
 	 *
 	 * @return array<string,mixed>
 	 */
-	private function build_primary_freshness_report_from_status_output( string $status_output, string $handle ): array {
+	private function build_primary_freshness_report_from_status_output(
+		string $status_output,
+		string $handle,
+		?string $tracking_ref_observed_at = null,
+		bool $remote_verified = false,
+		?string $remote_verified_at = null,
+		?int $verification_timeout_seconds = null
+	): array {
 
 		$header   = strtok($status_output, "\n");
 		$header   = false === $header ? '' : trim($header);
@@ -735,19 +752,26 @@ trait WorkspaceCoreUtilities {
 			} elseif ( $ahead > 0 ) {
 				$status = 'ahead';
 			} else {
-				$status = 'current';
+				$status = $remote_verified ? 'remote_verified_current' : 'local_tracking_current';
 			}
 		}
 
 		$report = array(
-			'status'        => $status,
-			'branch'        => $branch,
-			'upstream'      => $upstream,
-			'behind'        => null === $upstream ? null : $behind,
-			'ahead'         => null === $upstream ? null : $ahead,
-			'detached'      => $detached,
-			'local_refs'    => true,
-			'fetch_checked' => false,
+			'status'                         => $status,
+			'verification_scope'             => $remote_verified ? 'remote_verified' : 'local_tracking',
+			'branch'                         => $branch,
+			'upstream'                       => $upstream,
+			'behind'                         => null === $upstream ? null : $behind,
+			'ahead'                          => null === $upstream ? null : $ahead,
+			'detached'                       => $detached,
+			'local_refs'                     => ! $remote_verified,
+			'fetch_checked'                  => $remote_verified,
+			'network_verification_attempted' => $remote_verified,
+			'tracking_ref_observed_at'       => $tracking_ref_observed_at,
+			'remote_verified_at'             => $remote_verified_at,
+			'verification_timeout_seconds'   => $verification_timeout_seconds,
+			'verification_error'             => null,
+			'verification_command'           => sprintf('wp datamachine-code workspace show %s --refresh', escapeshellarg($handle)),
 		);
 
 		if ( $this->primary_freshness_needs_refresh($status) ) {
@@ -758,6 +782,104 @@ trait WorkspaceCoreUtilities {
 	}
 
 	/**
+	 * Fetch the tracked remote under one aggregate budget, then compose the same
+	 * freshness contract from the newly observed tracking refs.
+	 *
+	 * Fetch failure is evidence, not remote verification: callers still receive
+	 * the cached classification with typed failure details.
+	 *
+	 * @param array<string,mixed> $local_report Cached tracking-ref report.
+	 * @return array<string,mixed>
+	 */
+	private function refresh_primary_freshness_report( string $repo_path, string $handle, array $local_report ): array {
+		$timeout  = $this->primary_freshness_refresh_timeout_seconds($handle);
+		$upstream = (string) ( $local_report['upstream'] ?? '' );
+		if ( '' === $upstream ) {
+			return array_merge(
+				$local_report,
+				array(
+					'verification_timeout_seconds' => $timeout,
+					'verification_error'           => array(
+						'code'      => 'no_upstream',
+						'message'   => 'Remote verification requires a configured upstream branch.',
+						'timed_out' => false,
+					),
+				)
+			);
+		}
+
+		$remote   = str_contains($upstream, '/') ? strstr($upstream, '/', true) : 'origin';
+		$remote   = is_string($remote) && preg_match('/^[A-Za-z0-9._-]+$/', $remote) ? $remote : 'origin';
+		$fetch    = $this->run_git(
+			$repo_path,
+			'fetch --no-tags --prune --quiet ' . escapeshellarg($remote),
+			max(1, $timeout - 2)
+		);
+
+		if ( is_wp_error($fetch) ) {
+			$code = method_exists($fetch, 'get_error_code') ? (string) $fetch->get_error_code() : 'git_command_failed';
+			return array_merge(
+				$local_report,
+				array(
+					'network_verification_attempted' => true,
+					'verification_timeout_seconds'   => $timeout,
+					'verification_error'             => array(
+						'code'      => $code,
+						'message'   => $fetch->get_error_message(),
+						'timed_out' => 'git_command_timeout' === $code,
+					),
+				)
+			);
+		}
+
+		$observed_at  = $this->primary_freshness_now();
+		$status_result = $this->run_git($repo_path, 'status --porcelain=v1 --branch --untracked-files=no', min(2, $timeout));
+		if ( is_wp_error($status_result) ) {
+			$code = method_exists($status_result, 'get_error_code') ? (string) $status_result->get_error_code() : 'git_command_failed';
+			return array_merge(
+				$local_report,
+				array(
+					'status'                         => 'unknown',
+					'behind'                         => null,
+					'ahead'                          => null,
+					'fetch_checked'                  => true,
+					'network_verification_attempted' => true,
+					'tracking_ref_observed_at'       => $observed_at,
+					'verification_timeout_seconds'   => $timeout,
+					'verification_error'             => array(
+						'code'      => $code,
+						'message'   => $status_result->get_error_message(),
+						'timed_out' => 'git_command_timeout' === $code,
+					),
+				)
+			);
+		}
+
+		return $this->build_primary_freshness_report_from_status_output(
+			(string) ( $status_result['output'] ?? '' ),
+			$handle,
+			$observed_at,
+			true,
+			$observed_at,
+			$timeout
+		);
+	}
+
+	/** Resolve the bounded aggregate verification budget. */
+	protected function primary_freshness_refresh_timeout_seconds( string $handle ): int {
+		$timeout = function_exists('apply_filters')
+			? (int) apply_filters('datamachine_code_primary_freshness_refresh_timeout_seconds', self::PRIMARY_FRESHNESS_REFRESH_TIMEOUT_SECONDS, $handle)
+			: self::PRIMARY_FRESHNESS_REFRESH_TIMEOUT_SECONDS;
+
+		return max(3, min(30, $timeout));
+	}
+
+	/** Clock seam for deterministic contract tests. */
+	protected function primary_freshness_now(): string {
+		return gmdate('c');
+	}
+
+	/**
 	 * Build the canonical command for refreshing a primary checkout.
 	 *
 	 * @param  string $handle Primary workspace handle.
@@ -765,6 +887,67 @@ trait WorkspaceCoreUtilities {
 	 */
 	private function primary_refresh_command( string $handle ): string {
 		return sprintf('wp datamachine-code workspace git pull %s --allow-primary-refresh', $handle);
+	}
+
+	/** Store the local remote-ref identity observed by an explicit primary refresh. */
+	protected function remember_primary_freshness_evidence( string $repo_path, string $handle ): void {
+		if ( ! function_exists('update_option') ) {
+			return;
+		}
+
+		$remote_refs = $this->primary_remote_refs_digest($repo_path);
+		if ( null === $remote_refs ) {
+			return;
+		}
+
+		update_option(
+			$this->primary_freshness_option_name($handle),
+			array(
+				'version'            => 1,
+				'remote_refs_digest' => $remote_refs,
+			)
+		);
+	}
+
+	/** Return an explicit-refresh record only while its remote refs remain unchanged. */
+	protected function primary_freshness_evidence( string $repo_path, string $handle ): ?array {
+		if ( ! function_exists('get_option') ) {
+			return null;
+		}
+
+		$evidence = get_option($this->primary_freshness_option_name($handle));
+		if ( ! is_array($evidence) || 1 !== (int) ( $evidence['version'] ?? 0 ) || empty($evidence['remote_refs_digest']) ) {
+			return null;
+		}
+
+		$remote_refs = $this->primary_remote_refs_digest($repo_path);
+		return is_string($remote_refs) && hash_equals( (string) $evidence['remote_refs_digest'], $remote_refs ) ? $evidence : null;
+	}
+
+	/** Build the immutable local identity a reviewed plan must retain through apply. */
+	protected function primary_freshness_identity( string $repo_path, string $target_ref ): ?array {
+		$target      = $this->run_git($repo_path, 'rev-parse --verify ' . escapeshellarg($target_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$remote_refs = $this->primary_remote_refs_digest($repo_path);
+		if ( is_wp_error($target) || null === $remote_refs ) {
+			return null;
+		}
+
+		$target_head = trim( (string) ( $target['output'] ?? '' ) );
+		return '' === $target_head ? null : array(
+			'target_ref'         => $target_ref,
+			'target_head'        => $target_head,
+			'remote_refs_digest' => $remote_refs,
+		);
+	}
+
+	/** Hash origin's local tracking refs without contacting the network. */
+	private function primary_remote_refs_digest( string $repo_path ): ?string {
+		$refs = $this->run_git($repo_path, "for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin", self::CLEANUP_GIT_PROBE_TIMEOUT);
+		return is_wp_error($refs) ? null : hash('sha256', (string) ( $refs['output'] ?? '' ));
+	}
+
+	private function primary_freshness_option_name( string $handle ): string {
+		return 'datamachine_code_primary_freshness_' . hash('sha256', $this->workspace_path . "\0" . $handle);
 	}
 
 	/**
@@ -993,6 +1176,13 @@ trait WorkspaceCoreUtilities {
 	 */
 	private function sanitize_name( string $name ): string {
 		return preg_replace('/[^a-zA-Z0-9._-]/', '', $name);
+	}
+
+	/**
+	 * Normalize a repository name to its workspace directory form.
+	 */
+	public function sanitize_repo_name( string $name ): string {
+		return $this->sanitize_name($name);
 	}
 
 	/**

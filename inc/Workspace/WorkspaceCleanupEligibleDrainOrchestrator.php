@@ -7,7 +7,13 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined('ABSPATH') || exit;
+
+if ( ! class_exists(WallClockBudget::class) ) {
+	require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
+}
 
 /**
  * Repeats the bounded cleanup-eligible primitive until it has no safe rows left.
@@ -15,6 +21,7 @@ defined('ABSPATH') || exit;
 class WorkspaceCleanupEligibleDrainOrchestrator {
 
 	private const DEFAULT_SOURCE = 'workspace_cleanup_eligible_drain';
+	private const DEFAULT_BUDGET = '30s';
 
 	/** @var callable */
 	private $ability_resolver;
@@ -50,19 +57,14 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 		$passes                    = isset($input['passes']) ? max(1, min(100, (int) $input['passes'])) : 10;
 		$source                    = isset($input['source']) && '' !== trim( (string) $input['source']) ? trim( (string) $input['source']) : self::DEFAULT_SOURCE;
 		$apply_plan                = isset($input['apply_plan']) && is_array($input['apply_plan']) ? $input['apply_plan'] : null;
-		$deadline                  = null;
-		$started_at                = $this->now();
 
 		if ( ! empty($input['discard_unpushed']) ) {
 			return new \WP_Error('cleanup_eligible_drain_refuses_unpushed_discard', 'Cleanup-eligible drain will not discard unpushed commits. Use the bounded single-batch command explicitly for that data-loss mode.', array( 'status' => 400 ));
 		}
 
-		if ( isset($input['until_budget']) && '' !== trim( (string) $input['until_budget']) ) {
-			$budget_seconds = $this->parse_budget(trim( (string) $input['until_budget']));
-			if ( is_wp_error($budget_seconds) ) {
-				return $budget_seconds;
-			}
-			$deadline = $started_at + $budget_seconds;
+		$budget = WallClockBudget::from_duration($input['until_budget'] ?? null, self::DEFAULT_BUDGET, 'invalid_cleanup_eligible_drain_budget', $this->clock);
+		if ( is_wp_error($budget) ) {
+			return $budget;
 		}
 
 		$ability = ( $this->ability_resolver )('datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply');
@@ -101,7 +103,8 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 		$stop_reason      = 'pass_limit';
 
 		for ( $pass = 1; $pass <= $effective_passes; ++$pass ) {
-			if ( $this->budget_expired($deadline) ) {
+			$remaining_budget = $budget->remaining_duration();
+			if ( null === $remaining_budget ) {
 				$stop_reason = 'budget_exhausted';
 				break;
 			}
@@ -120,6 +123,10 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			}
 			if ( null !== $apply_plan ) {
 				$pass_input['apply_plan'] = $apply_plan;
+			}
+			$pass_input['until_budget'] = $remaining_budget;
+			if ( isset($input['progress_callback']) && is_callable($input['progress_callback']) ) {
+				$pass_input['progress_callback'] = $input['progress_callback'];
 			}
 
 			$pass_result = $ability->execute($pass_input);
@@ -159,6 +166,7 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 				'removed_rows'      => array_values(array_filter((array) ( $pass_result['removed'] ?? array() ), 'is_array')),
 				'skipped_rows'      => array_values(array_filter((array) ( $pass_result['skipped'] ?? array() ), 'is_array')),
 				'skipped_by_reason' => $this->summarize_skipped( (array) ( $pass_result['skipped'] ?? array() ) ),
+				'partial'           => ! empty($continuation['inventory']['partial']) || 'budget_exhausted' === (string) ( $continuation['reason'] ?? '' ),
 			);
 
 			$result['pass_results'][] = $pass_summary;
@@ -175,9 +183,25 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			$result['summary']['removed']         += $pass_summary['removed'];
 			$result['summary']['skipped']         += $pass_summary['skipped'];
 			$result['summary']['bytes_reclaimed'] += $pass_summary['bytes_reclaimed'];
+			if ( isset($input['progress_callback']) && is_callable($input['progress_callback']) ) {
+				try {
+					( $input['progress_callback'] )(array(
+						'phase'       => 'pass_complete',
+						'pass'        => $pass,
+						'pass_result' => $pass_summary,
+					));
+				} catch ( \Throwable ) {
+					// Output observers cannot change a completed bounded pass.
+				}
+			}
 
 			if ( ! $apply ) {
 				$stop_reason = 'preview';
+				break;
+			}
+			if ( $pass_summary['partial'] ) {
+				$stop_reason                  = 'budget_exhausted';
+				$result['child_continuation'] = $continuation;
 				break;
 			}
 			if ( 0 === $pass_summary['removed'] ) {
@@ -190,19 +214,29 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 			}
 		}
 
-		if ( 'pass_limit' === $stop_reason && $this->budget_expired($deadline) ) {
+		if ( 'pass_limit' === $stop_reason && $budget->expired() ) {
 			$stop_reason = 'budget_exhausted';
 		}
 
 		$result['summary']['stop_reason']       = $stop_reason;
-		$result['summary']['final_free_space']  = ( $this->disk_reporter )($workspace_path);
-		$result['evidence']['elapsed_ms']       = (int) round(( $this->now() - $started_at ) * 1000);
+		$result['summary']['final_free_space']  = $budget->expired() ? array( 'path' => $workspace_path, 'status' => 'skipped_budget_exhausted' ) : ( $this->disk_reporter )($workspace_path);
+		$budget_evidence                       = $budget->evidence();
+		$result['evidence']['elapsed_ms']       = (int) ( $budget_evidence['elapsed_ms'] ?? 0 );
 		$result['evidence']['budget_exhausted'] = 'budget_exhausted' === $stop_reason;
+		$result['evidence']['wall_clock_budget'] = $budget_evidence;
 
 		if ( ! $apply ) {
 			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=%d --passes=%d --format=json', $limit, $passes);
-		} elseif ( 'pass_limit' === $stop_reason ) {
+		} elseif ( in_array($stop_reason, array( 'pass_limit', 'budget_exhausted' ), true) ) {
 			$result['next_commands'][] = sprintf('studio wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=%d --passes=%d --format=json', $limit, $passes);
+		}
+		if ( in_array($stop_reason, array( 'pass_limit', 'budget_exhausted' ), true) ) {
+			$result['continuation'] = array(
+				'reason'       => $stop_reason,
+				'next_command' => $result['next_commands'][0] ?? sprintf('studio wp datamachine-code workspace worktree cleanup-eligible-drain --apply --limit=%d --passes=%d --format=json', $limit, $passes),
+				'resumable'    => true,
+				'child'        => $result['child_continuation'] ?? null,
+			);
 		}
 
 		return $result;
@@ -210,27 +244,6 @@ class WorkspaceCleanupEligibleDrainOrchestrator {
 
 	private function now(): float {
 		return (float) ( $this->clock )();
-	}
-
-	private function parse_budget( string $duration ): int|\WP_Error {
-		if ( ! preg_match('/^(\d+)([smh])$/', trim($duration), $matches) ) {
-			return new \WP_Error('invalid_cleanup_eligible_drain_budget', 'Invalid until_budget duration. Use a compact value like 60s, 10m, or 1h.', array( 'status' => 400 ));
-		}
-
-		$value = (int) $matches[1];
-		if ( $value < 1 ) {
-			return new \WP_Error('invalid_cleanup_eligible_drain_budget', 'Invalid until_budget duration. Duration must be greater than zero.', array( 'status' => 400 ));
-		}
-
-		return match ( $matches[2] ) {
-			'h' => $value * HOUR_IN_SECONDS,
-			'm' => $value * MINUTE_IN_SECONDS,
-			default => $value,
-		};
-	}
-
-	private function budget_expired( ?float $deadline ): bool {
-		return null !== $deadline && $this->now() >= $deadline;
 	}
 
 	/** @param array<int,array<string,mixed>> $rows */
