@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.6] - 2026-08-25
+
+### Fixed
+- bound task-owned worktree lookup
+
 ## [0.70.5] - 2026-08-25
 
 ### Fixed
