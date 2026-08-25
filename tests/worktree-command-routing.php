@@ -46,12 +46,14 @@ namespace {
 	$bounded_ability = new WorktreeCommandFakeAbility();
 	$artifact_ability = new WorktreeCommandFakeAbility();
 	$cleanup_eligible_drain_ability = new WorktreeCommandFakeAbility();
+	$handoff_resume_ability = new WorktreeCommandFakeAbility();
 	$GLOBALS['worktree_command_abilities'] = array(
 		'datamachine-code/workspace-worktree-abandoned-cleanup' => $ability,
 		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_drain_ability,
 		'datamachine-code/workspace-worktree-bounded-cleanup-eligible-apply' => $bounded_ability,
 		'datamachine-code/workspace-worktree-cleanup-artifacts' => $artifact_ability,
 		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible_drain_ability,
+		'datamachine-code/workspace-worktree-handoff-resume' => $handoff_resume_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	try {
@@ -130,6 +132,25 @@ namespace {
 	worktree_command_routing_assert(true === ( $cleanup_eligible_drain_ability->calls[0]['apply'] ?? false ), 'cleanup-eligible drain lost --apply.');
 	worktree_command_routing_assert(25 === ( $cleanup_eligible_drain_ability->calls[0]['limit'] ?? null ), 'cleanup-eligible drain lost --limit.');
 	worktree_command_routing_assert(2 === ( $cleanup_eligible_drain_ability->calls[0]['passes'] ?? null ), 'cleanup-eligible drain lost --passes.');
+
+	$allocation_identity = array(
+		'version'           => 1,
+		'allocation_id'     => 'allocation-1205',
+		'handle'            => 'data-machine-code@fix-1205',
+		'path'              => '/workspace/data-machine-code@fix-1205',
+		'branch'            => 'fix/1205',
+		'worktree_sha'      => str_repeat('a', 40),
+		'resolved_base_ref' => 'origin/main',
+		'digest'            => str_repeat('b', 64),
+	);
+	try {
+		$command->__worktree_operation('handoff-resume', array( 'data-machine-code@fix-1205' ), array( 'allocation-identity' => json_encode($allocation_identity) ));
+		throw new \RuntimeException('handoff resume command did not execute its owning ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'handoff resume command did not render the routed ability result.');
+	}
+	worktree_command_routing_assert('data-machine-code@fix-1205' === ( $handoff_resume_ability->calls[0]['handle'] ?? null ), 'handoff resume lost the exact committed handle.');
+	worktree_command_routing_assert($allocation_identity === ( $handoff_resume_ability->calls[0]['allocation_identity'] ?? null ), 'handoff resume lost the exact server-issued allocation identity.');
 
 	echo "worktree-command-routing: ok\n";
 }

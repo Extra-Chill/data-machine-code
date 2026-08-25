@@ -1070,15 +1070,86 @@ try {
 	assert_true('workspace_sqlite_lock_contention' === $contention->get_error_code(), 'SQLite contention did not return the structured error');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-sqlite-locked'), 'SQLite contention left a partial Git worktree behind');
 
-	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $workspace_root . '/homeboy');
+	// Force final handoff fetch success followed by remote-advertisement timeout.
+	// The returned continuation must never re-enter allocation or bootstrap.
+	run_command('git --git-dir=' . escapeshellarg($workspace_root . '/origin.git') . ' symbolic-ref HEAD refs/heads/main', $primary_path);
+	run_command('git config branch.main.remote origin && git config branch.main.merge refs/heads/main && git fetch origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main', $primary_path);
 	$GLOBALS['wpdb'] = new Datamachine_Code_Test_Wpdb();
-	$handoff_proof_issuer = new ReflectionMethod($workspace, 'worktree_add_handoff_proof');
-	$post_allocation_refusal = $handoff_proof_issuer->invoke($workspace, $result, false);
-	$post_allocation_data = is_wp_error($post_allocation_refusal) ? (array) $post_allocation_refusal->get_error_data() : array();
-	assert_true(is_wp_error($post_allocation_refusal) && 'worktree_handoff_freshness_unverified' === $post_allocation_refusal->get_error_code(), 'direct Workspace caller did not fail closed after post-allocation proof failure');
-	assert_true((string) $result['handle'] === (string) ( $post_allocation_data['handle'] ?? '' ) && (string) $result['path'] === (string) ( $post_allocation_data['path'] ?? '' ) && true === ( $post_allocation_data['retry']['allocation_preserved'] ?? false ), 'post-allocation freshness refusal omitted preserved allocation and safe retry evidence');
-	$post_allocation_opt_in = $handoff_proof_issuer->invoke($workspace, $result, true);
-	assert_true(! is_wp_error($post_allocation_opt_in) && 'unverified' === ( $post_allocation_opt_in['handoff_freshness']['status'] ?? null ), 'explicit post-allocation freshness opt-in did not return typed unverified state');
+	$handoff_upload_pack = $workspace_root . '/handoff-upload-pack.sh';
+	$handoff_call_count  = $workspace_root . '/handoff-upload-pack-count';
+	$progress            = array();
+	$timed_out_add       = $workspace->worktree_add(
+		'homeboy',
+		'handoff-partial-success',
+		'origin/main',
+		false,
+		true,
+		false,
+		false,
+		true,
+		array(),
+		false,
+		false,
+		array(),
+		'reuse_compatible',
+		false,
+		false,
+		static function ( array $event ) use ( &$progress, $primary_path, $handoff_upload_pack, $handoff_call_count ): void {
+			$phase      = (string) ( $event['phase'] ?? '' );
+			$progress[] = $phase;
+			if ( 'bootstrap_complete' !== $phase ) {
+				return;
+			}
+			$script = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\n[ \"\$count\" -eq 1 ] && exec git upload-pack \"\$@\"\nsleep 10\n";
+			file_put_contents($handoff_upload_pack, $script);
+			chmod($handoff_upload_pack, 0700);
+			run_command('git config remote.origin.uploadpack ' . escapeshellarg($handoff_upload_pack), $primary_path);
+		}
+	);
+	$partial = is_wp_error($timed_out_add) ? (array) $timed_out_add->get_error_data() : array();
+	assert_true(is_wp_error($timed_out_add) && 'worktree_handoff_freshness_unverified' === $timed_out_add->get_error_code(), 'post-commit handoff timeout did not remain a fail-closed add result');
+	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
+	assert_true('worktree_handoff_revalidation_timeout' === ( $partial['handoff_freshness']['reason'] ?? null ) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff timeout lost its typed freshness cause or committed allocation');
+	assert_true(false === ( $partial['retry']['repeat_allocation'] ?? true ) && false === ( $partial['retry']['repeat_bootstrap'] ?? true ), 'post-commit handoff timeout did not prohibit allocation/bootstrap replay');
+	$continuation = (array) ( $partial['continuation'] ?? array() );
+	$identity     = (array) ( $continuation['input']['allocation_identity'] ?? array() );
+	$handle       = (string) ( $partial['handle'] ?? '' );
+	assert_true('datamachine-code/workspace-worktree-handoff-resume' === ( $continuation['ability'] ?? null ) && true === ( $continuation['read_only'] ?? false ) && true === ( $continuation['idempotent'] ?? false ), 'partial success omitted its exact read-only continuation');
+	assert_true(str_contains((string) ( $continuation['command'] ?? '' ), 'worktree handoff-resume') && $handle === ( $continuation['input']['handle'] ?? null ), 'partial success continuation was not directly executable for the exact handle');
+
+	$worktrees_before = run_command('git worktree list --porcelain', $primary_path);
+	$branches_before  = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path);
+	$rows_before      = $GLOBALS['wpdb']->rows;
+	$metadata_before  = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true(1 === count(array_filter($progress, static fn( string $phase ): bool => 'bootstrap_start' === $phase)), 'initial allocation did not execute bootstrap exactly once');
+
+	// Replace the timeout helper with an always-successful counting proxy. One
+	// call per continuation proves no repeated fetch before ls-remote.
+	$proxy = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\nexec git upload-pack \"\$@\"\n";
+	file_put_contents($handoff_upload_pack, $proxy);
+	file_put_contents($handoff_call_count, "0\n");
+	chmod($handoff_upload_pack, 0700);
+	$resumed_once  = $workspace->worktree_handoff_resume($handle, $identity);
+	$resumed_twice = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(! is_wp_error($resumed_once) && ! is_wp_error($resumed_twice) && 'current' === ( $resumed_once['status'] ?? null ) && true === ( $resumed_twice['read_only'] ?? false ), 'exact handoff continuation did not converge idempotently');
+	assert_true("2\n" === file_get_contents($handoff_call_count), 'handoff continuation repeated fetch instead of making one read-only remote advertisement call');
+	assert_true($worktrees_before === run_command('git worktree list --porcelain', $primary_path), 'handoff continuation duplicated or replaced a worktree allocation');
+	assert_true($branches_before === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path), 'handoff continuation created or collided with a branch');
+	assert_true($rows_before === $GLOBALS['wpdb']->rows, 'handoff continuation rewrote inventory state');
+	assert_true($metadata_before === WorktreeContextInjector::get_metadata_fresh($handle), 'handoff continuation rewrote lifecycle or bootstrap metadata');
+
+	$path = (string) ( $partial['path'] ?? '' );
+	run_command('git switch -c handoff-collision', $path);
+	$branch_drift = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(is_wp_error($branch_drift) && 'worktree_handoff_allocation_drift' === $branch_drift->get_error_code() && true === ( $branch_drift->get_error_data()['mutation_committed'] ?? false ), 'branch collision produced an unsafe freshness claim');
+	run_command('git switch handoff-partial-success && git branch -D handoff-collision', $path);
+	file_put_contents($path . '/unsafe-untracked.txt', "unsafe\n");
+	$dirty_drift = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(is_wp_error($dirty_drift) && 'worktree_handoff_allocation_drift' === $dirty_drift->get_error_code(), 'dirty allocation produced an unsafe freshness claim');
+	unlink($path . '/unsafe-untracked.txt');
+	run_command('git config --unset remote.origin.uploadpack', $primary_path);
+
+	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $primary_path);
 	$fetch_failed_default = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails', 'origin/main', false, false, false, false, true);
 	assert_true(is_wp_error($fetch_failed_default), 'fetch failure reported success without explicit opt-in');
 	assert_true('worktree_freshness_unverified' === $fetch_failed_default->get_error_code(), 'unexpected fetch failure error code');

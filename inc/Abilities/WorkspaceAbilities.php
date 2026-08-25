@@ -1762,6 +1762,59 @@ class WorkspaceAbilities {
 			);
 
 			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-handoff-resume',
+				array(
+					'label'               => 'Resume Committed Worktree Handoff',
+					'description'         => 'Revalidate one exact committed allocation after add could not complete handoff freshness. This read-only continuation does not fetch, allocate, plan capacity, inject context, run bootstrap, or persist lifecycle metadata.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle'              => array(
+								'type'        => 'string',
+								'description' => 'Exact managed worktree handle returned by the partial-success add result.',
+							),
+							'allocation_identity' => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffAllocationIdentitySchemaProperties(),
+								'required'    => self::worktreeHandoffAllocationIdentitySchemaRequired(),
+								'description' => 'Exact server-issued identity returned in the add error continuation input.',
+							),
+						),
+						'required'   => array( 'handle', 'allocation_identity' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'             => array( 'type' => 'boolean' ),
+							'status'              => array(
+								'type' => 'string',
+								'enum' => array( 'current', 'contention' ),
+							),
+							'handle'              => array( 'type' => 'string' ),
+							'mutation_committed'  => array( 'type' => 'boolean' ),
+							'allocation_identity' => array(
+								'type'       => 'object',
+								'properties' => self::worktreeHandoffAllocationIdentitySchemaProperties(),
+								'required'   => self::worktreeHandoffAllocationIdentitySchemaRequired(),
+							),
+							'observation'         => array(
+								'type'       => 'object',
+								'properties' => self::worktreeHandoffProofSchemaProperties(),
+								'required'   => self::worktreeHandoffProofSchemaRequired(),
+							),
+							'read_only'           => array( 'type' => 'boolean' ),
+							'continuation'        => array( 'type' => 'object' ),
+							'contention'          => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeHandoffResume' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
 				'datamachine-code/workspace-worktree-handoff-revalidate',
 				array(
 					'label'               => 'Revalidate Worktree Handoff Freshness',
@@ -4525,6 +4578,10 @@ class WorkspaceAbilities {
 		return ( new Workspace() )->worktree_handoff_revalidate( (string) ( $input['handle'] ?? '' ), (array) ( $input['proof'] ?? array() ) );
 	}
 
+	public static function worktreeHandoffResume( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_handoff_resume( (string) ( $input['handle'] ?? '' ), (array) ( $input['allocation_identity'] ?? array() ) );
+	}
+
 	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
 		return ( new Workspace() )->worktree_apply_legacy_handoff( (array) ( $input['plan'] ?? array() ), (string) ( $input['mode'] ?? '' ) );
 	}
@@ -4721,6 +4778,26 @@ class WorkspaceAbilities {
 	/** @return array<int,string> */
 	private static function worktreeHandoffProofSchemaRequired(): array {
 		return array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'remote_default_advertised_sha', 'verified_at', 'digest' );
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private static function worktreeHandoffAllocationIdentitySchemaProperties(): array {
+		return array(
+			'version'           => array( 'type' => 'integer', 'enum' => array( 1 ) ),
+			'allocation_id'     => array( 'type' => 'string' ),
+			'handle'            => array( 'type' => 'string' ),
+			'path'              => array( 'type' => 'string' ),
+			'branch'            => array( 'type' => 'string' ),
+			'worktree_sha'      => array( 'type' => 'string' ),
+			'resolved_base_ref' => array( 'type' => 'string' ),
+			'metadata_digest'   => array( 'type' => 'string' ),
+			'digest'            => array( 'type' => 'string' ),
+		);
+	}
+
+	/** @return array<int,string> */
+	private static function worktreeHandoffAllocationIdentitySchemaRequired(): array {
+		return array( 'version', 'allocation_id', 'handle', 'path', 'branch', 'worktree_sha', 'resolved_base_ref', 'metadata_digest', 'digest' );
 	}
 
 	/**
