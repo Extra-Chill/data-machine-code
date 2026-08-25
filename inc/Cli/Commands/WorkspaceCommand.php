@@ -378,6 +378,8 @@ class WorkspaceCommand extends BaseCommand {
 						'description' => 'Optional repository name.',
 					),
 					$option( 'state', 'Lifecycle state filter.' ),
+					$option( 'task-ref', 'Exact recorded task URL or task reference filter.' ),
+					$option( 'owner-run-ref', 'Exact recorded owner-run reference filter.' ),
 					$option( 'limit', 'Maximum rows for table or --envelope output; default 50, maximum 200.' ),
 					$option( 'cursor', 'Continue an --envelope JSON response with the same filters.' ),
 					$flag( 'all', 'Explicitly return every matching row.' ),
@@ -5102,6 +5104,12 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset( $assoc_args['state'] ) && '' !== trim( (string) $assoc_args['state'] ) ) {
 					$input['state'] = (string) $assoc_args['state'];
 				}
+				if ( isset( $assoc_args['task-ref'] ) && '' !== trim( (string) $assoc_args['task-ref'] ) ) {
+					$input['task_ref'] = (string) $assoc_args['task-ref'];
+				}
+				if ( isset( $assoc_args['owner-run-ref'] ) && '' !== trim( (string) $assoc_args['owner-run-ref'] ) ) {
+					$input['owner_run_ref'] = (string) $assoc_args['owner-run-ref'];
+				}
 				if ( isset( $assoc_args['limit'] ) ) {
 					$limit = Workspace::normalize_workspace_list_limit( $assoc_args['limit'] );
 					if ( is_wp_error( $limit ) ) {
@@ -5347,7 +5355,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
-			if ( in_array( $operation, array( 'add', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( in_array( $operation, array( 'add', 'get', 'list', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json(
 					array(
 						'success' => false,

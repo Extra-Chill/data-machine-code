@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+define('DATAMACHINE_CODE_STANDALONE', true);
+require dirname(__DIR__) . '/vendor/autoload.php';
+
 function standalone_provider_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
 		throw new RuntimeException($message);
@@ -81,6 +84,13 @@ try {
 	standalone_provider_assert($missing['elapsed'] < 1.0, 'Missing identity exceeded one second.');
 	$missing_payload = json_decode($missing['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('not_owned' === $missing_payload['status'], 'Missing identity did not return not_owned.');
+	$legacy_metadata = array(
+		'path'        => $path,
+		'origin_task' => array( 'task_url' => ' HTTPS://GitHub.COM/Example/Fixture/issues/1/?source=dmc#identity ' ),
+	);
+	standalone_provider_assert(! \DataMachineCode\Workspace\WorktreeContextInjector::standalone_worktree_tracker_is_current($legacy_metadata), 'Legacy worktree unexpectedly started with standalone tracker identity.');
+	standalone_provider_assert(true === \DataMachineCode\Workspace\WorktreeContextInjector::store_standalone_worktree_tracker($legacy_metadata), 'Legacy worktree tracker backfill failed.');
+	standalone_provider_assert(\DataMachineCode\Workspace\WorktreeContextInjector::standalone_worktree_tracker_is_current($legacy_metadata), 'Legacy worktree tracker backfill was not current.');
 
 	$identity = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, $handle ));
 	standalone_provider_assert(0 === $identity['status'], 'Existing identity failed: ' . $identity['stderr']);
@@ -91,6 +101,8 @@ try {
 	standalone_provider_assert(realpath($path) === $identity_payload['path'], 'Identity path is not canonical.');
 	standalone_provider_assert('fix/example' === $identity_payload['branch'], 'Identity branch mismatch.');
 	standalone_provider_assert(false === $identity_payload['primary'], 'Linked worktree was classified as primary.');
+	standalone_provider_assert('https://github.com/Example/Fixture/issues/1' === ($identity_payload['task_url'] ?? null), 'Identity did not canonicalize the persisted task tracker.');
+	standalone_provider_assert(str_contains((string) base64_decode(strtr(explode('.', $identity_payload['token'], 3)[2], '-_', '+/'), true), 'https://github.com/Example/Fixture/issues/1'), 'Identity token did not bind the canonical task tracker.');
 
 	$safety = standalone_provider_run(array( PHP_BINARY, $script, 'safety', $root, $identity_payload['token'] ));
 	standalone_provider_assert(0 === $safety['status'], 'Clean safety attestation failed: ' . $safety['stderr']);
@@ -138,7 +150,9 @@ try {
 	$untracked_path = $root . '/fixture@untracked';
 	standalone_provider_git($primary, array( 'worktree', 'add', '-b', 'fix/untracked', $untracked_path ));
 	$untracked_identity = standalone_provider_run(array( PHP_BINARY, $script, 'identity', $root, 'fixture@untracked' ));
-	$untracked_token = json_decode($untracked_identity['stdout'], true, 512, JSON_THROW_ON_ERROR)['token'];
+	$untracked_identity_payload = json_decode($untracked_identity['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(null === ($untracked_identity_payload['task_url'] ?? null), 'Identity must preserve absent tracker metadata as null.');
+	$untracked_token = $untracked_identity_payload['token'];
 	$untracked = standalone_provider_run(array( PHP_BINARY, $script, 'converge', $root, $untracked_token, $base ));
 	$untracked_payload = json_decode($untracked['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert('unpushed_probe_failed' === $untracked_payload['code'], 'Unknown upstream at base was not refused.');
