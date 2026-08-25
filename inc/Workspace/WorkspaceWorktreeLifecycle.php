@@ -410,9 +410,13 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Issue the proof while the caller still holds the allocation's repository lock. */
-	private function worktree_add_handoff_proof( array|\WP_Error $result, bool $allow_unverified_freshness = false ): array|\WP_Error {
+	private function worktree_add_handoff_proof( array|\WP_Error $result, bool $allow_unverified_freshness = false, ?float $operation_deadline = null ): array|\WP_Error {
 		if ( is_wp_error($result) || empty($result['success']) ) {
 			return $result;
+		}
+		$deadline = min($operation_deadline ?? INF, microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT);
+		if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+			return $this->worktree_handoff_timeout($result);
 		}
 		if ( empty($result['handle']) || empty($result['path']) ) {
 			$result['handoff_freshness'] = array(
@@ -423,6 +427,9 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$primary  = $this->get_primary_path(explode('@', (string) $result['handle'], 2)[0]);
 		$metadata = WorktreeContextInjector::get_metadata_fresh( (string) $result['handle']) ?? array();
+		if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
+			return $this->worktree_handoff_timeout($result);
+		}
 		$base_ref = $this->worktree_handoff_base_ref($metadata);
 		if ( is_wp_error($base_ref) ) {
 			$result['handoff_freshness'] = array(
@@ -431,7 +438,6 @@ trait WorkspaceWorktreeLifecycle {
 			);
 			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness);
 		}
-		$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;
 		$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
 		if ( empty($fetch['ok']) ) {
 			$result['handoff_freshness'] = array(
@@ -718,8 +724,17 @@ trait WorkspaceWorktreeLifecycle {
 		return max(0, (int) floor($deadline - microtime(true)));
 	}
 
-	private function worktree_handoff_timeout(): \WP_Error {
-		return new \WP_Error('worktree_handoff_revalidation_timeout', 'The bounded handoff remote probe has less than one safe Git execution second remaining.', array( 'status' => 409 ));
+	private function worktree_handoff_timeout( ?array $allocation = null ): \WP_Error {
+		$data = array( 'status' => 409 );
+		if ( null !== $allocation ) {
+			$data += array(
+				'handle'               => $allocation['handle'] ?? null,
+				'path'                 => $allocation['path'] ?? null,
+				'mutation_committed'   => true,
+				'allocation_preserved' => true,
+			);
+		}
+		return new \WP_Error('worktree_handoff_revalidation_timeout', 'The bounded handoff remote probe has less than one safe Git execution second remaining.', $data);
 	}
 
 	/** Apply a reviewed legacy handoff after re-planning and taking the repo lock. */
@@ -1016,7 +1031,8 @@ trait WorkspaceWorktreeLifecycle {
 			$this->workspace_path,
 			$repo,
 			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline, $progress_callback),
-			$capacity_timeout
+			$capacity_timeout,
+			array( '_acquisition_deadline' => $operation_deadline )
 		);
 		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
 		if ( is_wp_error($preflight) ) {
@@ -1062,6 +1078,7 @@ trait WorkspaceWorktreeLifecycle {
 			),
 			$capacity_timeout,
 			array(
+				'_acquisition_deadline'       => $operation_deadline,
 				'lease_duration_seconds'     => $operation_timeout,
 				'operation_timeout_seconds'  => $operation_timeout,
 				'aggregate_timeout_seconds'  => self::worktree_capacity_aggregate_timeout_seconds($bootstrap),
@@ -1075,9 +1092,9 @@ trait WorkspaceWorktreeLifecycle {
 			return $locked;
 		}
 
-		// The reservation was committed during admission, before both lock handles
-		// are closed by with_repo(). Dependency children therefore inherit neither.
-		if ( $bootstrap && ! empty($locked['bootstrap_deferred']) && isset($locked['_capacity_operation_deadline']) ) {
+		// Carry the acquired deadline across with_repo(), then strip the internal
+		// field before either deferred bootstrap or the public response can see it.
+		if ( isset($locked['_capacity_operation_deadline']) ) {
 			$operation_deadline = (float) $locked['_capacity_operation_deadline'];
 			$operation_started  = $operation_deadline - $operation_timeout;
 			unset($locked['_capacity_operation_deadline']);
@@ -1091,11 +1108,27 @@ trait WorkspaceWorktreeLifecycle {
 
 		// The proof is the consumer handoff boundary, so issue it only after the
 		// complete allocation lifecycle, including any deferred bootstrap, finishes.
-		return WorkspaceMutationLock::with_repo(
+		$proof_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
+		if ( $proof_timeout <= 0 ) {
+			return $this->worktree_operation_timeout('handoff_proof', $operation_timeout, $operation_started, array(
+				'handle'               => $result['handle'] ?? null,
+				'path'                 => $result['path'] ?? null,
+				'mutation_committed'   => true,
+				'allocation_preserved' => true,
+			));
+		}
+		$proof = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			$repo,
-			fn() => $this->worktree_add_handoff_proof($result, $allow_unverified_freshness)
+			fn() => $this->worktree_add_handoff_proof($result, $allow_unverified_freshness, $operation_deadline),
+			$proof_timeout,
+			array( '_acquisition_deadline' => $operation_deadline )
 		);
+		return $this->worktree_operation_lock_result($proof, 'handoff_proof_lock_wait', $operation_timeout, $operation_started, true, array(
+			'handle'               => $result['handle'] ?? null,
+			'path'                 => $result['path'] ?? null,
+			'allocation_preserved' => true,
+		));
 	}
 
 	/** Prepare repo-local freshness and projected demand before global admission. */
@@ -1234,7 +1267,7 @@ trait WorkspaceWorktreeLifecycle {
 	/** Declare the maximum pre-admission plus acquisition-bounded lifecycle time. */
 	public static function worktree_capacity_aggregate_timeout_seconds( bool $bootstrap = true ): int {
 		$operation = self::worktree_capacity_operation_timeout_seconds($bootstrap);
-		return $operation + min($operation, self::worktree_capacity_admission_timeout_seconds($bootstrap));
+		return ( 2 * $operation ) + 1;
 	}
 
 	/**
@@ -1292,12 +1325,17 @@ trait WorkspaceWorktreeLifecycle {
 			if ( $repo_timeout <= 0 ) {
 				return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
 			}
-			return WorkspaceMutationLock::with_repo(
+			$reused = WorkspaceMutationLock::with_repo(
 				$this->workspace_path,
 				$repo,
-				fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness),
-				$repo_timeout
+				fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness, $operation_deadline),
+				$repo_timeout,
+				array( '_acquisition_deadline' => $operation_deadline )
 			);
+			if ( is_array($reused) ) {
+				$reused['_capacity_operation_deadline'] = $operation_deadline;
+			}
+			return $reused;
 		}
 		// The workspace capacity lock serializes admission. The target repo lock is
 		// acquired only for final creation, so remediation can safely take per-repo
@@ -1566,7 +1604,7 @@ trait WorkspaceWorktreeLifecycle {
 					'operation_deadline'    => $operation_deadline,
 					'operation_timeout'     => $operation_timeout,
 					'operation_started'     => $operation_started,
-				), $progress_callback), $repo_timeout);
+				), $progress_callback), $repo_timeout, array( '_acquisition_deadline' => $operation_deadline ));
 		$response = $this->worktree_operation_lock_result($response, 'repo_lock_wait', $operation_timeout, $operation_started);
 
 		if ( is_wp_error($response) ) {
@@ -1590,9 +1628,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$response['disk_budget']      = $disk_budget;
 		$response['capacity_reclaim'] = $capacity_reclaim['evidence'];
-		if ( $bootstrap ) {
-			$response['_capacity_operation_deadline'] = $operation_deadline;
-		}
+		$response['_capacity_operation_deadline'] = $operation_deadline;
 		$measurement_plan             = $demand_plan;
 		if ( is_array($capacity_remediation) ) {
 			$response['capacity_remediation'] = $capacity_remediation;
@@ -2454,10 +2490,18 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
+		$deadline_error = $this->worktree_operation_deadline_error('bootstrap_complete', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		$after_capacity                = $this->inspect_worktree_capacity($repo, $branch, false, array());
 		$measurement_plan              = (array) ( $response['bootstrap_measurement_plan'] ?? array() );
 		$bootstrap_before_capacity     = (array) ( $response['bootstrap_capacity_before'] ?? array() );
 		$response['capacity_evidence'] = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, ! empty($response['bootstrap']['success']));
+		$deadline_error                = $this->worktree_operation_deadline_error('bootstrap_finalize', $operation_deadline, $operation_timeout, $operation_started);
+		if ( null !== $deadline_error ) {
+			return $deadline_error;
+		}
 		unset($response['bootstrap_deferred'], $response['bootstrap_reservation'], $response['bootstrap_capacity_before'], $response['bootstrap_measurement_plan']);
 		return $response;
 	}
@@ -5348,7 +5392,7 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Normalize lock wait expiry into the public aggregate timeout contract. */
-	private function worktree_operation_lock_result( mixed $result, string $phase, int $timeout, float $started ): mixed {
+	private function worktree_operation_lock_result( mixed $result, string $phase, int $timeout, float $started, bool $mutation_committed = false, array $extra = array() ): mixed {
 		$data = is_wp_error($result) ? (array) $result->get_error_data() : array();
 		if ( ! is_wp_error($result) || 'workspace_repo_busy' !== $result->get_error_code() || empty($data['timed_out']) ) {
 			return $result;
@@ -5375,10 +5419,10 @@ trait WorkspaceWorktreeLifecycle {
 			$phase,
 			$timeout,
 			$started,
-			array(
+			array_merge($extra, array(
 				'lock_owner' => $owner,
-				'admission'  => array_merge(array( 'mutation_committed' => false ), $admission),
-			)
+				'admission'  => array_merge(array( 'mutation_committed' => $mutation_committed ), $admission),
+			))
 		);
 	}
 

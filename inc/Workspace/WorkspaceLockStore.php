@@ -95,10 +95,10 @@ final class WorkspaceLockStore {
 			return $metadata;
 		}
 
-		$activated_at                    = self::now_timestamp();
+		$activated_at                    = self::now_microtime();
 		$duration                        = max(1, (int) $metadata['lease_duration_seconds']);
-		$metadata['lease_activated_at']  = gmdate('c', $activated_at);
-		$metadata['expected_release_at'] = gmdate('c', $activated_at + $duration);
+		$metadata['lease_activated_at']  = gmdate('c', (int) floor($activated_at));
+		$metadata['expected_release_at'] = gmdate('c', (int) ceil($activated_at + $duration));
 
 		return $metadata;
 	}
@@ -538,6 +538,15 @@ final class WorkspaceLockStore {
 			$time = (int) apply_filters('datamachine_code_workspace_lock_time', $time);
 		}
 		return max(0, $time);
+	}
+
+	/** Preserve a complete duration before storing its deadline at DB precision. */
+	private static function now_microtime(): float {
+		$time = microtime(true);
+		if ( function_exists('apply_filters') ) {
+			$time = (float) apply_filters('datamachine_code_workspace_lock_time', $time);
+		}
+		return max(0.0, $time);
 	}
 
 	private static function released_ttl_seconds(): int {

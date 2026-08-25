@@ -24,8 +24,9 @@ final class Worktree_Add_Aggregate_Deadline_Harness {
 	public function workspace(string $path): void { $this->workspace_path = $path; }
 	public function remaining(float $deadline): int { return $this->worktree_operation_remaining_seconds($deadline); }
 	public function handoff_remaining(float $deadline): int { return $this->worktree_handoff_remaining_seconds($deadline); }
+	public function handoff_timeout(array $allocation): WP_Error { return $this->worktree_handoff_timeout($allocation); }
 	public function timeout(string $phase, int $timeout, float $started, array $extra = array()): WP_Error { return $this->worktree_operation_timeout($phase, $timeout, $started, $extra); }
-	public function lock_result(mixed $result, string $phase, int $timeout, float $started): mixed { return $this->worktree_operation_lock_result($result, $phase, $timeout, $started); }
+	public function lock_result(mixed $result, string $phase, int $timeout, float $started, bool $mutation_committed = false, array $extra = array()): mixed { return $this->worktree_operation_lock_result($result, $phase, $timeout, $started, $mutation_committed, $extra); }
 	public static function admission_wait(float $deadline, float $now, bool $bootstrap = true): int { return self::worktree_capacity_admission_wait_seconds($deadline, $now, $bootstrap); }
 	public function rollback(string $primary, string $path, string $branch): void { $this->rollback_rejected_worktree($primary, $path, $branch, true); }
 	protected function run_git(string $path, string $args, int $timeout = 30): array|WP_Error {
@@ -72,8 +73,13 @@ try {
 	deadline_assert('owner_operation_deadline' === ($timed_out->get_error_data()['admission']['eta_status'] ?? null), 'lock expiry must retain ETA status');
 	deadline_assert(false === ($timed_out->get_error_data()['admission']['mutation_committed'] ?? true), 'lock expiry must confirm that admission has not mutated the workspace');
 	deadline_assert(true === ($timed_out->get_error_data()['retryable'] ?? false), 'lock expiry must be explicitly retryable');
+	$committed = $harness->lock_result(new WP_Error('workspace_repo_busy', 'busy', array( 'timed_out' => true )), 'handoff_proof_lock_wait', 2, $started, true, array( 'handle' => 'repo@allocated', 'allocation_preserved' => true ));
+	deadline_assert(true === ($committed->get_error_data()['admission']['mutation_committed'] ?? false), 'post-allocation proof contention must report that mutation was committed');
+	deadline_assert('repo@allocated' === ($committed->get_error_data()['handle'] ?? null) && true === ($committed->get_error_data()['allocation_preserved'] ?? false), 'post-allocation proof contention must retain recovery evidence');
+	$handoff_timeout = $harness->handoff_timeout(array( 'handle' => 'repo@allocated', 'path' => '/tmp/allocated' ));
+	deadline_assert(true === ($handoff_timeout->get_error_data()['mutation_committed'] ?? false) && true === ($handoff_timeout->get_error_data()['allocation_preserved'] ?? false), 'post-allocation partial-second handoff timeout must retain committed allocation evidence');
 	deadline_assert($harness::worktree_capacity_wait_timeout_seconds(true) === $harness::worktree_capacity_admission_timeout_seconds(), 'Capacity admission must use the aggregate capacity wait policy.');
-	deadline_assert($harness::worktree_capacity_operation_timeout_seconds(true) * 2 === $harness::worktree_capacity_aggregate_timeout_seconds(true), 'The declared aggregate bound must include both bounded admission and the acquisition-time allocation section.');
+	deadline_assert(($harness::worktree_capacity_operation_timeout_seconds(true) * 2) + 1 === $harness::worktree_capacity_aggregate_timeout_seconds(true), 'The declared aggregate bound must include bounded pre-admission work, the acquisition-time allocation section, and the DB timestamp precision ceiling.');
 	deadline_assert(40 === $harness::admission_wait(140.0, 100.0), 'Capacity admission must wait for the aggregate operation budget rather than a fixed 30-second cap.');
 	foreach (array( 'follower-one', 'follower-two' ) as $follower) {
 		deadline_assert(35 === $harness::admission_wait(135.0, 100.0), $follower . ' must remain queued behind a healthy 35-second holder without consuming a fixed 30-second timeout.');

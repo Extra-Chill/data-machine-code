@@ -161,11 +161,18 @@ final class WorkspaceMutationLock {
 
 		$started = microtime(true);
 		$timeout = max(0, $timeout);
+		$first_attempt        = true;
+		$acquisition_deadline = isset($metadata['_acquisition_deadline']) && is_numeric($metadata['_acquisition_deadline']) ? (float) $metadata['_acquisition_deadline'] : null;
+		unset($metadata['_acquisition_deadline']);
 
 		do {
 			self::update_request($request_path, 'queued');
-			if ( self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
-				$metadata = WorkspaceLockStore::activate_lease($metadata);
+			$acquired = self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$elapsed  = microtime(true) - $started;
+			$deadline_live = null === $acquisition_deadline || microtime(true) < $acquisition_deadline;
+			if ( $acquired && $deadline_live && ( ( 0 === $timeout && $first_attempt ) || $elapsed < $timeout ) ) {
+				$metadata                  = WorkspaceLockStore::activate_lease($metadata);
+				$metadata['owner_context'] = WorkspaceLockStore::default_owner_context();
 				self::update_request($request_path, 'acquiring');
 				$lock_id = WorkspaceLockStore::register_acquired(
 					array(
@@ -176,7 +183,7 @@ final class WorkspaceMutationLock {
 							'workspace_path' => $workspace_path,
 							'lock_path'      => $lock_path,
 							'request_id'     => $request_id,
-							'owner_context'  => WorkspaceLockStore::default_owner_context(),
+							'owner_context'  => $metadata['owner_context'],
 						)),
 					)
 				);
@@ -190,8 +197,11 @@ final class WorkspaceMutationLock {
 				self::update_request($request_path, 'acquired');
 				return new self($handle, (int) $lock_id, $request_path, $metadata);
 			}
+			if ( $acquired ) {
+				flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			}
 
-			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
+			if ( 0 === $timeout || $elapsed >= $timeout || ! $deadline_live ) {
 				$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
 				$error_data['wait_timeout_seconds'] = $timeout;
 				$error_data['timed_out']            = true;
@@ -209,6 +219,7 @@ final class WorkspaceMutationLock {
 				);
 			}
 
+			$first_attempt = false;
 			usleep(self::POLL_USEC);
 		} while ( true );
 	}
@@ -264,7 +275,7 @@ final class WorkspaceMutationLock {
 			'lease_activated_at'    => $this->metadata['lease_activated_at'] ?? null,
 			'expected_release_at'   => $this->metadata['expected_release_at'] ?? null,
 			'lease_duration_seconds' => isset($this->metadata['lease_duration_seconds']) ? (int) $this->metadata['lease_duration_seconds'] : null,
-			'owner'                 => WorkspaceLockStore::default_owner_context(),
+			'owner'                 => $this->metadata['owner_context'] ?? WorkspaceLockStore::default_owner_context(),
 		);
 	}
 

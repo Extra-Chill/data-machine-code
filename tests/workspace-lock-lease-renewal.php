@@ -77,16 +77,16 @@ try {
 	$workspace = sys_get_temp_dir() . '/dmc-allocation-heartbeat-' . bin2hex(random_bytes(6));
 	mkdir($workspace, 0777, true);
 	$allocation_time = time();
-	$GLOBALS['workspace_lock_test_time'] = $allocation_time;
+	$GLOBALS['workspace_lock_test_time'] = $allocation_time + 0.75;
 	$lock = WorkspaceMutationLock::acquire($workspace, 'workspace-capacity-admission', 1, array( 'lease_duration_seconds' => 35, 'lease_strategy' => 'acquisition_bounded' ));
 	lease_assert($lock instanceof WorkspaceMutationLock, 'Could not acquire the DB-backed allocation heartbeat lock.');
 	$deadline = (float) $lock->lease_deadline();
 	$started  = $deadline - 35.0;
-	lease_assert((int) $deadline === $allocation_time + 35, 'Allocation lease duration was not activated from the ownership acquisition time.');
+	lease_assert((int) $deadline === $allocation_time + 36, 'Allocation lease duration was truncated instead of rounded up to the DB timestamp precision.');
 	$before_heartbeat = WorkspaceLockStore::active_lock('worktree-workspace-capacity-admission', 'workspace-capacity-admission');
 	lease_assert(is_array($before_heartbeat) && 0 === ($before_heartbeat['heartbeat_age_seconds'] ?? null), 'DB-backed allocation lock did not expose its initial heartbeat.');
-	lease_assert(gmdate('c', $allocation_time) === ($before_heartbeat['metadata']['lease_activated_at'] ?? null) && gmdate('c', $allocation_time + 35) === ($before_heartbeat['metadata']['expected_release_at'] ?? null), 'DB-backed allocation evidence did not retain acquisition and release timestamps.');
-	$GLOBALS['workspace_lock_test_time'] = $allocation_time + 5;
+	lease_assert(gmdate('c', $allocation_time) === ($before_heartbeat['metadata']['lease_activated_at'] ?? null) && gmdate('c', $allocation_time + 36) === ($before_heartbeat['metadata']['expected_release_at'] ?? null), 'DB-backed allocation evidence did not retain acquisition and rounded release timestamps.');
+	$GLOBALS['workspace_lock_test_time'] = $allocation_time + 5.75;
 	$lifecycle = new Workspace_Lock_Lease_Lifecycle_Harness();
 	lease_assert(null === $lifecycle->heartbeat($lock, 'bootstrap', $deadline, 35, $started), 'A virtual allocation phase beyond 30 seconds must renew its DB-backed heartbeat.');
 	$active = WorkspaceLockStore::active_lock('worktree-workspace-capacity-admission', 'workspace-capacity-admission');
@@ -96,8 +96,10 @@ try {
 	$lost = $lifecycle->heartbeat($lock, 'bootstrap_complete', $deadline, 35, $started);
 	lease_assert($lost instanceof WP_Error && 'workspace_capacity_lock_heartbeat_lost' === $lost->get_error_code() && 'bootstrap_complete' === ($lost->get_error_data()['phase'] ?? null), 'Lost DB heartbeat must abort allocation with typed lifecycle evidence.');
 	$lock->release();
+	$expired = WorkspaceMutationLock::acquire($workspace, 'deadline-expired', 1, array( '_acquisition_deadline' => microtime(true) - 1.0 ));
+	lease_assert($expired instanceof WP_Error && 'workspace_repo_busy' === $expired->get_error_code(), 'An OS flock acquired after its absolute admission deadline must be released without registering ownership.');
 	foreach (glob($workspace . '/.locks/requests/*.json') ?: array() as $file) { @unlink($file); }
-	@rmdir($workspace . '/.locks/requests'); @unlink($workspace . '/.locks/worktree-workspace-capacity-admission.lock'); @rmdir($workspace . '/.locks'); @rmdir($workspace);
+	@rmdir($workspace . '/.locks/requests'); @unlink($workspace . '/.locks/worktree-workspace-capacity-admission.lock'); @unlink($workspace . '/.locks/worktree-deadline-expired.lock'); @rmdir($workspace . '/.locks'); @rmdir($workspace);
 	echo "workspace-lock-lease-renewal ok\n";
 } finally {
 	@unlink($database);
