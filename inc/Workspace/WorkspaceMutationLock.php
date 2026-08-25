@@ -64,11 +64,14 @@ final class WorkspaceMutationLock {
 			return $lock;
 		}
 
+		$result  = null;
+		$release = true;
 		try {
-			return self::invoke_callback($callback, $lock);
+			$result = self::invoke_callback($callback, $lock);
 		} finally {
-			$lock->release();
+			$release = $lock->release();
 		}
+		return is_wp_error($release) ? self::completed_callback_error($release, $result) : $result;
 	}
 
 	/**
@@ -81,7 +84,9 @@ final class WorkspaceMutationLock {
 	public static function with_repos( string $workspace_path, array $repos, callable $callback, int $timeout = 30 ): mixed {
 		$repos = array_values(array_unique(array_filter(array_map(array( self::class, 'sanitize_repo_key' ), $repos))));
 		sort($repos, SORT_STRING);
-		$locks = array();
+		$locks         = array();
+		$result        = null;
+		$release_error = null;
 
 		try {
 			foreach ( $repos as $repo ) {
@@ -92,12 +97,16 @@ final class WorkspaceMutationLock {
 				$locks[] = $lock;
 			}
 
-			return $callback();
+			$result = $callback();
 		} finally {
 			foreach ( array_reverse($locks) as $lock ) {
-				$lock->release();
+				$released = $lock->release();
+				if ( null === $release_error && is_wp_error($released) ) {
+					$release_error = $released;
+				}
 			}
 		}
+		return $release_error instanceof \WP_Error ? self::completed_callback_error($release_error, $result) : $result;
 	}
 
 	/**
@@ -203,18 +212,23 @@ final class WorkspaceMutationLock {
 		} while ( true );
 	}
 
-	public function release(): void {
+	public function release(): true|\WP_Error {
 		if ( null === $this->handle ) {
-			return;
+			return true;
 		}
 
-		WorkspaceLockStore::release($this->lock_id);
+		$released = WorkspaceLockStore::release($this->lock_id);
 		flock($this->handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($this->handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		$this->handle  = null;
 		$this->lock_id = 0;
 		self::remove_request($this->request_path);
 		$this->request_path = '';
+		if ( is_wp_error($released) ) {
+			$data = array_merge((array) $released->get_error_data(), array( 'filesystem_lock_released' => true ));
+			return new \WP_Error($released->get_error_code(), $released->get_error_message(), $data);
+		}
+		return true;
 	}
 
 	/** Refresh the DB lease for callers that reach a bounded long-running phase. */
@@ -250,6 +264,18 @@ final class WorkspaceMutationLock {
 		}
 
 		return $callback($lock);
+	}
+
+	/** Preserve terminal ownership-write failure after a callback has returned. */
+	private static function completed_callback_error( \WP_Error $error, mixed $result ): \WP_Error {
+		$data = array_merge(
+			(array) $error->get_error_data(),
+			array(
+				'lock_callback_completed'  => true,
+				'lock_callback_error_code' => is_wp_error($result) ? $result->get_error_code() : null,
+			)
+		);
+		return new \WP_Error($error->get_error_code(), $error->get_error_message(), $data);
 	}
 
 	/**

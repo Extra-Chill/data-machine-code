@@ -23,35 +23,182 @@ final class Lock_Contention_Wpdb {
 	public string $prefix = 'wp_';
 	public string $last_error = '';
 	public int $insert_id = 0;
+	private bool $errors_suppressed = false;
+
 	public function __construct(private PDO $pdo) {}
 	public function db_server_info(): string { return 'SQLite'; }
+	public function suppress_errors(bool $suppress = true): bool { $previous = $this->errors_suppressed; $this->errors_suppressed = $suppress; return $previous; }
 	public function prepare(string $query, mixed ...$args): string { foreach ($args as $arg) { $query = preg_replace('/%[sd]/', is_int($arg) ? (string) $arg : $this->pdo->quote((string) $arg), $query, 1); } return $query; }
-	public function get_var(string $query): mixed { if (str_contains($query, 'SHOW TABLES')) { return 'wp_datamachine_code_locks'; } try { $this->last_error = ''; return $this->pdo->query($query)->fetchColumn(); } catch (PDOException $e) { $this->last_error = $e->getMessage(); return false; } }
-	public function get_col(string $query): array { try { $this->last_error = ''; return $this->pdo->query($query)->fetchAll(PDO::FETCH_COLUMN); } catch (PDOException $e) { $this->last_error = $e->getMessage(); return array(); } }
-	public function get_results(string $query, string $format): array { try { $this->last_error = ''; return $this->pdo->query($query)->fetchAll(PDO::FETCH_ASSOC); } catch (PDOException $e) { $this->last_error = $e->getMessage(); return array(); } }
-	public function insert(string $table, array $data, array $formats): int|false { try { $columns = array_keys($data); $sql = 'INSERT INTO ' . $table . ' (' . implode(',', $columns) . ') VALUES (' . implode(',', array_fill(0, count($columns), '?')) . ')'; $this->pdo->prepare($sql)->execute(array_values($data)); $this->insert_id = (int) $this->pdo->lastInsertId(); $this->last_error = ''; return 1; } catch (PDOException $e) { $this->last_error = $e->getMessage(); return false; } }
-	public function update(string $table, array $data, array $where, array $formats, array $where_formats): int|false { return 1; }
+	public function get_var(string $query): mixed {
+		if (str_contains($query, 'SHOW TABLES')) { return 'wp_datamachine_code_locks'; }
+		try { $this->last_error = ''; return $this->pdo->query($query)->fetchColumn(); } catch (PDOException $error) { return $this->failed($error); }
+	}
+	public function get_col(string $query): array { try { $this->last_error = ''; return $this->pdo->query($query)->fetchAll(PDO::FETCH_COLUMN); } catch (PDOException $error) { $this->failed($error); return array(); } }
+	public function get_results(string $query, string $format): array { try { $this->last_error = ''; return $this->pdo->query($query)->fetchAll(PDO::FETCH_ASSOC); } catch (PDOException $error) { $this->failed($error); return array(); } }
+	public function insert(string $table, array $data, array $formats): int|false {
+		try {
+			$columns = array_keys($data);
+			$sql = 'INSERT INTO ' . $table . ' (' . implode(',', $columns) . ') VALUES (' . implode(',', array_fill(0, count($columns), '?')) . ')';
+			$this->pdo->prepare($sql)->execute(array_values($data));
+			$this->insert_id = (int) $this->pdo->lastInsertId();
+			$this->last_error = '';
+			return 1;
+		} catch (PDOException $error) { return $this->failed($error); }
+	}
+	public function update(string $table, array $data, array $where, array $formats, array $where_formats): int|false {
+		try {
+			$sets = implode(',', array_map(static fn(string $column): string => $column . ' = ?', array_keys($data)));
+			$terms = implode(' AND ', array_map(static fn(string $column): string => $column . ' = ?', array_keys($where)));
+			$statement = $this->pdo->prepare('UPDATE ' . $table . ' SET ' . $sets . ' WHERE ' . $terms);
+			$statement->execute(array_merge(array_values($data), array_values($where)));
+			$this->last_error = '';
+			return $statement->rowCount();
+		} catch (PDOException $error) { return $this->failed($error); }
+	}
+	private function failed(PDOException $error): false {
+		$this->last_error = $error->getMessage();
+		if (!$this->errors_suppressed) { fwrite(STDOUT, '<div class="sqlite-error">' . $this->last_error . '</div>'); }
+		return false;
+	}
 }
-function lock_sqlite_assert(bool $condition, string $message): void { if (!$condition) { throw new RuntimeException($message); } }
-function lock_sqlite_worker(string $mode, string $database, string $workspace): void {
-	$GLOBALS['filters'] = array('datamachine_code_sqlite_busy_retry_max_wait_ms' => 'admit' === $mode ? 1000 : 100);
-	$pdo = new PDO('sqlite:' . $database); $pdo->exec('PRAGMA busy_timeout = 0'); $GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo);
-	if ('status' === $mode) { fwrite(STDOUT, json_encode(WorkspaceMutationLock::status($workspace))); return; }
-	$result = WorkspaceMutationLock::with_repo($workspace, 'repo', static fn(): string => 'acquired', 1);
-	fwrite(STDOUT, json_encode(is_wp_error($result) ? array('error' => $result->get_error_code(), 'data' => $result->get_error_data()) : array('success' => true)));
-}
-if ('--worker' === ($argv[1] ?? '')) { lock_sqlite_worker((string) $argv[2], (string) $argv[3], (string) $argv[4]); exit; }
 
-$database = tempnam(sys_get_temp_dir(), 'dmc-lock-sqlite-'); $workspace = sys_get_temp_dir() . '/dmc-lock-sqlite-' . bin2hex(random_bytes(6)); mkdir($workspace);
+function lock_sqlite_assert(bool $condition, string $message): void { if (!$condition) { throw new RuntimeException($message); } }
+function lock_sqlite_result(mixed $result): array { return is_wp_error($result) ? array('error' => $result->get_error_code(), 'data' => $result->get_error_data()) : array('success' => $result); }
+function lock_sqlite_wait(string $path): void { $deadline = microtime(true) + 5; while (!is_file($path) && microtime(true) < $deadline) { usleep(10000); } if (!is_file($path)) { throw new RuntimeException('Timed out waiting for contention signal: ' . $path); } }
+
+function lock_sqlite_worker(array $args): void {
+	[$mode, $database, $workspace, $repo, $max_wait_ms] = $args;
+	$GLOBALS['filters'] = array('datamachine_code_sqlite_busy_retry_max_wait_ms' => (int) $max_wait_ms);
+	$pdo = new PDO('sqlite:' . $database);
+	$pdo->exec('PRAGMA busy_timeout = 0');
+	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo);
+
+	if ('allocation' === $mode) {
+		$result = WorkspaceMutationLock::with_repo($workspace, $repo, static function (WorkspaceMutationLock $lock): mixed {
+			$heartbeat = $lock->heartbeat(array('contention_phase' => 'allocation'));
+			return is_wp_error($heartbeat) ? $heartbeat : 'allocated';
+		}, 2);
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+
+	if ('acquire' === $mode) {
+		fwrite(STDOUT, json_encode(lock_sqlite_result(WorkspaceMutationLock::acquire($workspace, $repo, 1))));
+		return;
+	}
+
+	$ready = (string) ($args[5] ?? '');
+	$go = (string) ($args[6] ?? '');
+	if ('handoff' === $mode) {
+		$result = WorkspaceMutationLock::with_repo($workspace, $repo, static function () use ($ready, $go): string {
+			file_put_contents($ready, 'ready');
+			lock_sqlite_wait($go);
+			return 'mutation-complete';
+		}, 1);
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+
+	$lock = WorkspaceMutationLock::acquire($workspace, $repo, 1);
+	if (is_wp_error($lock)) { fwrite(STDOUT, json_encode(array('acquire' => lock_sqlite_result($lock)))); return; }
+	file_put_contents($ready, 'ready');
+	lock_sqlite_wait($go);
+	$phase = 'heartbeat' === $mode ? $lock->heartbeat(array('contention_phase' => 'heartbeat')) : true;
+	$release = $lock->release();
+	fwrite(STDOUT, json_encode(array('phase' => lock_sqlite_result($phase), 'release' => lock_sqlite_result($release))));
+}
+
+if ('--worker' === ($argv[1] ?? '')) { lock_sqlite_worker(array_slice($argv, 2)); exit; }
+
+function lock_sqlite_start(array $arguments): array {
+	$process = proc_open(array_merge(array(PHP_BINARY, __FILE__, '--worker'), $arguments), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+	lock_sqlite_assert(is_resource($process), 'Could not start SQLite contention worker.');
+	return array($process, $pipes);
+}
+function lock_sqlite_finish(array $worker): array {
+	[$process, $pipes] = $worker;
+	$output = stream_get_contents($pipes[1]);
+	$error = stream_get_contents($pipes[2]);
+	fclose($pipes[1]); fclose($pipes[2]);
+	lock_sqlite_assert(0 === proc_close($process), 'SQLite contention worker failed: ' . $error);
+	lock_sqlite_assert(!str_contains($output, '<div'), 'SQLite debug HTML escaped the canonical retry boundary: ' . $output);
+	$result = json_decode($output, true);
+	lock_sqlite_assert(is_array($result), 'SQLite contention worker returned invalid JSON: ' . $output);
+	return $result;
+}
+function lock_sqlite_signal_worker(string $mode, string $database, string $workspace, string $repo, int $max_wait_ms): array {
+	$ready = $workspace . '/' . $repo . '-ready';
+	$go = $workspace . '/' . $repo . '-go';
+	$worker = lock_sqlite_start(array($mode, $database, $workspace, $repo, (string) $max_wait_ms, $ready, $go));
+	lock_sqlite_wait($ready);
+	return array($worker, $ready, $go);
+}
+function lock_sqlite_cleanup_signals(string ...$paths): void { foreach ($paths as $path) { @unlink($path); } }
+
+$database = tempnam(sys_get_temp_dir(), 'dmc-lock-sqlite-');
+$workspace = sys_get_temp_dir() . '/dmc-lock-sqlite-' . bin2hex(random_bytes(6));
+mkdir($workspace);
 try {
-	$setup = new PDO('sqlite:' . $database); $setup->exec('CREATE TABLE wp_datamachine_code_locks (id INTEGER PRIMARY KEY, lock_key TEXT, purpose TEXT, scope TEXT, owner TEXT, run_id TEXT, job_id INTEGER, status TEXT, acquired_at TEXT, heartbeat_at TEXT, expires_at TEXT, released_at TEXT, metadata_json TEXT)');
+	$setup = new PDO('sqlite:' . $database);
+	$setup->exec('CREATE TABLE wp_datamachine_code_locks (id INTEGER PRIMARY KEY, lock_key TEXT, purpose TEXT, scope TEXT, owner TEXT, run_id TEXT, job_id INTEGER, status TEXT, acquired_at TEXT, heartbeat_at TEXT, expires_at TEXT, released_at TEXT, metadata_json TEXT)');
+
+	// Eight independent allocations must all survive a short shared writer lock.
 	$setup->exec('BEGIN EXCLUSIVE');
-	$admission = proc_open(array(PHP_BINARY, __FILE__, '--worker', 'admit', $database, $workspace), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $admission_pipes);
-	usleep(50000);
-	$status = proc_open(array(PHP_BINARY, __FILE__, '--worker', 'status', $database, $workspace), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $status_pipes);
-	$status_output = stream_get_contents($status_pipes[1]); $status_error = stream_get_contents($status_pipes[2]); fclose($status_pipes[1]); fclose($status_pipes[2]); lock_sqlite_assert(0 === proc_close($status), 'Status worker failed: ' . $status_error);
-	$status_result = json_decode($status_output, true); lock_sqlite_assert('contended' === ($status_result['database']['state'] ?? ''), 'SQLite contention was not projected by status.'); lock_sqlite_assert(1 === count($status_result['queue'] ?? array()), 'Filesystem queue was unavailable during SQLite contention.');
-	$admission_output = stream_get_contents($admission_pipes[1]); fclose($admission_pipes[1]); fclose($admission_pipes[2]); lock_sqlite_assert(0 === proc_close($admission), 'Admission worker failed.');
-	$setup->exec('COMMIT'); $admission_result = json_decode($admission_output, true); lock_sqlite_assert('workspace_sqlite_lock_contention' === ($admission_result['error'] ?? ''), 'Admission did not return retryable SQLite contention.'); lock_sqlite_assert(array() === (glob($workspace . '/.locks/requests/*.json') ?: array()), 'Failed admission left a request record.'); lock_sqlite_assert(0 === (int) $setup->query('SELECT COUNT(*) FROM wp_datamachine_code_locks')->fetchColumn(), 'Failed admission left a DB lock row.');
+	$workers = array();
+	foreach (range(1, 8) as $number) { $workers[] = lock_sqlite_start(array('allocation', $database, $workspace, 'repo-' . $number, '2000')); }
+	usleep(150000);
+	$setup->exec('COMMIT');
+	foreach ($workers as $worker) { $result = lock_sqlite_finish($worker); lock_sqlite_assert('allocated' === ($result['success'] ?? null), 'Brief multi-process allocation contention did not serialize successfully.'); }
+	lock_sqlite_assert(8 === (int) $setup->query("SELECT COUNT(*) FROM wp_datamachine_code_locks WHERE status = 'released'")->fetchColumn(), 'Concurrent allocations left missing or active ownership rows.');
+
+	// Exhausted acquisition returns typed retry evidence and releases the OS flock.
+	$setup->exec('BEGIN EXCLUSIVE');
+	$acquire = lock_sqlite_finish(lock_sqlite_start(array('acquire', $database, $workspace, 'acquire-exhausted', '100')));
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($acquire['error'] ?? null) && 'workspace_lock_register' === ($acquire['data']['operation'] ?? null), 'Exhausted acquisition did not retain canonical contention diagnostics.');
+	$raw = fopen($workspace . '/.locks/worktree-acquire-exhausted.lock', 'c');
+	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Failed DB acquisition retained the authoritative OS flock.');
+	flock($raw, LOCK_UN); fclose($raw);
+	$setup->exec('COMMIT');
+
+	// Heartbeat retries through a short lock, then reports both writes if exhausted.
+	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);
+	$setup->exec('BEGIN EXCLUSIVE'); file_put_contents($go, 'go'); usleep(150000); $setup->exec('COMMIT');
+	$heartbeat = lock_sqlite_finish($worker);
+	lock_sqlite_assert(true === ($heartbeat['phase']['success'] ?? null) && true === ($heartbeat['release']['success'] ?? null), 'Heartbeat/release did not recover within the retry budget.');
+	lock_sqlite_cleanup_signals($ready, $go);
+
+	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-exhausted', 100);
+	$setup->exec('BEGIN EXCLUSIVE'); file_put_contents($go, 'go');
+	$heartbeat = lock_sqlite_finish($worker);
+	lock_sqlite_assert('workspace_lock_heartbeat' === ($heartbeat['phase']['data']['operation'] ?? null), 'Exhausted heartbeat lost its canonical operation receipt.');
+	lock_sqlite_assert('workspace_lock_release' === ($heartbeat['release']['data']['operation'] ?? null) && true === ($heartbeat['release']['data']['filesystem_lock_released'] ?? null), 'Exhausted heartbeat cleanup hid release contention or retained the OS flock.');
+	$setup->exec('COMMIT'); lock_sqlite_cleanup_signals($ready, $go);
+
+	[$worker, $ready, $go] = lock_sqlite_signal_worker('release', $database, $workspace, 'release-recovers', 1000);
+	$setup->exec('BEGIN EXCLUSIVE'); file_put_contents($go, 'go'); usleep(150000); $setup->exec('COMMIT');
+	$release = lock_sqlite_finish($worker);
+	lock_sqlite_assert(true === ($release['release']['success'] ?? null), 'Release did not recover within the bounded retry budget.');
+	lock_sqlite_cleanup_signals($ready, $go);
+
+	// A terminal release write is surfaced after callback completion, but cannot
+	// keep the filesystem lock authoritative beyond the callback lifetime.
+	[$worker, $ready, $go] = lock_sqlite_signal_worker('handoff', $database, $workspace, 'release-exhausted', 100);
+	$setup->exec('BEGIN EXCLUSIVE'); file_put_contents($go, 'go');
+	$handoff = lock_sqlite_finish($worker);
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($handoff['error'] ?? null) && 'workspace_lock_release' === ($handoff['data']['operation'] ?? null), 'Terminal release contention was hidden after callback completion.');
+	lock_sqlite_assert(true === ($handoff['data']['lock_callback_completed'] ?? null) && true === ($handoff['data']['filesystem_lock_released'] ?? null), 'Terminal release receipt did not distinguish callback completion from OS unlock.');
+	$raw = fopen($workspace . '/.locks/worktree-release-exhausted.lock', 'c');
+	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Terminal DB release failure retained the authoritative OS flock.');
+	flock($raw, LOCK_UN); fclose($raw);
+	$setup->exec('COMMIT'); lock_sqlite_cleanup_signals($ready, $go);
+
 	echo "workspace-lock-sqlite-contention ok\n";
-} finally { foreach (glob($workspace . '/.locks/requests/*') ?: array() as $file) { @unlink($file); } @rmdir($workspace . '/.locks/requests'); foreach (glob($workspace . '/.locks/*') ?: array() as $file) { @unlink($file); } @rmdir($workspace . '/.locks'); @rmdir($workspace); @unlink($database); }
+} finally {
+	foreach (glob($workspace . '/.locks/requests/*') ?: array() as $file) { @unlink($file); }
+	@rmdir($workspace . '/.locks/requests');
+	foreach (glob($workspace . '/.locks/*') ?: array() as $file) { @unlink($file); }
+	@rmdir($workspace . '/.locks');
+	foreach (glob($workspace . '/*') ?: array() as $file) { @unlink($file); }
+	@rmdir($workspace);
+	@unlink($database);
+}

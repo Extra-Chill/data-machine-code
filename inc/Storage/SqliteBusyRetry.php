@@ -33,48 +33,58 @@ final class SqliteBusyRetry {
 		$max_delay_ms    = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_delay_ms', self::DEFAULT_MAX_DELAY_MS);
 		$started_at      = hrtime(true);
 		$attempts        = 0;
+		$restore_errors  = null;
+		if ( method_exists($wpdb, 'suppress_errors') ) {
+			$restore_errors = (bool) $wpdb->suppress_errors(true);
+		}
 
-		do {
-			++$attempts;
-			$busy_message = '';
-			try {
-				$result = $operation();
-			} catch ( \Throwable $error ) {
-				if ( ! self::is_busy_error($error->getMessage()) ) {
-					throw $error;
+		try {
+			do {
+				++$attempts;
+				$busy_message = '';
+				try {
+					$result = $operation();
+				} catch ( \Throwable $error ) {
+					if ( ! self::is_busy_error($error->getMessage()) ) {
+						throw $error;
+					}
+					$busy_message = $error->getMessage();
+					$result       = false;
 				}
-				$busy_message = $error->getMessage();
-				$result       = false;
-			}
 
-			$last_error = '' !== $busy_message ? $busy_message : (string) ( $wpdb->last_error ?? '' );
-			if ( false !== $result || ! self::is_busy_error($last_error) ) {
-				return $result;
-			}
+				$last_error = '' !== $busy_message ? $busy_message : (string) ( $wpdb->last_error ?? '' );
+				if ( false !== $result || ! self::is_busy_error($last_error) ) {
+					return $result;
+				}
 
-			$elapsed_ms = (int) floor(( hrtime(true) - $started_at ) / 1000000);
-			if ( $elapsed_ms >= $max_wait_ms ) {
-				return new \WP_Error(
-					'workspace_sqlite_lock_contention',
-					'SQLite remained locked while updating the Data Machine Code workspace registry. Retry this command after concurrent writers finish. MySQL is recommended for concurrent fleet workloads.',
-					array(
-						'status'              => 503,
-						'backend'             => 'sqlite',
-						'operation'           => $operation_name,
-						'attempts'            => $attempts,
-						'waited_ms'           => $elapsed_ms,
-						'max_wait_ms'         => $max_wait_ms,
-						'retry_after_seconds' => 1,
-						'guidance'            => 'Retry after concurrent registry writers finish. Use MySQL for concurrent fleet cooking; SQLite remains supported for lower-concurrency workloads.',
-					)
-				);
-			}
+				$elapsed_ms = (int) floor(( hrtime(true) - $started_at ) / 1000000);
+				if ( $elapsed_ms >= $max_wait_ms ) {
+					return new \WP_Error(
+						'workspace_sqlite_lock_contention',
+						'SQLite remained locked while updating the Data Machine Code workspace registry. Retry this command after concurrent writers finish. MySQL is recommended for concurrent fleet workloads.',
+						array(
+							'status'              => 503,
+							'backend'             => 'sqlite',
+							'operation'           => $operation_name,
+							'attempts'            => $attempts,
+							'waited_ms'           => $elapsed_ms,
+							'max_wait_ms'         => $max_wait_ms,
+							'retry_after_seconds' => 1,
+							'guidance'            => 'Retry after concurrent registry writers finish. Use MySQL for concurrent fleet cooking; SQLite remains supported for lower-concurrency workloads.',
+						)
+					);
+				}
 
-			$delay_ms = min($max_delay_ms, $initial_wait_ms * ( 2 ** ( $attempts - 1 ) ));
-			// Spread competing CLI processes without extending the configured budget.
-			$jitter_ms = $delay_ms > 1 ? random_int(0, max(1, (int) floor($delay_ms / 4))) : 0;
-			usleep( (int) min($delay_ms + $jitter_ms, max(1, $max_wait_ms - $elapsed_ms)) * 1000);
-		} while ( true );
+				$delay_ms = min($max_delay_ms, $initial_wait_ms * ( 2 ** ( $attempts - 1 ) ));
+				// Spread competing CLI processes without extending the configured budget.
+				$jitter_ms = $delay_ms > 1 ? random_int(0, max(1, (int) floor($delay_ms / 4))) : 0;
+				usleep( (int) min($delay_ms + $jitter_ms, max(1, $max_wait_ms - $elapsed_ms)) * 1000);
+			} while ( true );
+		} finally {
+			if ( null !== $restore_errors ) {
+				$wpdb->suppress_errors($restore_errors);
+			}
+		}
 	}
 
 	/**
