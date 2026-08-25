@@ -5439,7 +5439,30 @@ class WorkspaceCommand extends BaseCommand {
 	/** Render phase checkpoints without contaminating JSON response stdout. */
 	private function render_worktree_add_progress( array $event, bool $json ): void {
 		$phase   = (string) ( $event['phase'] ?? 'working' );
-		$message = sprintf('Worktree add progress: %s.', str_replace('_', ' ', $phase));
+		$details = array();
+		if ( in_array($phase, array( 'lock_request', 'lock_wait' ), true) ) {
+			foreach ( array( 'request_id' => 'request', 'scope' => 'scope', 'queue_position' => 'queue' ) as $key => $label ) {
+				if ( isset($event[ $key ]) && '' !== (string) $event[ $key ] ) {
+					$details[] = $label . '=' . (string) $event[ $key ];
+				}
+			}
+			$owner = (array) ( $event['owner'] ?? array() );
+			foreach ( array( 'owner', 'run_id', 'job_id', 'source' ) as $key ) {
+				if ( isset($owner[ $key ]) && '' !== (string) $owner[ $key ] ) {
+					$details[] = 'owner=' . (string) $owner[ $key ];
+					break;
+				}
+			}
+			if ( isset($event['elapsed_seconds']) ) {
+				$details[] = 'waited=' . (string) $event['elapsed_seconds'] . 's';
+			}
+			if ( isset($event['estimated_wait_seconds']) ) {
+				$details[] = 'eta=' . (string) $event['estimated_wait_seconds'] . 's';
+			} elseif ( isset($event['eta_status']) ) {
+				$details[] = 'eta=' . (string) $event['eta_status'];
+			}
+		}
+		$message = sprintf('Worktree add progress: %s%s.', str_replace('_', ' ', $phase), array() === $details ? '' : ' (' . implode('; ', $details) . ')');
 		if ( $json ) {
 			WP_CLI::warning($message);
 			return;

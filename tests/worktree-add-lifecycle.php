@@ -529,7 +529,7 @@ try {
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
 	$progress = array();
 	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
-		$progress[] = $event['phase'] ?? null;
+		$progress[] = $event;
 	});
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	$handoff_freshness = (array) ( $result['handoff_freshness'] ?? array() );
@@ -570,7 +570,10 @@ try {
 	assert_true(is_wp_error($replayed_drift) && 'untrusted_worktree_handoff_proof' === $replayed_drift->get_error_code(), 'a drift response could be replayed as a trusted proof');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
-	assert_true(array( 'repo_preflight', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'capacity_admitted', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata' ) === $progress, 'worktree add did not emit ordered phase progress through slow probes, creation, and post-create inventory persistence');
+	$progress_phases = array_column($progress, 'phase');
+	assert_true(array( 'repo_preflight', 'lock_request', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'lock_request', 'capacity_admitted', 'lock_request', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata', 'lock_request' ) === $progress_phases, 'worktree add did not emit ordered phase and lock-request progress through creation, inventory persistence, and handoff');
+	$lock_requests = array_values(array_filter($progress, static fn( array $event ): bool => 'lock_request' === ($event['phase'] ?? null)));
+	assert_true(4 === count($lock_requests) && array() === array_filter($lock_requests, static fn( array $event ): bool => empty($event['request_id']) || empty($event['scope']) || empty($event['queue_position'])), 'worktree add lock progress omitted durable request identity, scope, or queue position');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
