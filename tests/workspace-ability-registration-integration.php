@@ -73,6 +73,8 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 	$expected = array(
 		'datamachine-code/workspace-list',
 		'datamachine-code/workspace-worktree-add',
+		'datamachine-code/workspace-worktree-attach-tracker',
+		'datamachine-code/workspace-worktree-provider-capabilities',
 		'datamachine-code/workspace-worktree-handoff-revalidate',
 		'datamachine-code/workspace-worktree-list',
 		'datamachine-code/workspace-git-pull',
@@ -81,6 +83,10 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 		if ( ! wp_get_ability($ability) ) {
 			throw new RuntimeException(sprintf('Expected workspace ability %s was not registered.', $ability));
 		}
+	}
+	$attachment = $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-worktree-attach-tracker'];
+	if ( 'boolean' !== ( $attachment['input_schema']['properties']['dry_run']['type'] ?? null ) || ! in_array('eligible', (array) ( $attachment['output_schema']['properties']['status']['enum'] ?? array() ), true) ) {
+		throw new RuntimeException('Tracker attachment ability omitted its dry-run input or eligible preview status.');
 	}
 	$worktree_list_schema = wp_get_ability('datamachine-code/workspace-worktree-list')['input_schema']['properties'] ?? array();
 	if ( ! isset($worktree_list_schema['task_ref'], $worktree_list_schema['owner_run_ref']) ) {
