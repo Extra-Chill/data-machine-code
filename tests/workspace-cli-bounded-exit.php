@@ -32,14 +32,27 @@ namespace {
 	final class WP_CLI {
 		/** @var array<string,mixed> */
 		public static array $commands = array();
+		/** @var array<string,array<string,mixed>> */
+		public static array $command_args = array();
 		/** @var list<string> */
 		public static array $output = array();
 		/** @param array<string,mixed> $args */
-		public static function add_command( string $name, mixed $command, array $args = array() ): void { self::$commands[ $name ] = $command; }
-		public static function line( string $message ): void { self::$output[] = $message; }
-		public static function log( string $message ): void { self::$output[] = $message; }
-		public static function warning( string $message ): void { self::$output[] = $message; }
+		public static function add_command( string $name, mixed $command, array $args = array() ): void { self::$commands[ $name ] = $command; self::$command_args[ $name ] = $args; }
+		public static function line( string $message ): void { self::$output[] = $message; @fwrite(STDOUT, $message . "\n"); }
+		public static function log( string $message ): void { self::line($message); }
+		public static function success( string $message ): void { self::line('Success: ' . $message); }
+		public static function warning( string $message ): void { self::$output[] = $message; @fwrite(STDERR, 'Warning: ' . $message . "\n"); }
 		public static function error( string $message ): never { throw new \RuntimeException($message); }
+	}
+
+	final class BoundedExitWpdb {
+		public bool $connected = true;
+		public function __construct( private string $marker ) {}
+		public function close(): bool {
+			$this->connected = false;
+			file_put_contents($this->marker . '.db', 'closed');
+			return true;
+		}
 	}
 
 	/** @var array<string,array<int,array<int,callable>>> */
@@ -82,6 +95,18 @@ namespace {
 	function wp_get_ability( string $name ): object {
 		return new class {
 			public function execute( array $input ): array {
+				if ( 'repo@merged-branch' === ( $input['handle'] ?? null ) ) {
+					bounded_exit_assert('https://github.com/example/repo/pull/123' === ($input['pr'] ?? null), 'Finalize did not preserve the merged PR URL.');
+					bounded_exit_assert('success' === ($input['owner_terminal_outcome'] ?? null), 'Finalize did not preserve the owner terminal outcome.');
+					file_put_contents((string) $GLOBALS['dmc_bounded_exit_marker'], 'committed');
+					return array(
+						'success' => true,
+						'handle' => 'repo@merged-branch',
+						'lifecycle_state' => 'pr_opened',
+						'metadata' => array( 'pr_url' => (string) $input['pr'], 'owner_terminal_outcome' => 'success' ),
+						'message' => 'Worktree "repo@merged-branch" marked pr_opened.',
+					);
+				}
 				if ( 'repo' === ( $input['repo'] ?? null ) ) {
 					return array( 'success' => true, 'worktrees' => array() );
 				}
@@ -99,7 +124,8 @@ namespace {
 		}
 		define('WPINC', 'wp-includes');
 		define('ABSPATH', __DIR__ . '/fixtures/');
-		$GLOBALS['argv'] = array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'list', 'repo' );
+		$GLOBALS['argv'] = array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'finalize', 'repo@merged-branch', '--pr=https://github.com/example/repo/pull/123', '--owner-terminal-outcome=success', '--format=json' );
+		$GLOBALS['dmc_bounded_exit_marker'] = $marker;
 		require_once dirname(__DIR__) . '/data-machine-code.php';
 
 		bounded_exit_assert(
@@ -111,39 +137,34 @@ namespace {
 			exit(0);
 		}
 
-		// Mirrors WordPress' native shutdown bridge, followed by an unrelated native
-		// cleanup callback that DMC must neither remove nor bypass.
+		$GLOBALS['wpdb'] = new BoundedExitWpdb($marker);
+		// Mirrors WordPress' native shutdown bridge. A later native owner remains
+		// safe, but would retain the process while the request-owned DB stays open.
 		register_shutdown_function(static function (): void { do_action('shutdown'); });
-		register_shutdown_function(static function () use ( $marker ): void { file_put_contents($marker, 'native-cleanup'); });
+		register_shutdown_function(static function () use ( $marker, $mode ): void {
+			if ( 'success' === $mode && $GLOBALS['wpdb']->connected ) {
+				usleep(1500000);
+			}
+			file_put_contents($marker . '.native', 'native-cleanup');
+		});
 		datamachine_code_register_cli_commands();
-		bounded_exit_assert(isset(WP_CLI::$commands['datamachine-code workspace']), 'Minimal runtime did not register the workspace command.');
-		$command_class = WP_CLI::$commands['datamachine-code workspace'];
-		$command = new $command_class();
-		$started = microtime(true);
-		$command->list_repos(array(), array());
-		$command->show(array( 'repo' ), array());
-		$worktree_list = WP_CLI::$commands['datamachine-code workspace worktree list'] ?? null;
-		bounded_exit_assert(is_callable($worktree_list), 'Minimal runtime did not register the filtered worktree-list leaf command.');
-		$worktree_list(array( 'repo' ), array());
-		bounded_exit_assert(microtime(true) - $started < 0.5, 'Registered workspace list/show dispatch exceeded its bounded command deadline.');
-		bounded_exit_assert(in_array('Name:     repo', WP_CLI::$output, true), 'Workspace show did not dispatch through the registered command.');
-		if ( 'broken_pipe' === $mode ) {
-			@fwrite(STDOUT, "buffered-output {$mode}\n");
-			@fflush(STDOUT);
-		} else {
-			fwrite(STDOUT, "buffered-output {$mode}\n");
-			fflush(STDOUT);
-		}
+		$command_name = 'datamachine-code workspace worktree finalize';
+		$finalize = WP_CLI::$commands[ $command_name ] ?? null;
+		$after_invoke = WP_CLI::$command_args[ $command_name ]['after_invoke'] ?? null;
+		bounded_exit_assert(is_callable($finalize) && is_callable($after_invoke), 'Finalize leaf did not register its bounded owning-layer callback.');
+		$finalize(array( 'repo@merged-branch' ), array( 'pr' => 'https://github.com/example/repo/pull/123', 'owner-terminal-outcome' => 'success', 'format' => 'json' ));
 		if ( 'failure' === $mode ) {
 			// WP-CLI runs after_invoke after command output and before its final exit.
 			fwrite(STDERR, 'after_invoke failure');
 			exit(1);
 		}
+		$after_invoke();
 		exit(0);
 	}
 
 	foreach ( array( 'success' => 0, 'failure' => 1, 'broken_pipe' => 0, 'embedded' => 0 ) as $mode => $expected_status ) {
 		$marker = tempnam(sys_get_temp_dir(), 'dmc-bounded-exit-');
+		$started = microtime(true);
 		$process = proc_open(array( PHP_BINARY, __FILE__, 'child', $mode, $marker), array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes);
 		bounded_exit_assert(is_resource($process), "Could not start {$mode} lifecycle process.");
 		if ( 'broken_pipe' === $mode ) {
@@ -156,6 +177,7 @@ namespace {
 		$error = stream_get_contents($pipes[2]);
 		fclose($pipes[2]);
 		$status = proc_close($process);
+		$elapsed = microtime(true) - $started;
 
 		bounded_exit_assert($expected_status === $status, "{$mode} lifecycle returned {$status}: {$error}");
 		if ( 'embedded' === $mode ) {
@@ -164,9 +186,20 @@ namespace {
 			if ( 'broken_pipe' === $mode ) {
 				bounded_exit_assert('' === $output, 'Broken-pipe parent unexpectedly retained child stdout.');
 			} else {
-				bounded_exit_assert(str_contains($output, "buffered-output {$mode}"), "{$mode} output was not flushed before shutdown.");
+				bounded_exit_assert(str_contains($output, 'Success: Worktree "repo@merged-branch" marked pr_opened.'), "{$mode} finalizer receipt was not flushed before shutdown.");
 			}
-			bounded_exit_assert('native-cleanup' === file_get_contents($marker), "{$mode} native cleanup was suppressed.");
+			bounded_exit_assert('committed' === file_get_contents($marker), "{$mode} finalizer mutation did not commit before output.");
+			bounded_exit_assert('native-cleanup' === file_get_contents($marker . '.native'), "{$mode} native cleanup was suppressed.");
+			if ( 'failure' === $mode ) {
+				bounded_exit_assert(! file_exists($marker . '.db'), 'A failure before after_invoke unexpectedly closed the database.');
+			} else {
+				bounded_exit_assert('closed' === file_get_contents($marker . '.db'), "{$mode} database connection survived successful output.");
+				bounded_exit_assert($elapsed < 0.5, sprintf('%s exceeded the bounded process deadline: %.3fs.', $mode, $elapsed));
+			}
+			unlink($marker . '.native');
+			if ( file_exists($marker . '.db') ) {
+				unlink($marker . '.db');
+			}
 		}
 		unlink($marker);
 	}
