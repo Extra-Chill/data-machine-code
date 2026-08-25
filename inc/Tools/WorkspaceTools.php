@@ -278,7 +278,10 @@ class WorkspaceTools extends BaseTool
             return $this->buildErrorResponse('Workspace show ability not available.', 'workspace_show');
         }
 
-        $input = array( 'name' => $parameters['name'] ?? '' );
+        $input = array(
+            'name'    => $parameters['name'] ?? '',
+            'refresh' => ! empty($parameters['refresh']),
+        );
         $input = $this->resolveWorkspaceInputAliases($input, array( 'name' ));
         $result = $ability->execute($input);
 
@@ -1167,6 +1170,10 @@ class WorkspaceTools extends BaseTool
             'name' => array(
             'type'        => 'string',
             'description' => 'Workspace repository directory name.',
+                    ),
+                    'refresh' => array(
+                        'type'        => 'boolean',
+                        'description' => 'Fetch the tracked remote under a bounded timeout before classifying primary freshness.',
                     ),
             ),
             'required'   => array( 'name' ),

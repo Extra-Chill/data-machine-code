@@ -72,6 +72,7 @@ use DataMachineCode\Support\GitHubRemote;
 defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/WorkspaceHandle.php';
+require_once __DIR__ . '/TaskUrl.php';
 
 class WorktreeContextInjector {
 
@@ -253,6 +254,19 @@ class WorktreeContextInjector {
 		$metadata['agent_slug'] = is_string($agent) ? $agent : '';
 
 		return array_filter($metadata, fn( $value ) => null !== $value);
+	}
+
+	/** Return current ownership in the same typed shape persisted at allocation. */
+	public static function current_ownership_identity(): array {
+		$identity = array(
+			'origin_site_url' => function_exists('home_url') ? self::normalize_scalar_metadata_value(home_url()) : null,
+			'origin_agent'    => self::resolve_origin_agent(),
+			'origin_session'  => self::resolve_origin_session(),
+		);
+
+		return function_exists('apply_filters')
+			? (array) apply_filters('datamachine_code_worktree_current_ownership_identity', $identity)
+			: $identity;
 	}
 
 	/** Normalize the optional purpose-owned disposable worktree contract. */
@@ -1663,16 +1677,18 @@ class WorktreeContextInjector {
 			return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
 		}
 
+		$fresh_metadata  = self::get_metadata_fresh($handle) ?? array();
 		$stored_metadata = array();
 		$updated         = SqliteBusyRetry::run(
 			'worktree_lifecycle_metadata_option',
-			static function () use ( $handle, $metadata, &$stored_metadata ): bool {
+			static function () use ( $handle, $metadata, $fresh_metadata, &$stored_metadata ): bool {
 				$all = get_option( self::METADATA_OPTION, array() );
 				if ( ! is_array( $all ) ) {
 					$all = array();
 				}
 
-				$existing        = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : self::get_inventory_metadata( $handle ) ?? array();
+				$option_metadata = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? (array) $all[ $handle ] : array();
+				$existing        = self::merge_lifecycle_metadata_sources($option_metadata, $fresh_metadata);
 				$stored_metadata = array_merge( $existing, $metadata );
 				$all[ $handle ]  = $stored_metadata;
 
@@ -1698,7 +1714,9 @@ class WorktreeContextInjector {
 		}
 		$payload = @file_get_contents($target['path']);
 		$stored  = is_string($payload) ? json_decode($payload, true) : null;
-		return is_array($stored) && $target['task_url'] === TaskUrl::canonicalize($stored['task_url'] ?? null);
+		return is_array($stored)
+			&& $target['task_url'] === TaskUrl::canonicalize($stored['task_url'] ?? null)
+			&& $target['task_ref'] === self::normalize_task_ref($stored['task_ref'] ?? null);
 	}
 
 	/** Persist the task tracker beside linked-worktree Git metadata. */
@@ -1707,27 +1725,39 @@ class WorktreeContextInjector {
 		if ( null === $target ) {
 			return true;
 		}
+		$payload = array(
+			'schema'   => 'datamachine-code/worktree-tracker/v1',
+			'task_url' => $target['task_url'],
+			'task_ref' => $target['task_ref'],
+		);
 		$encoded = function_exists('wp_json_encode')
-			? wp_json_encode(array( 'task_url' => $target['task_url'] ))
-			: json_encode(array( 'task_url' => $target['task_url'] ), JSON_UNESCAPED_SLASHES);
+			? wp_json_encode($payload)
+			: json_encode($payload, JSON_UNESCAPED_SLASHES);
 		if ( ! is_string($encoded) || false === @file_put_contents($target['path'], $encoded, LOCK_EX) ) {
 			return new \WP_Error('worktree_standalone_tracker_persist_failed', 'Could not persist standalone worktree tracker identity.', array( 'path' => $target['path'] ));
 		}
 		return true;
 	}
 
-	/** @return array{path:string,task_url:string}|null */
+	/** @return array{path:string,task_url:?string,task_ref:?string}|null */
 	private static function standalone_worktree_tracker_target( array $metadata ): ?array {
-		$task_url = is_array($metadata['origin_task'] ?? null) ? TaskUrl::canonicalize($metadata['origin_task']['task_url'] ?? null) : null;
+		$task     = is_array($metadata['origin_task'] ?? null) ? (array) $metadata['origin_task'] : array();
+		$task_url = TaskUrl::canonicalize($task['task_url'] ?? null);
+		$task_ref = self::normalize_task_ref($task['task_ref'] ?? null);
 		$path     = is_string($metadata['path'] ?? null) ? rtrim((string) $metadata['path'], '/') : '';
 		$pointer  = '' !== $path && is_file($path . '/.git') ? trim((string) @file_get_contents($path . '/.git')) : '';
-		if ( null === $task_url || ! str_starts_with($pointer, 'gitdir:') ) {
+		if ( ( null === $task_url && null === $task_ref ) || ! str_starts_with($pointer, 'gitdir:') ) {
 			return null;
 		}
 		$git_dir = trim(substr($pointer, strlen('gitdir:')));
 		$git_dir = str_starts_with($git_dir, '/') ? $git_dir : $path . '/' . $git_dir;
 		$git_dir = realpath($git_dir);
-		return false === $git_dir ? null : array( 'path' => $git_dir . '/datamachine-code-task.json', 'task_url' => $task_url );
+		return false === $git_dir ? null : array( 'path' => $git_dir . '/datamachine-code-task.json', 'task_url' => $task_url, 'task_ref' => $task_ref );
+	}
+
+	private static function normalize_task_ref( mixed $task_ref ): ?string {
+		$task_ref = self::normalize_scalar_metadata_value($task_ref);
+		return null !== $task_ref && ! preg_match('/\s/', $task_ref) ? strtolower($task_ref) : null;
 	}
 
 	/** Persist the exact creation contract before Git materializes a worktree. */
@@ -2078,13 +2108,12 @@ class WorktreeContextInjector {
 			return $inventory_metadata;
 		}
 
-		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) );
-		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) );
-		$inventory_seen = false !== $inventory_seen ? $inventory_seen : 0;
-		$option_seen    = false !== $option_seen ? $option_seen : 0;
-		return $option_seen > $inventory_seen
-			? array_merge($inventory_metadata, $option_metadata)
-			: array_merge($option_metadata, $inventory_metadata);
+		return self::merge_lifecycle_metadata_sources($option_metadata, $inventory_metadata);
+	}
+
+	/** Inventory is the committed record; retain option-only fields for legacy rows. */
+	private static function merge_lifecycle_metadata_sources( array $option_metadata, array $inventory_metadata ): array {
+		return array_merge($option_metadata, $inventory_metadata);
 	}
 
 	/**

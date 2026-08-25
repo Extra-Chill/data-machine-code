@@ -73,6 +73,9 @@ function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed
 	if ( is_callable($callback) ) {
 		return $callback($value, ...$args);
 	}
+	if ( 'datamachine_worktree_disk_budget_thresholds' === $hook_name ) {
+		return array_merge((array) $value, array( 'refuse_free_bytes' => 0, 'refuse_free_percent' => 0, 'refuse_free_inodes' => 0, 'refuse_free_inode_percent' => 0 ));
+	}
 
 	return $value;
 }
@@ -181,6 +184,9 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function get_row( string $sql, string $output = ARRAY_A ): ?array {
 		++$this->get_row_calls;
+		if ( preg_match('/\bhandle\s*=\s*([^\s]+)\s+LIMIT/i', $sql, $matches) && isset($this->rows[ stripslashes($matches[1]) ]) ) {
+			return $this->rows[ stripslashes($matches[1]) ];
+		}
 		foreach ( $this->rows as $handle => $row ) {
 			if ( str_contains($sql, (string) $handle) ) {
 				return $row;
@@ -192,7 +198,7 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function prepare( string $query, mixed ...$args ): string {
 		foreach ( $args as $arg ) {
-			$query = preg_replace('/%s/', addslashes((string) $arg), $query, 1) ?? $query;
+			$query = preg_replace('/%[is]/', addslashes((string) $arg), $query, 1) ?? $query;
 		}
 		return $query;
 	}
@@ -523,7 +529,7 @@ try {
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
 	$progress = array();
 	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
-		$progress[] = $event['phase'] ?? null;
+		$progress[] = $event;
 	});
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	$handoff_freshness = (array) ( $result['handoff_freshness'] ?? array() );
@@ -564,7 +570,10 @@ try {
 	assert_true(is_wp_error($replayed_drift) && 'untrusted_worktree_handoff_proof' === $replayed_drift->get_error_code(), 'a drift response could be replayed as a trusted proof');
 	assert_true(is_dir($result['path']), 'successful worktree_add path is not accessible');
 	assert_true(isset($wpdb->rows['homeboy@audit-primitives-20260616']), 'successful worktree_add was not persisted');
-	assert_true(array( 'repo_preflight', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'capacity_admitted', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata' ) === $progress, 'worktree add did not emit ordered phase progress through slow probes, creation, and post-create inventory persistence');
+	$progress_phases = array_column($progress, 'phase');
+	assert_true(array( 'repo_preflight', 'lock_request', 'freshness_fetch', 'demand_planning', 'capacity_lock_wait', 'lock_request', 'capacity_admitted', 'lock_request', 'git_worktree_add', 'post_create_validation', 'staleness_probe', 'default_branch_probe', 'lifecycle_metadata', 'inventory_metadata', 'lock_request' ) === $progress_phases, 'worktree add did not emit ordered phase and lock-request progress through creation, inventory persistence, and handoff');
+	$lock_requests = array_values(array_filter($progress, static fn( array $event ): bool => 'lock_request' === ($event['phase'] ?? null)));
+	assert_true(4 === count($lock_requests) && array() === array_filter($lock_requests, static fn( array $event ): bool => empty($event['request_id']) || empty($event['scope']) || empty($event['queue_position'])), 'worktree add lock progress omitted durable request identity, scope, or queue position');
 	assert_true(null === WorktreeContextInjector::get_creation_intent('homeboy@audit-primitives-20260616'), 'successful worktree_add left its pre-creation journal behind');
 	assert_true('refused' !== ( $result['disk_budget']['status'] ?? '' ), 'normal worktree_add should pass the disk budget gate without hard refusal');
 	$capacity_locks = array_values(
@@ -582,6 +591,78 @@ try {
 	assert_true(! is_wp_error($environment_tracker), is_wp_error($environment_tracker) ? $environment_tracker->get_error_message() : 'environment tracker fallback failed');
 	assert_true('https://example.test/issues/environment' === ( $wpdb->rows['homeboy@audit-primitives-environment-tracker']['task_url'] ?? '' ), 'environment tracker metadata was not persisted');
 	putenv('DATAMACHINE_TASK_URL');
+
+	$attach_fixture = $workspace->worktree_add('homeboy', 'attach-tracker', 'origin/main', false, false, false, false, true);
+	assert_true(! is_wp_error($attach_fixture), is_wp_error($attach_fixture) ? $attach_fixture->get_error_message() : 'tracker attachment fixture creation failed');
+	$attach_handle = 'homeboy@attach-tracker';
+	$owner_identity = array(
+		'origin_site_url' => 'https://example.test',
+		'origin_agent'    => 'fixture-agent',
+		'origin_session'  => array( 'primary_id' => 'fixture-session', 'ids' => array( 'fixture' => array( 'session_id' => 'fixture-session' ) ) ),
+	);
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity'] = static fn( array $identity ): array => $owner_identity;
+	$owner_stored = WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
+	assert_true(true === $owner_stored, 'tracker attachment fixture ownership could not be persisted');
+	$before_attach = WorktreeContextInjector::get_metadata_fresh($attach_handle);
+	$before_head     = trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path']));
+	$before_branch   = trim(run_command('git branch --show-current', (string) $attach_fixture['path']));
+	$before_status   = run_command('git status --porcelain', (string) $attach_fixture['path']);
+	$attach_git_dir  = trim(run_command('git rev-parse --git-dir', (string) $attach_fixture['path']));
+	$attach_git_dir  = str_starts_with($attach_git_dir, '/') ? $attach_git_dir : (string) $attach_fixture['path'] . '/' . $attach_git_dir;
+	$tracker_path    = (string) realpath($attach_git_dir) . '/datamachine-code-task.json';
+	$before_tracker  = is_file($tracker_path) ? file_get_contents($tracker_path) : null;
+	$before_row      = $wpdb->rows[ $attach_handle ];
+	$before_options  = $GLOBALS['datamachine_code_test_options'];
+	$conflicting_provider_tracker = wp_json_encode(array( 'schema' => 'datamachine-code/worktree-tracker/v1', 'task_url' => 'https://github.com/Example/Homeboy/issues/999', 'task_ref' => null ));
+	file_put_contents($tracker_path, $conflicting_provider_tracker);
+	$provider_conflict_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$provider_conflict_apply   = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($provider_conflict_preview) && is_wp_error($provider_conflict_apply) && 'worktree_tracker_conflict' === $provider_conflict_preview->get_error_code() && $provider_conflict_preview->get_error_code() === $provider_conflict_apply->get_error_code(), 'conflicting standalone tracker ownership was not rejected consistently');
+	assert_true($conflicting_provider_tracker === file_get_contents($tracker_path) && $before_attach === WorktreeContextInjector::get_metadata_fresh($attach_handle), 'conflicting standalone tracker rejection changed provider or lifecycle ownership');
+	unlink($tracker_path);
+	$before_locks = $wpdb->lock_rows;
+	$preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ), true);
+	assert_true(! is_wp_error($preview) && true === ( $preview['dry_run'] ?? false ) && 'eligible' === ( $preview['status'] ?? null ), is_wp_error($preview) ? $preview->get_error_message() : 'clean tracker attachment preview was not eligible');
+	assert_true($attach_handle === ( $preview['handle'] ?? null ) && (string) $attach_fixture['path'] === ( $preview['path'] ?? null ) && $before_branch === ( $preview['branch'] ?? null ) && $before_head === ( $preview['worktree_sha'] ?? null ), 'attachment preview omitted exact handle, path, branch, or HEAD identity');
+	assert_true('https://github.com/Example/Homeboy/issues/1221' === ( $preview['task_identity'] ?? null ) && ( $preview['tracker'] ?? null ) === array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), 'attachment preview omitted canonical task identity');
+	assert_true($before_attach === WorktreeContextInjector::get_metadata_fresh($attach_handle) && $before_row === $wpdb->rows[ $attach_handle ] && $before_options === $GLOBALS['datamachine_code_test_options'], 'attachment preview mutated lifecycle metadata');
+	assert_true($before_locks === $wpdb->lock_rows, 'attachment preview acquired a mutation lock');
+	assert_true($before_head === trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path'])) && $before_branch === trim(run_command('git branch --show-current', (string) $attach_fixture['path'])) && $before_status === run_command('git status --porcelain', (string) $attach_fixture['path']), 'attachment preview changed Git state');
+	assert_true($before_tracker === ( is_file($tracker_path) ? file_get_contents($tracker_path) : null ), 'attachment preview wrote standalone Git tracker metadata');
+	$attached = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => ' HTTPS://GitHub.COM/Example/Homeboy/issues/1221/?from=test#fragment ' ));
+	assert_true(! is_wp_error($attached) && 'attached' === ( $attached['status'] ?? null ), is_wp_error($attached) ? $attached->get_error_message() : 'clean tracker attachment was not admitted');
+	assert_true($preview['allocation_identity'] === $attached['allocation_identity'] && $preview['tracker'] === $attached['tracker'], 'eligible preview and apply did not bind the same allocation and task predicates');
+	assert_true('https://github.com/Example/Homeboy/issues/1221' === ( $attached['provider_resolution']['task_url'] ?? null ), 'attachment did not return a fresh canonical provider resolution');
+	assert_true($before_head === trim(run_command('git rev-parse HEAD', (string) $attach_fixture['path'])), 'tracker attachment changed HEAD');
+	$after_attach = WorktreeContextInjector::get_metadata_fresh($attach_handle);
+	foreach ( array( 'lifecycle_state', 'branch', 'reuse_contract', 'provisioning' ) as $preserved_field ) {
+		assert_true(($before_attach[ $preserved_field ] ?? null) === ($after_attach[ $preserved_field ] ?? null), 'tracker attachment changed preserved metadata field ' . $preserved_field);
+	}
+	file_put_contents($tracker_path, wp_json_encode(array( 'schema' => 'datamachine-code/worktree-tracker/v1', 'task_url' => 'https://github.com/Example/Homeboy/issues/999', 'task_ref' => null )));
+	$stale_provider_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$stale_provider_apply   = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($stale_provider_preview) && is_wp_error($stale_provider_apply) && 'worktree_tracker_provider_mismatch' === $stale_provider_preview->get_error_code() && $stale_provider_preview->get_error_code() === $stale_provider_apply->get_error_code(), 'stale standalone tracker projection did not fail preview and apply consistently');
+	assert_true(true === WorktreeContextInjector::store_standalone_worktree_tracker($after_attach), 'standalone tracker fixture could not be restored after stale projection coverage');
+	$replay_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	assert_true(! is_wp_error($replay_preview) && 'already_attached' === ( $replay_preview['status'] ?? null ), 'same-tracker preview was not typed as already_attached');
+	$replayed = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(! is_wp_error($replayed) && 'already_attached' === ( $replayed['status'] ?? null ) && ! empty($replayed['receipt']['proof_id']), 'same-tracker replay was not idempotent with a fresh proof');
+	$conflict_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_ref' => 'example/homeboy#1222' ), true);
+	$conflict = $workspace->worktree_attach_tracker($attach_handle, array( 'task_ref' => 'example/homeboy#1222' ));
+	assert_true(is_wp_error($conflict_preview) && is_wp_error($conflict) && $conflict_preview->get_error_code() === $conflict->get_error_code() && 'worktree_tracker_conflict' === $conflict->get_error_code(), 'preview/apply conflict predicates diverged');
+	file_put_contents((string) $attach_fixture['path'] . '/dirty-attachment.txt', "dirty\n");
+	$dirty_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$dirty_attachment = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($dirty_preview) && is_wp_error($dirty_attachment) && $dirty_preview->get_error_code() === $dirty_attachment->get_error_code() && 'worktree_dirty' === $dirty_attachment->get_error_code(), 'preview/apply cleanliness predicates diverged');
+	unlink((string) $attach_fixture['path'] . '/dirty-attachment.txt');
+	$foreign_owner = $owner_identity;
+	$foreign_owner['origin_session']['primary_id'] = 'foreign-session';
+	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $foreign_owner);
+	$foreign_preview = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ), true);
+	$foreign_attachment = $workspace->worktree_attach_tracker($attach_handle, array( 'task_url' => 'https://github.com/Example/Homeboy/issues/1221' ));
+	assert_true(is_wp_error($foreign_preview) && is_wp_error($foreign_attachment) && $foreign_preview->get_error_code() === $foreign_attachment->get_error_code() && 'worktree_tracker_owner_mismatch' === $foreign_attachment->get_error_code(), 'preview/apply owner predicates diverged');
+	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity']);
 
 	$reusable = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
 	assert_true(! is_wp_error($reusable), is_wp_error($reusable) ? $reusable->get_error_message() : 'reuse fixture creation failed');
@@ -899,9 +980,47 @@ try {
 	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'staged terminal finalization mutated lifecycle metadata');
 	run_command('git reset --hard HEAD', $result['path']);
 
+	// Exercise finalization against a high-cardinality clean checkout whose
+	// status duration deterministically exceeds the former five-second budget.
+	$large_fixture = $result['path'] . '/large-clean-fixture';
+	for ( $directory = 0; $directory < 50; ++$directory ) {
+		$fixture_directory = $large_fixture . '/' . str_pad((string) $directory, 2, '0', STR_PAD_LEFT);
+		mkdir($fixture_directory, 0777, true);
+		for ( $file = 0; $file < 100; ++$file ) {
+			file_put_contents($fixture_directory . '/' . str_pad((string) $file, 3, '0', STR_PAD_LEFT) . '.txt', "tracked\n");
+		}
+	}
+	run_command('git add large-clean-fixture && git commit -m large-clean-finalizer-fixture && git push', $result['path']);
+	assert_true('' === run_command('git status --porcelain', $result['path']), 'large finalizer fixture is not clean');
+	$finalizer_bin = $workspace_root . '/finalizer-bin';
+	mkdir($finalizer_bin, 0777, true);
+	$real_git = trim((string) shell_exec('command -v git'));
+	assert_true('' !== $real_git, 'finalizer fixture could not resolve git');
+	file_put_contents($finalizer_bin . '/git', "#!/bin/sh\nif [ \"\$3\" = status ]; then sleep \"\${DMC_FINALIZER_STATUS_DELAY:-0}\"; fi\nexec " . escapeshellarg($real_git) . " \"\$@\"\n");
+	chmod($finalizer_bin . '/git', 0755);
+	$original_path = getenv('PATH');
+	putenv('PATH=' . $finalizer_bin . ':' . ( false === $original_path ? '' : $original_path ));
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 1;
+	putenv('DMC_FINALIZER_STATUS_DELAY=10');
+	$started = microtime(true);
+	$finalizer_timeout = $workspace->worktree_finalize($handle, 'merged');
+	$elapsed = microtime(true) - $started;
+	assert_true(is_wp_error($finalizer_timeout) && 'worktree_finalize_dirty_probe_failed' === $finalizer_timeout->get_error_code(), 'stalled finalizer dirty probe did not return its typed phase error');
+	assert_true('dirty_probe' === ( $finalizer_timeout->get_error_data()['phase'] ?? null ), 'stalled finalizer dirty probe did not preserve its phase');
+	assert_true(1 === ( $finalizer_timeout->get_error_data()['timeout_seconds'] ?? null ), 'stalled finalizer dirty probe did not preserve its configured budget');
+	assert_true($elapsed < 3.0, sprintf('stalled finalizer dirty probe exceeded its configured bound: %.3fs', $elapsed));
+	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'timed-out finalizer dirty probe mutated lifecycle metadata');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 7;
+	putenv('DMC_FINALIZER_STATUS_DELAY=6');
+	$started = microtime(true);
 	$clean_finalization = $workspace->worktree_finalize($handle, 'merged');
+	$elapsed = microtime(true) - $started;
+	putenv('DMC_FINALIZER_STATUS_DELAY');
+	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds']);
 	assert_true(! is_wp_error($clean_finalization), 'clean terminal worktree finalization failed');
 	assert_true('cleanup_eligible' === ( $clean_finalization['lifecycle_state'] ?? '' ), 'clean terminal finalization did not expose cleanup eligibility');
+	assert_true($elapsed >= 5.5 && $elapsed < 8.5, sprintf('large clean-worktree finalization did not honor its deterministic process budget: %.3fs', $elapsed));
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
@@ -1091,6 +1210,7 @@ try {
 	$handoff_upload_pack = $workspace_root . '/handoff-upload-pack.sh';
 	$handoff_call_count  = $workspace_root . '/handoff-upload-pack-count';
 	$progress            = array();
+	$bootstrap_outcome_at_complete = null;
 	$timed_out_add       = $workspace->worktree_add(
 		'homeboy',
 		'handoff-partial-success',
@@ -1100,19 +1220,20 @@ try {
 		false,
 		false,
 		true,
-		array(),
+		array( 'task_url' => 'https://example.test/issues/handoff-partial-success' ),
 		false,
-		false,
+		true,
 		array(),
 		'reuse_compatible',
 		false,
 		false,
-		static function ( array $event ) use ( &$progress, $primary_path, $handoff_upload_pack, $handoff_call_count ): void {
+		static function ( array $event ) use ( &$progress, &$bootstrap_outcome_at_complete, $primary_path, $handoff_upload_pack, $handoff_call_count ): void {
 			$phase      = (string) ( $event['phase'] ?? '' );
 			$progress[] = $phase;
 			if ( 'bootstrap_complete' !== $phase ) {
 				return;
 			}
+			$bootstrap_outcome_at_complete = WorktreeContextInjector::get_metadata_fresh('homeboy@handoff-partial-success')['provisioning']['bootstrap']['outcome'] ?? null;
 			$script = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\n[ \"\$count\" -eq 1 ] && exec git upload-pack \"\$@\"\nsleep 10\n";
 			file_put_contents($handoff_upload_pack, $script);
 			chmod($handoff_upload_pack, 0700);
@@ -1124,16 +1245,32 @@ try {
 	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
 	assert_true('worktree_handoff_revalidation_timeout' === ( $partial['handoff_freshness']['reason'] ?? null ) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff timeout lost its typed freshness cause or committed allocation');
 	assert_true(false === ( $partial['retry']['repeat_allocation'] ?? true ) && false === ( $partial['retry']['repeat_bootstrap'] ?? true ), 'post-commit handoff timeout did not prohibit allocation/bootstrap replay');
+	assert_true('succeeded' === $bootstrap_outcome_at_complete, 'no-op bootstrap completion became observable before terminal metadata was persisted');
 	$continuation = (array) ( $partial['continuation'] ?? array() );
 	$identity     = (array) ( $continuation['input']['allocation_identity'] ?? array() );
 	$handle       = (string) ( $partial['handle'] ?? '' );
 	assert_true('datamachine-code/workspace-worktree-handoff-resume' === ( $continuation['ability'] ?? null ) && true === ( $continuation['read_only'] ?? false ) && true === ( $continuation['idempotent'] ?? false ), 'partial success omitted its exact read-only continuation');
 	assert_true(str_contains((string) ( $continuation['command'] ?? '' ), 'worktree handoff-resume') && $handle === ( $continuation['input']['handle'] ?? null ), 'partial success continuation was not directly executable for the exact handle');
 
+	// Model an older copied runtime whose option snapshot missed the terminal
+	// inventory write, then perform the partial metadata write made after upgrade.
+	$stale_copied_metadata = WorktreeContextInjector::get_metadata_fresh($handle) ?? array();
+	$stale_copied_metadata['last_seen_at'] = gmdate('c', time() + 60);
+	$stale_copied_metadata['provisioning']['bootstrap']['outcome'] = 'running';
+	$stale_copied_metadata['provisioning']['bootstrap']['coordinator'] = array( 'pid' => 999999, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '1' ) );
+	$stale_copied_metadata['origin_task']['task_url'] = 'https://example.test/issues/stale-copied-runtime';
+	$GLOBALS['datamachine_code_test_options'][ WorktreeContextInjector::METADATA_OPTION ][ $handle ] = $stale_copied_metadata;
+	$upgrade_write = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'runtime_upgrade_checked_at' => gmdate('c') ));
+	$upgraded_metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true(! is_wp_error($upgrade_write) && 'succeeded' === ( $upgraded_metadata['provisioning']['bootstrap']['outcome'] ?? null ), 'copied-runtime partial metadata write replayed stale bootstrap state over terminal inventory metadata');
+	assert_true($identity === ( $upgraded_metadata['handoff_continuation_identity'] ?? null ), 'copied-runtime metadata repair replaced the exact allocation identity');
+	assert_true('https://example.test/issues/handoff-partial-success' === ( $upgraded_metadata['origin_task']['task_url'] ?? null ) && WorktreeContextInjector::standalone_worktree_tracker_is_current($upgraded_metadata), 'copied-runtime metadata write replaced authoritative task-tracker ownership');
+
 	$worktrees_before = run_command('git worktree list --porcelain', $primary_path);
 	$branches_before  = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path);
 	$rows_before      = $GLOBALS['wpdb']->rows;
 	$metadata_before  = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true('succeeded' === ( $metadata_before['provisioning']['bootstrap']['outcome'] ?? null ) && empty($metadata_before['provisioning']['bootstrap']['coordinator']), 'handoff identity was not calculated from terminal no-op bootstrap metadata');
 	assert_true(1 === count(array_filter($progress, static fn( string $phase ): bool => 'bootstrap_start' === $phase)), 'initial allocation did not execute bootstrap exactly once');
 
 	// Replace the timeout helper with an always-successful counting proxy. One
@@ -1150,6 +1287,15 @@ try {
 	assert_true($branches_before === run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path), 'handoff continuation created or collided with a branch');
 	assert_true($rows_before === $GLOBALS['wpdb']->rows, 'handoff continuation rewrote inventory state');
 	assert_true($metadata_before === WorktreeContextInjector::get_metadata_fresh($handle), 'handoff continuation rewrote lifecycle or bootstrap metadata');
+	$metadata_refresh = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'owner_run_ref' => 'refreshed-owner-run' ));
+	$refresh_required = $workspace->worktree_handoff_resume($handle, $identity);
+	$refreshed_data   = is_wp_error($refresh_required) ? (array) $refresh_required->get_error_data() : array();
+	$refreshed_identity = (array) ( $refreshed_data['continuation']['input']['allocation_identity'] ?? array() );
+	assert_true(! is_wp_error($metadata_refresh) && is_wp_error($refresh_required) && 'worktree_handoff_allocation_identity_refreshed' === $refresh_required->get_error_code(), 'safe metadata drift did not return a typed refreshed continuation');
+	assert_true(array() !== $refreshed_identity && $identity !== $refreshed_identity && $refreshed_identity === ( WorktreeContextInjector::get_metadata_fresh($handle)['handoff_continuation_identity'] ?? null ), 'refreshed continuation was not bound as the authoritative handoff identity');
+	$identity = $refreshed_identity;
+	$refreshed_resume = $workspace->worktree_handoff_resume($handle, $identity);
+	assert_true(! is_wp_error($refreshed_resume) && 'current' === ( $refreshed_resume['status'] ?? null ), 'refreshed exact handoff continuation did not converge');
 
 	$path = (string) ( $partial['path'] ?? '' );
 	run_command('git switch -c handoff-collision', $path);

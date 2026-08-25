@@ -146,7 +146,7 @@ class ActiveWorkspaceProjector {
 	 * @return array<string,mixed>
 	 */
 	private static function build_entry( string $handle, array $overrides ): array {
-		$metadata         = WorktreeContextInjector::get_metadata($handle);
+		$metadata         = WorktreeContextInjector::get_metadata_fresh($handle);
 		$workspace_handle = WorkspaceHandle::parse($handle);
 		$is_primary       = ! $workspace_handle->is_worktree();
 

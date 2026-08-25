@@ -28,6 +28,7 @@ use DataMachineCode\Support\SystemTaskDrainability;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
+use DataMachineCode\Workspace\StandaloneWorktreeProvider;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -46,6 +47,7 @@ class WorkspaceCommand extends BaseCommand {
 	private const WORKTREE_OPERATIONS = array(
 		'provider'                                => array(),
 		'add'                                     => array( 'ability' => 'datamachine-code/workspace-worktree-add' ),
+		'attach-tracker'                          => array( 'ability' => 'datamachine-code/workspace-worktree-attach-tracker' ),
 		'plan'                                    => array( 'ability' => 'datamachine-code/workspace-worktree-plan' ),
 		'apply-plan'                              => array( 'ability' => 'datamachine-code/workspace-worktree-apply-plan' ),
 		'handoff-resume'                          => array( 'ability' => 'datamachine-code/workspace-worktree-handoff-resume' ),
@@ -239,6 +241,22 @@ class WorkspaceCommand extends BaseCommand {
 						'name'        => 'verbose',
 						'description' => 'Include full capacity and capped bootstrap evidence in JSON output.',
 					),
+					$format,
+				),
+			),
+			'attach-tracker'        => array(
+				'shortdesc' => 'Attach tracker ownership to an exact managed worktree.',
+				'longdesc'  => "Previews or attaches a task URL or reference only when the exact active worktree is clean and owned by the current site, agent, and session. Preview executes the same predicates without metadata, lock, or Git mutation. Git branch, HEAD, working tree, bootstrap evidence, and lifecycle state are preserved.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree attach-tracker data-machine-code@feat-1221 --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1221 --dry-run --format=json\n    wp datamachine-code workspace worktree attach-tracker data-machine-code@feat-1221 --task-url=https://github.com/Extra-Chill/data-machine-code/issues/1221 --format=json",
+				'synopsis'  => array(
+					array(
+						'type'        => 'positional',
+						'name'        => 'handle',
+						'description' => 'Exact managed worktree handle.',
+						'required'    => true,
+					),
+					$option('task-url', 'Task or issue URL to attach.'),
+					$option('task-ref', 'Short task reference to attach.'),
+					$flag('dry-run', 'Preview attachment eligibility without mutation.'),
 					$format,
 				),
 			),
@@ -619,6 +637,14 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		return $resolved;
+	}
+
+	/** @return array<string,mixed> */
+	public static function standalone_worktree_provider_capabilities(): array {
+		if ( ! class_exists(StandaloneWorktreeProvider::class) ) {
+			require_once dirname(__DIR__, 2) . '/Workspace/StandaloneWorktreeProvider.php';
+		}
+		return ( new StandaloneWorktreeProvider() )->capabilities();
 	}
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
@@ -3325,6 +3351,9 @@ class WorkspaceCommand extends BaseCommand {
 	 * [--full]
 	 * : Render full disk/inode capacity evidence and recovery details instead of one compact advisory.
 	 *
+	 * [--refresh]
+	 * : Fetch the tracked remote under a bounded timeout before classifying primary freshness.
+	 *
 	 * [--format=<format>]
 	 * : Output format.
 	 * ---
@@ -3356,7 +3385,12 @@ class WorkspaceCommand extends BaseCommand {
 
 		// This targeted read is also the lightweight startup path used before the
 		// Abilities API runtime has been bootstrapped.
-		$result = WorkspaceAbilities::showRepo( array( 'name' => $args[0] ) );
+		$result = WorkspaceAbilities::showRepo(
+			array(
+				'name'    => $args[0],
+				'refresh' => ! empty( $assoc_args['refresh'] ),
+			)
+		);
 
 		if ( is_wp_error( $result ) ) {
 			if ( 'json' === $format ) {
@@ -3385,9 +3419,19 @@ class WorkspaceCommand extends BaseCommand {
 		if ( empty( $result['is_worktree'] ) && is_array( $result['primary_freshness'] ?? null ) ) {
 			$freshness = $result['primary_freshness'];
 			WP_CLI::log( sprintf( 'Freshness: %s', (string) ( $freshness['status'] ?? 'unknown' ) ) );
+			WP_CLI::log( sprintf( 'Verification: %s', (string) ( $freshness['verification_scope'] ?? 'local_tracking' ) ) );
 			WP_CLI::log( sprintf( 'Upstream: %s', (string) ( $freshness['upstream'] ?? '-' ) ) );
 			WP_CLI::log( sprintf( 'Behind:   %s', null === ( $freshness['behind'] ?? null ) ? '-' : (string) $freshness['behind'] ) );
 			WP_CLI::log( sprintf( 'Ahead:    %s', null === ( $freshness['ahead'] ?? null ) ? '-' : (string) $freshness['ahead'] ) );
+			WP_CLI::log( sprintf( 'Tracking observed: %s', (string) ( $freshness['tracking_ref_observed_at'] ?? '-' ) ) );
+			WP_CLI::log( sprintf( 'Network attempted: %s', ! empty( $freshness['network_verification_attempted'] ) ? 'yes' : 'no' ) );
+			WP_CLI::log( sprintf( 'Remote verified: %s', (string) ( $freshness['remote_verified_at'] ?? '-' ) ) );
+			if ( is_array( $freshness['verification_error'] ?? null ) ) {
+				WP_CLI::warning( sprintf( 'Remote verification failed (%s): %s', (string) ( $freshness['verification_error']['code'] ?? 'unknown' ), (string) ( $freshness['verification_error']['message'] ?? '' ) ) );
+			}
+			if ( 'local_tracking' === ( $freshness['verification_scope'] ?? null ) && ! empty( $freshness['verification_command'] ) ) {
+				WP_CLI::log( sprintf( 'Verify:   %s', (string) $freshness['verification_command'] ) );
+			}
 			if ( ! empty( $freshness['suggested_command'] ) ) {
 				WP_CLI::log( sprintf( 'Refresh:  %s', (string) $freshness['suggested_command'] ) );
 			}
@@ -4834,7 +4878,7 @@ class WorkspaceCommand extends BaseCommand {
 		$operation = $args[0] ?? '';
 
 		if ( '' === $operation ) {
-			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|get|list|remove|prune|locks|handoff-resume|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
+			WP_CLI::error( 'Usage: wp datamachine-code workspace worktree <provider|add|attach-tracker|get|list|remove|prune|locks|handoff-resume|handoff-revalidate|cleanup|cleanup-artifacts|abandoned|bounded-cleanup-eligible-apply|cleanup-eligible-drain|emergency-cleanup|reconcile-metadata|capacity-recovery|backfill-origin-session|active-no-signal-report|active-no-signal-finalized-apply|active-no-signal-equivalent-clean-apply|active-no-signal-merged-apply|active-no-signal-remote-clean-apply|active-no-signal-drain|refresh-context|finalize|mark-cleanup-eligible> [<repo>] [<branch>] [--flags]' );
 			return;
 		}
 
@@ -4852,6 +4896,7 @@ class WorkspaceCommand extends BaseCommand {
 			$payload = array(
 				'schema'     => 'datamachine-code/standalone-worktree-provider-command/v1',
 				'executable' => $executable,
+				'capabilities' => self::standalone_worktree_provider_capabilities(),
 			);
 			if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json( $payload );
@@ -5065,6 +5110,21 @@ class WorkspaceCommand extends BaseCommand {
 				}
 				$input['handle'] = (string) $args[1];
 				$input['proof']  = $proof;
+				break;
+
+			case 'attach-tracker':
+				if ( empty($args[1]) || ( empty($assoc_args['task-url']) && empty($assoc_args['task-ref']) ) ) {
+					WP_CLI::error('Usage: worktree attach-tracker <handle> (--task-url=<url>|--task-ref=<ref>)');
+					return;
+				}
+				$input['handle'] = (string) $args[1];
+				if ( isset($assoc_args['task-url']) ) {
+					$input['task_url'] = (string) $assoc_args['task-url'];
+				}
+				if ( isset($assoc_args['task-ref']) ) {
+					$input['task_ref'] = (string) $assoc_args['task-ref'];
+				}
+				$input['dry_run'] = ! empty($assoc_args['dry-run']);
 				break;
 
 			case 'handoff-resume':
@@ -5406,7 +5466,30 @@ class WorkspaceCommand extends BaseCommand {
 	/** Render phase checkpoints without contaminating JSON response stdout. */
 	private function render_worktree_add_progress( array $event, bool $json ): void {
 		$phase   = (string) ( $event['phase'] ?? 'working' );
-		$message = sprintf('Worktree add progress: %s.', str_replace('_', ' ', $phase));
+		$details = array();
+		if ( in_array($phase, array( 'lock_request', 'lock_wait' ), true) ) {
+			foreach ( array( 'request_id' => 'request', 'scope' => 'scope', 'queue_position' => 'queue' ) as $key => $label ) {
+				if ( isset($event[ $key ]) && '' !== (string) $event[ $key ] ) {
+					$details[] = $label . '=' . (string) $event[ $key ];
+				}
+			}
+			$owner = (array) ( $event['owner'] ?? array() );
+			foreach ( array( 'owner', 'run_id', 'job_id', 'source' ) as $key ) {
+				if ( isset($owner[ $key ]) && '' !== (string) $owner[ $key ] ) {
+					$details[] = 'owner=' . (string) $owner[ $key ];
+					break;
+				}
+			}
+			if ( isset($event['elapsed_seconds']) ) {
+				$details[] = 'waited=' . (string) $event['elapsed_seconds'] . 's';
+			}
+			if ( isset($event['estimated_wait_seconds']) ) {
+				$details[] = 'eta=' . (string) $event['estimated_wait_seconds'] . 's';
+			} elseif ( isset($event['eta_status']) ) {
+				$details[] = 'eta=' . (string) $event['eta_status'];
+			}
+		}
+		$message = sprintf('Worktree add progress: %s%s.', str_replace('_', ' ', $phase), array() === $details ? '' : ' (' . implode('; ', $details) . ')');
 		if ( $json ) {
 			WP_CLI::warning($message);
 			return;
