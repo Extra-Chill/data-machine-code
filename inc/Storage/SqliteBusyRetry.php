@@ -16,17 +16,13 @@ final class SqliteBusyRetry {
 	private const DEFAULT_MAX_DELAY_MS    = 250;
 
 	/**
-	 * Retry only a SQLite write which reports a transient busy/locked failure.
+	 * Retry only a database write which reports a transient SQLite busy/locked failure.
 	 *
 	 * @param callable():mixed $operation DB-only mutation callback.
 	 * @return mixed|\WP_Error
 	 */
 	public static function run( string $operation_name, callable $operation ): mixed {
 		global $wpdb;
-
-		if ( ! self::is_sqlite($wpdb) ) {
-			return $operation();
-		}
 
 		$max_wait_ms     = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', self::DEFAULT_MAX_WAIT_MS);
 		$initial_wait_ms = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_initial_wait_ms', self::DEFAULT_INITIAL_WAIT_MS);

@@ -26,8 +26,8 @@ final class Lock_Contention_Wpdb {
 	public int $insert_id = 0;
 	private bool $errors_suppressed = false;
 
-	public function __construct(private PDO $pdo) {}
-	public function db_server_info(): string { return 'SQLite'; }
+	public function __construct(private PDO $pdo, private bool $advertise_sqlite = true) {}
+	public function db_server_info(): string { return $this->advertise_sqlite ? 'SQLite' : 'MySQL'; }
 	public function suppress_errors(bool $suppress = true): bool { $previous = $this->errors_suppressed; $this->errors_suppressed = $suppress; return $previous; }
 	public function prepare(string $query, mixed ...$args): string { foreach ($args as $arg) { $query = preg_replace('/%[sd]/', is_int($arg) ? (string) $arg : $this->pdo->quote((string) $arg), $query, 1); } return $query; }
 	public function get_var(string $query): mixed {
@@ -72,7 +72,7 @@ function lock_sqlite_worker(array $args): void {
 	$GLOBALS['filters'] = array('datamachine_code_sqlite_busy_retry_max_wait_ms' => (int) $max_wait_ms);
 	$pdo = new PDO('sqlite:' . $database);
 	$pdo->exec('PRAGMA busy_timeout = 0');
-	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo);
+	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo, 'decorated-acquire' !== $mode);
 
 	if ('allocation' === $mode) {
 		$result = WorkspaceMutationLock::with_repo($workspace, $repo, static function (WorkspaceMutationLock $lock) use ($workspace, $repo): mixed {
@@ -92,7 +92,7 @@ function lock_sqlite_worker(array $args): void {
 		return;
 	}
 
-	if ('acquire' === $mode) {
+	if ('acquire' === $mode || 'decorated-acquire' === $mode) {
 		fwrite(STDOUT, json_encode(lock_sqlite_result(WorkspaceMutationLock::acquire($workspace, $repo, 1))));
 		return;
 	}
@@ -200,6 +200,13 @@ try {
 	$raw = fopen($workspace . '/.locks/worktree-acquire-exhausted.lock', 'c');
 	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Failed DB acquisition retained the authoritative OS flock.');
 	flock($raw, LOCK_UN); fclose($raw);
+	$setup->exec('COMMIT');
+
+	// A decorator can hide the SQLite backend from wpdb capability probes. The
+	// failed operation and last_error remain authoritative for bounded retry.
+	$setup->exec('BEGIN EXCLUSIVE');
+	$decorated = lock_sqlite_finish(lock_sqlite_start(array('decorated-acquire', $database, $workspace, 'decorated-acquire-exhausted', '100')));
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($decorated['error'] ?? null) && 'workspace_lock_register' === ($decorated['data']['operation'] ?? null), 'Decorated SQLite acquisition bypassed canonical contention retry.');
 	$setup->exec('COMMIT');
 
 	// The real worktree lifecycle must stop before Git mutation when ownership
