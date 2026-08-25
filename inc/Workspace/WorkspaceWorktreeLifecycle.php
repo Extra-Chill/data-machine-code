@@ -3040,9 +3040,10 @@ trait WorkspaceWorktreeLifecycle {
 			$metadata
 		);
 		if ( WorktreeContextInjector::has_cleanup_signal($metadata) ) {
-			$dirty_paths = $this->probe_worktree_dirty_paths($wt_path, self::CLEANUP_GIT_PROBE_TIMEOUT);
+			$dirty_probe_timeout = WorkspaceTargetInspector::timeout_seconds($parsed['dir_name']);
+			$dirty_paths         = $this->probe_worktree_dirty_paths($wt_path, $dirty_probe_timeout);
 			if ( $dirty_paths instanceof \WP_Error ) {
-				return $this->worktree_finalize_phase_error('dirty_probe', $parsed['dir_name'], $wt_path, $dirty_paths);
+				return $this->worktree_finalize_phase_error('dirty_probe', $parsed['dir_name'], $wt_path, $dirty_paths, false, $dirty_probe_timeout);
 			}
 			if ( array() !== $dirty_paths ) {
 				return new \WP_Error(
@@ -3262,7 +3263,7 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Preserve the original failure while making the blocked finalization phase explicit.
 	 */
-	private function worktree_finalize_phase_error( string $phase, string $handle, string $path, \WP_Error $error, bool $metadata_committed = false ): \WP_Error {
+	private function worktree_finalize_phase_error( string $phase, string $handle, string $path, \WP_Error $error, bool $metadata_committed = false, ?int $timeout_seconds = null ): \WP_Error {
 		$data = (array) $error->get_error_data();
 		$data = array_merge(
 			$data,
@@ -3276,6 +3277,9 @@ trait WorkspaceWorktreeLifecycle {
 				'retry_safe'                   => true,
 			)
 		);
+		if ( null !== $timeout_seconds ) {
+			$data['timeout_seconds'] = $timeout_seconds;
+		}
 		if ( $metadata_committed ) {
 			$data['hint'] = 'Lifecycle metadata is committed but the inventory is incomplete. Retry the same finalize command; it is idempotent.';
 		}

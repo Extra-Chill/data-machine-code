@@ -899,9 +899,47 @@ try {
 	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'staged terminal finalization mutated lifecycle metadata');
 	run_command('git reset --hard HEAD', $result['path']);
 
+	// Exercise finalization against a high-cardinality clean checkout whose
+	// status duration deterministically exceeds the former five-second budget.
+	$large_fixture = $result['path'] . '/large-clean-fixture';
+	for ( $directory = 0; $directory < 50; ++$directory ) {
+		$fixture_directory = $large_fixture . '/' . str_pad((string) $directory, 2, '0', STR_PAD_LEFT);
+		mkdir($fixture_directory, 0777, true);
+		for ( $file = 0; $file < 100; ++$file ) {
+			file_put_contents($fixture_directory . '/' . str_pad((string) $file, 3, '0', STR_PAD_LEFT) . '.txt', "tracked\n");
+		}
+	}
+	run_command('git add large-clean-fixture && git commit -m large-clean-finalizer-fixture && git push', $result['path']);
+	assert_true('' === run_command('git status --porcelain', $result['path']), 'large finalizer fixture is not clean');
+	$finalizer_bin = $workspace_root . '/finalizer-bin';
+	mkdir($finalizer_bin, 0777, true);
+	$real_git = trim((string) shell_exec('command -v git'));
+	assert_true('' !== $real_git, 'finalizer fixture could not resolve git');
+	file_put_contents($finalizer_bin . '/git', "#!/bin/sh\nif [ \"\$3\" = status ]; then sleep \"\${DMC_FINALIZER_STATUS_DELAY:-0}\"; fi\nexec " . escapeshellarg($real_git) . " \"\$@\"\n");
+	chmod($finalizer_bin . '/git', 0755);
+	$original_path = getenv('PATH');
+	putenv('PATH=' . $finalizer_bin . ':' . ( false === $original_path ? '' : $original_path ));
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 1;
+	putenv('DMC_FINALIZER_STATUS_DELAY=10');
+	$started = microtime(true);
+	$finalizer_timeout = $workspace->worktree_finalize($handle, 'merged');
+	$elapsed = microtime(true) - $started;
+	assert_true(is_wp_error($finalizer_timeout) && 'worktree_finalize_dirty_probe_failed' === $finalizer_timeout->get_error_code(), 'stalled finalizer dirty probe did not return its typed phase error');
+	assert_true('dirty_probe' === ( $finalizer_timeout->get_error_data()['phase'] ?? null ), 'stalled finalizer dirty probe did not preserve its phase');
+	assert_true(1 === ( $finalizer_timeout->get_error_data()['timeout_seconds'] ?? null ), 'stalled finalizer dirty probe did not preserve its configured budget');
+	assert_true($elapsed < 3.0, sprintf('stalled finalizer dirty probe exceeded its configured bound: %.3fs', $elapsed));
+	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'timed-out finalizer dirty probe mutated lifecycle metadata');
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 7;
+	putenv('DMC_FINALIZER_STATUS_DELAY=6');
+	$started = microtime(true);
 	$clean_finalization = $workspace->worktree_finalize($handle, 'merged');
+	$elapsed = microtime(true) - $started;
+	putenv('DMC_FINALIZER_STATUS_DELAY');
+	putenv('PATH=' . ( false === $original_path ? '' : $original_path ));
+	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds']);
 	assert_true(! is_wp_error($clean_finalization), 'clean terminal worktree finalization failed');
 	assert_true('cleanup_eligible' === ( $clean_finalization['lifecycle_state'] ?? '' ), 'clean terminal finalization did not expose cleanup eligibility');
+	assert_true($elapsed >= 5.5 && $elapsed < 8.5, sprintf('large clean-worktree finalization did not honor its deterministic process budget: %.3fs', $elapsed));
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
