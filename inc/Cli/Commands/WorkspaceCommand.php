@@ -5831,6 +5831,15 @@ class WorkspaceCommand extends BaseCommand {
 						);
 						WP_CLI::halt( 1 );
 					}
+					if ( 'list' === $operation && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+						if ( ! empty( $assoc_args['envelope'] ) ) {
+							$result['worktrees'] = array();
+							$this->renderer()->json( $result );
+						} else {
+							$this->renderer()->json( array() );
+						}
+						return;
+					}
 					WP_CLI::log( 'No worktrees found.' );
 					$duplicates = (array) ( $result['duplicates'] ?? array() );
 					if ( ! empty( $duplicates ) ) {
