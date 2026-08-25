@@ -657,10 +657,16 @@ trait WorkspaceWorktreeCleanupEngine {
 						return $validated;
 					}
 
+					$recovery = $this->preserve_cleanup_recovery_ref($validated);
+					if ( is_wp_error($recovery) ) {
+						return $recovery;
+					}
+
 					$remove = $this->remove_worktree_by_path($validated['repo'], $validated['branch'], $validated['path'], $force, $remove_timeout_seconds);
 					if ( is_wp_error($remove) ) {
 						return $remove;
 					}
+					$remove = array_merge($remove, $recovery);
 
 					if ( ! empty($validated['preserve_local_branch']) ) {
 						$remove['local_branch_preserved'] = true;
@@ -692,6 +698,10 @@ trait WorkspaceWorktreeCleanupEngine {
 				array(
 					'removed_path'      => (string) ( $validated['path'] ?? '' ),
 					'path_exists_after' => is_dir( (string) ( $validated['path'] ?? '' ) ),
+					'recovery_ref'             => $remove['remove']['recovery_ref'] ?? null,
+					'recovery_commit'          => $remove['remove']['recovery_commit'] ?? null,
+					'recovery_command'         => $remove['remove']['recovery_command'] ?? null,
+					'recovery_dispose_command' => $remove['remove']['recovery_dispose_command'] ?? null,
 				)
 			);
 			++$removed_count;
@@ -1433,7 +1443,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 */
 	private function build_bounded_cleanup_processed_candidate( array $candidate, string $action, array $outcome ): array {
 		$row = $candidate;
-		foreach ( array( 'dirty', 'unpushed', 'path', 'size_bytes', 'removal_status', 'removal_error', 'local_branch_deleted', 'branch_delete_error', 'path_exists_after' ) as $field ) {
+		foreach ( array( 'dirty', 'unpushed', 'path', 'size_bytes', 'removal_status', 'removal_error', 'local_branch_deleted', 'branch_delete_error', 'path_exists_after', 'recovery_ref', 'recovery_commit', 'recovery_command', 'recovery_dispose_command' ) as $field ) {
 			if ( array_key_exists($field, $outcome) ) {
 				$row[ $field ] = $outcome[ $field ];
 			}
@@ -1499,6 +1509,10 @@ trait WorkspaceWorktreeCleanupEngine {
 					'removal_error'        => $remove['removal_error'] ?? null,
 					'local_branch_deleted' => $remove['local_branch_deleted'] ?? null,
 					'branch_delete_error'  => $remove['branch_delete_error'] ?? null,
+					'recovery_ref'             => $remove['recovery_ref'] ?? null,
+					'recovery_commit'          => $remove['recovery_commit'] ?? null,
+					'recovery_command'         => $remove['recovery_command'] ?? null,
+					'recovery_dispose_command' => $remove['recovery_dispose_command'] ?? null,
 				)
 			);
 			if ( null === $size ) {
@@ -1572,6 +1586,11 @@ trait WorkspaceWorktreeCleanupEngine {
 			$size     = null === $measured ? null : (int) $measured;
 		}
 
+		$recovery = ! empty($validated['broken_orphan']) ? array() : $this->preserve_cleanup_recovery_ref($validated);
+		if ( is_wp_error($recovery) ) {
+			return $recovery;
+		}
+
 		$result = $this->remove_worktree_by_path($repo, $branch, $wt_path, $force, $remove_timeout_seconds, ! empty($validated['broken_orphan']));
 		if ( is_wp_error($result) ) {
 			return $result;
@@ -1580,6 +1599,7 @@ trait WorkspaceWorktreeCleanupEngine {
 			return $this->normalize_bounded_cleanup_locked_result($result, $validated);
 		}
 
+		$result       = array_merge($result, $recovery);
 		$primary_path = $this->get_primary_path($repo);
 		if ( '' !== $branch ) {
 			$delete = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), self::CLEANUP_GIT_PROBE_TIMEOUT);
@@ -1596,6 +1616,42 @@ trait WorkspaceWorktreeCleanupEngine {
 		}
 
 		return array( 'validated' => $validated, 'size' => $size, 'remove' => $result );
+	}
+
+	/** Preserve the exact candidate commit before crossing the removal boundary. */
+	private function preserve_cleanup_recovery_ref( array $candidate ): array|\WP_Error {
+		$repo         = (string) ( $candidate['repo'] ?? '' );
+		$worktree     = (string) ( $candidate['path'] ?? '' );
+		$primary_path = $this->get_primary_path($repo);
+		$head         = $this->run_git($worktree, 'rev-parse --verify HEAD', self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$commit       = is_wp_error($head) ? '' : trim( (string) ( $head['output'] ?? '' ) );
+		if ( 1 !== preg_match('/^[0-9a-f]{40,64}$/', $commit) ) {
+			return new \WP_Error('cleanup_recovery_head_unverified', 'Cleanup refused removal because the candidate commit could not be resolved for durable recovery.', array( 'status' => 409 ));
+		}
+
+		$ref      = 'refs/dmc/recovery/' . $commit;
+		$existing = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( ! is_wp_error($existing) && ! hash_equals($commit, trim( (string) ( $existing['output'] ?? '' ) )) ) {
+			return new \WP_Error('cleanup_recovery_ref_conflict', 'Cleanup refused removal because the deterministic recovery ref identifies another commit.', array( 'status' => 409, 'recovery_ref' => $ref ));
+		}
+		if ( is_wp_error($existing) ) {
+			$preserved = $this->run_git($primary_path, sprintf('update-ref %s %s %s', escapeshellarg($ref), escapeshellarg($commit), escapeshellarg(str_repeat('0', strlen($commit)))), self::CLEANUP_GIT_PROBE_TIMEOUT);
+			if ( is_wp_error($preserved) ) {
+				return new \WP_Error('cleanup_recovery_ref_failed', 'Cleanup refused removal because the durable recovery ref could not be written.', array( 'status' => 409, 'recovery_ref' => $ref ));
+			}
+		}
+
+		$verified = $this->run_git($primary_path, sprintf('rev-parse --verify %s', escapeshellarg($ref)), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($verified) || ! hash_equals($commit, trim( (string) ( $verified['output'] ?? '' ) )) ) {
+			return new \WP_Error('cleanup_recovery_ref_unverified', 'Cleanup refused removal because the durable recovery ref could not be verified.', array( 'status' => 409, 'recovery_ref' => $ref ));
+		}
+
+		return array(
+			'recovery_ref'             => $ref,
+			'recovery_commit'          => $commit,
+			'recovery_command'         => sprintf('git -C %s worktree add --detach %s %s', escapeshellarg($primary_path), escapeshellarg($worktree), escapeshellarg($ref)),
+			'recovery_dispose_command' => sprintf('git -C %s update-ref -d %s %s', escapeshellarg($primary_path), escapeshellarg($ref), escapeshellarg($commit)),
+		);
 	}
 
 	/** Normalize the repository-lock callback contract before callers inspect it. */
@@ -2044,11 +2100,10 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return bool
 	 */
 	private function worktree_cleanup_has_removable_lifecycle( array $metadata ): bool {
-		$state           = WorktreeContextInjector::project_lifecycle_state($metadata);
-		$finalized_state = isset($metadata['finalized_state']) ? WorktreeContextInjector::normalize_state( (string) $metadata['finalized_state']) : null;
-		$removable       = $this->worktree_cleanup_removable_lifecycle_states();
+		$state     = WorktreeContextInjector::project_lifecycle_state($metadata);
+		$removable = $this->worktree_cleanup_removable_lifecycle_states();
 
-		return in_array($state, $removable, true) || in_array($finalized_state, $removable, true);
+		return in_array($state, $removable, true);
 	}
 
 	/**
@@ -2102,7 +2157,7 @@ trait WorkspaceWorktreeCleanupEngine {
 	 * @return bool
 	 */
 	private function worktree_cleanup_lifecycle_matches_reviewed_plan( array $reviewed_metadata, array $current_metadata ): bool {
-		foreach ( array( 'finalized_at', 'cleanup_eligible_at', 'created_at', 'lifecycle_state' ) as $field ) {
+		foreach ( array( 'finalized_at', 'cleanup_eligible_at', 'created_at', 'lifecycle_state', 'owner_run_ref', 'finalized_owner_run_ref', 'owner_terminal_at', 'owner_terminal_owner_run_ref' ) as $field ) {
 			if ( (string) ( $reviewed_metadata[ $field ] ?? '' ) !== (string) ( $current_metadata[ $field ] ?? '' ) ) {
 				return false;
 			}
