@@ -159,12 +159,13 @@ final class WorkspaceLockStore {
 				if ( false === $existing && '' !== (string) $wpdb->last_error ) {
 					return false;
 				}
-				$metadata = array_merge(self::decode_metadata( (string) $existing), $metadata_patch);
+				$metadata = self::decode_metadata( (string) $existing);
 				$time     = self::now_timestamp();
 				$expected = strtotime( (string) ( $metadata['expected_release_at'] ?? '' ));
 				if ( false !== $expected && $expected <= $time ) {
 					return 0;
 				}
+				$metadata = array_merge($metadata, $metadata_patch);
 				return $wpdb->update(
 					$table,
 					array(
