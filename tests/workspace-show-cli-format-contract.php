@@ -113,6 +113,7 @@ namespace {
 	);
 
 	WP_CLI::$logs = array();
+	unset(WorkspaceAbilities::$result['primary_freshness']);
 	WorkspaceAbilities::$result['workspace_capacity'] = array(
 		'status'                  => 'warning',
 		'creation_allowed'        => true,

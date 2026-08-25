@@ -1000,10 +1000,13 @@ trait WorkspaceRepositoryLifecycle {
 	 * @return array{success: bool, name?: string, repo?: string, is_worktree?: bool, is_context?: bool, path?: string|null, branch?: string|null, remote?: string|null, commit?: string|null, dirty?: int, workspace_capacity?: array, primary_freshness?: array|null, workspace_policy?: array}|\WP_Error
 	 */
 	public function show_repo( string $handle, bool $refresh = false ): array|\WP_Error {
+		$show_started            = microtime(true);
+		$registry_lookup_started = microtime(true);
 		$requested_handle = $handle;
 		$context_policy   = null;
 		$parsed           = $this->parse_handle($handle);
 		$repo_path        = $this->workspace_path . '/' . $parsed['dir_name'];
+		$registry_lookup_ms = (int) round(( microtime(true) - $registry_lookup_started ) * 1000);
 		$inspection       = WorkspaceTargetInspector::inspect($repo_path, $parsed['dir_name']);
 		if ( is_wp_error($inspection) ) {
 			return $inspection;
@@ -1066,10 +1069,15 @@ trait WorkspaceRepositoryLifecycle {
 					: null
 			)
 			: null;
+		$remote_freshness_started = microtime(true);
 		if ( $refresh && is_array($primary_freshness) ) {
 			$primary_freshness = $this->refresh_primary_freshness_report($repo_path, $parsed['dir_name'], $primary_freshness);
 		}
+		$remote_freshness_ms = (int) round(( microtime(true) - $remote_freshness_started ) * 1000);
 
+		$capacity_started = microtime(true);
+		$capacity         = WorktreeDiskBudget::inspect($this->workspace_path);
+		$capacity_ms      = (int) round(( microtime(true) - $capacity_started ) * 1000);
 		$result = array(
 			'success'            => true,
 			'name'               => null !== $context_policy ? (string) $context_policy['alias'] : $parsed['dir_name'],
@@ -1081,14 +1089,32 @@ trait WorkspaceRepositoryLifecycle {
 			'remote'             => $inspection['remote'] ?? null,
 			'commit'             => $inspection['commit'] ?? null,
 			'dirty'              => (int) ( $inspection['dirty'] ?? 0 ),
-			'workspace_capacity' => WorktreeDiskBudget::inspect($this->workspace_path),
+			'workspace_capacity' => $capacity,
 			'primary_freshness'  => $primary_freshness,
 		);
+		$optional_enrichments_started = microtime(true);
 		if ( $parsed['is_worktree'] ) {
 			$result['readiness'] = WorktreeContextInjector::bootstrap_readiness(WorktreeContextInjector::get_metadata($parsed['dir_name']));
 		}
 		if ( null !== $context_policy ) {
 			$result['workspace_policy'] = WorkspaceAliasResolver::policy_attestation($handle);
+		}
+		if ( function_exists('do_action') ) {
+			$probe_timings = is_array($inspection['probe_timings_ms'] ?? null) ? $inspection['probe_timings_ms'] : array();
+			do_action(
+				'datamachine_code_workspace_show_profiled',
+				array(
+					'handle'     => $requested_handle,
+					'timings_ms' => array(
+						'registry_lookup'      => $registry_lookup_ms,
+						'capacity'             => $capacity_ms,
+						'git_status'           => array_sum(array_map('intval', array_intersect_key($probe_timings, array_flip(array( 'branch', 'remote', 'commit', 'status' ))))),
+						'remote_freshness'     => $remote_freshness_ms,
+						'optional_enrichments' => (int) round(( microtime(true) - $optional_enrichments_started ) * 1000),
+						'total'                => (int) round(( microtime(true) - $show_started ) * 1000),
+					),
+				)
+			);
 		}
 
 		return $result;
