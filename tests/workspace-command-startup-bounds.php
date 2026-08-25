@@ -163,7 +163,7 @@ namespace {
 	foreach ( \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions() as $operation => $definition ) {
 		$name = 'datamachine-code workspace worktree ' . $operation;
 		startup_bounds_assert(isset(WP_CLI::$commands[ $name ]), sprintf('WP-CLI did not register %s.', $operation));
-		startup_bounds_assert($definition === ( WP_CLI::$command_args[ $name ] ?? null ), sprintf('WP-CLI did not receive the %s help contract.', $operation));
+		startup_bounds_assert(array_merge($definition, array( 'after_invoke' => 'datamachine_code_finish_bounded_workspace_cli_request' )) === ( WP_CLI::$command_args[ $name ] ?? null ), sprintf('WP-CLI did not receive the %s help and lifecycle contract.', $operation));
 	}
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_get_option_calls'], 'Nested help initialized database-backed discovery.');
 	startup_bounds_assert(0 === $GLOBALS['dmc_test_mutation_calls'], 'Nested help mutated schema or registry state.');

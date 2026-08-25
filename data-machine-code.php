@@ -91,6 +91,28 @@ function datamachine_code_finish_minimal_runtime_cli_request(): void {
 		remove_all_actions('shutdown');
 	}
 }
+
+/** Release request-owned resources after a synchronous workspace result. */
+function datamachine_code_finish_bounded_workspace_cli_request(): void {
+	if ( ! datamachine_code_is_bounded_workspace_cli_request() ) {
+		return;
+	}
+
+	if ( defined('STDOUT') ) {
+		@fflush(STDOUT);
+	}
+	if ( defined('STDERR') ) {
+		@fflush(STDERR);
+	}
+	if ( function_exists('remove_all_actions') ) {
+		remove_all_actions('shutdown');
+	}
+
+	global $wpdb;
+	if ( is_object($wpdb) && is_callable(array( $wpdb, 'close' )) ) {
+		$wpdb->close();
+	}
+}
 if ( datamachine_code_is_minimal_runtime_cli_request() ) {
 	add_action('shutdown', 'datamachine_code_finish_minimal_runtime_cli_request', PHP_INT_MIN);
 }
@@ -426,7 +448,8 @@ function datamachine_code_register_cli_commands() {
 
 	\WP_CLI::add_command('datamachine-code github', \DataMachineCode\Cli\Commands\GitHubCommand::class);
 	\WP_CLI::add_command('datamachine-code runtime', \DataMachineCode\Cli\Commands\RuntimeCommand::class);
-	\WP_CLI::add_command('datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class);
+	$bounded_workspace_command = array( 'after_invoke' => 'datamachine_code_finish_bounded_workspace_cli_request' );
+	\WP_CLI::add_command('datamachine-code workspace', \DataMachineCode\Cli\Commands\WorkspaceCommand::class, $bounded_workspace_command);
 	\WP_CLI::add_command('datamachine-code workspace worktree', \WP_CLI\Dispatcher\CommandNamespace::class);
 	foreach ( \DataMachineCode\Cli\Commands\WorkspaceCommand::worktree_command_definitions() as $operation => $definition ) {
 		\WP_CLI::add_command(
@@ -434,7 +457,7 @@ function datamachine_code_register_cli_commands() {
 			static function ( array $args, array $assoc_args ) use ( $operation ): void {
 				( new \DataMachineCode\Cli\Commands\WorkspaceCommand() )->__worktree_operation($operation, $args, $assoc_args);
 			},
-			$definition
+			array_merge($definition, $bounded_workspace_command)
 		);
 	}
 	\WP_CLI::add_command('datamachine-code code-task', \DataMachineCode\Cli\Commands\CodeTaskCommand::class);
