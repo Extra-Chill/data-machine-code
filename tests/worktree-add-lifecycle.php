@@ -73,6 +73,9 @@ function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed
 	if ( is_callable($callback) ) {
 		return $callback($value, ...$args);
 	}
+	if ( 'datamachine_worktree_disk_budget_thresholds' === $hook_name ) {
+		return array_merge((array) $value, array( 'refuse_free_bytes' => 0, 'refuse_free_percent' => 0, 'refuse_free_inodes' => 0, 'refuse_free_inode_percent' => 0 ));
+	}
 
 	return $value;
 }
@@ -181,6 +184,9 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function get_row( string $sql, string $output = ARRAY_A ): ?array {
 		++$this->get_row_calls;
+		if ( preg_match('/\bhandle\s*=\s*([^\s]+)\s+LIMIT/i', $sql, $matches) && isset($this->rows[ stripslashes($matches[1]) ]) ) {
+			return $this->rows[ stripslashes($matches[1]) ];
+		}
 		foreach ( $this->rows as $handle => $row ) {
 			if ( str_contains($sql, (string) $handle) ) {
 				return $row;
@@ -192,7 +198,7 @@ final class Datamachine_Code_Test_Wpdb {
 
 	public function prepare( string $query, mixed ...$args ): string {
 		foreach ( $args as $arg ) {
-			$query = preg_replace('/%s/', addslashes((string) $arg), $query, 1) ?? $query;
+			$query = preg_replace('/%[is]/', addslashes((string) $arg), $query, 1) ?? $query;
 		}
 		return $query;
 	}
@@ -1091,6 +1097,7 @@ try {
 	$handoff_upload_pack = $workspace_root . '/handoff-upload-pack.sh';
 	$handoff_call_count  = $workspace_root . '/handoff-upload-pack-count';
 	$progress            = array();
+	$bootstrap_outcome_at_complete = null;
 	$timed_out_add       = $workspace->worktree_add(
 		'homeboy',
 		'handoff-partial-success',
@@ -1107,12 +1114,13 @@ try {
 		'reuse_compatible',
 		false,
 		false,
-		static function ( array $event ) use ( &$progress, $primary_path, $handoff_upload_pack, $handoff_call_count ): void {
+		static function ( array $event ) use ( &$progress, &$bootstrap_outcome_at_complete, $primary_path, $handoff_upload_pack, $handoff_call_count ): void {
 			$phase      = (string) ( $event['phase'] ?? '' );
 			$progress[] = $phase;
 			if ( 'bootstrap_complete' !== $phase ) {
 				return;
 			}
+			$bootstrap_outcome_at_complete = WorktreeContextInjector::get_metadata_fresh('homeboy@handoff-partial-success')['provisioning']['bootstrap']['outcome'] ?? null;
 			$script = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\n[ \"\$count\" -eq 1 ] && exec git upload-pack \"\$@\"\nsleep 10\n";
 			file_put_contents($handoff_upload_pack, $script);
 			chmod($handoff_upload_pack, 0700);
@@ -1124,16 +1132,30 @@ try {
 	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
 	assert_true('worktree_handoff_revalidation_timeout' === ( $partial['handoff_freshness']['reason'] ?? null ) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff timeout lost its typed freshness cause or committed allocation');
 	assert_true(false === ( $partial['retry']['repeat_allocation'] ?? true ) && false === ( $partial['retry']['repeat_bootstrap'] ?? true ), 'post-commit handoff timeout did not prohibit allocation/bootstrap replay');
+	assert_true('succeeded' === $bootstrap_outcome_at_complete, 'no-op bootstrap completion became observable before terminal metadata was persisted');
 	$continuation = (array) ( $partial['continuation'] ?? array() );
 	$identity     = (array) ( $continuation['input']['allocation_identity'] ?? array() );
 	$handle       = (string) ( $partial['handle'] ?? '' );
 	assert_true('datamachine-code/workspace-worktree-handoff-resume' === ( $continuation['ability'] ?? null ) && true === ( $continuation['read_only'] ?? false ) && true === ( $continuation['idempotent'] ?? false ), 'partial success omitted its exact read-only continuation');
 	assert_true(str_contains((string) ( $continuation['command'] ?? '' ), 'worktree handoff-resume') && $handle === ( $continuation['input']['handle'] ?? null ), 'partial success continuation was not directly executable for the exact handle');
 
+	// Model an older copied runtime whose option snapshot missed the terminal
+	// inventory write, then perform the partial metadata write made after upgrade.
+	$stale_copied_metadata = WorktreeContextInjector::get_metadata_fresh($handle) ?? array();
+	$stale_copied_metadata['last_seen_at'] = gmdate('c', time() + 60);
+	$stale_copied_metadata['provisioning']['bootstrap']['outcome'] = 'running';
+	$stale_copied_metadata['provisioning']['bootstrap']['coordinator'] = array( 'pid' => 999999, 'identity' => array( 'platform' => 'linux_proc', 'start_ticks' => '1' ) );
+	$GLOBALS['datamachine_code_test_options'][ WorktreeContextInjector::METADATA_OPTION ][ $handle ] = $stale_copied_metadata;
+	$upgrade_write = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'runtime_upgrade_checked_at' => gmdate('c') ));
+	$upgraded_metadata = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true(! is_wp_error($upgrade_write) && 'succeeded' === ( $upgraded_metadata['provisioning']['bootstrap']['outcome'] ?? null ), 'copied-runtime partial metadata write replayed stale bootstrap state over terminal inventory metadata');
+	assert_true($identity === ( $upgraded_metadata['handoff_continuation_identity'] ?? null ), 'copied-runtime metadata repair replaced the exact allocation identity');
+
 	$worktrees_before = run_command('git worktree list --porcelain', $primary_path);
 	$branches_before  = run_command("git for-each-ref --format='%(refname) %(objectname)' refs/heads", $primary_path);
 	$rows_before      = $GLOBALS['wpdb']->rows;
 	$metadata_before  = WorktreeContextInjector::get_metadata_fresh($handle);
+	assert_true('succeeded' === ( $metadata_before['provisioning']['bootstrap']['outcome'] ?? null ) && empty($metadata_before['provisioning']['bootstrap']['coordinator']), 'handoff identity was not calculated from terminal no-op bootstrap metadata');
 	assert_true(1 === count(array_filter($progress, static fn( string $phase ): bool => 'bootstrap_start' === $phase)), 'initial allocation did not execute bootstrap exactly once');
 
 	// Replace the timeout helper with an always-successful counting proxy. One

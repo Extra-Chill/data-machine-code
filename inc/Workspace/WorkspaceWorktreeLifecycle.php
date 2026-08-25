@@ -473,13 +473,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( $allow_unverified_freshness ) {
 			return $result;
 		}
-		$allocation_identity = $this->worktree_handoff_allocation_identity($result);
-		if ( ! is_wp_error($allocation_identity) ) {
-			$bound = WorktreeContextInjector::store_lifecycle_metadata( (string) $allocation_identity['handle'], array( 'handoff_continuation_identity' => $allocation_identity ));
-			if ( is_wp_error($bound) || ! $bound ) {
-				$allocation_identity = new \WP_Error('worktree_handoff_allocation_identity_persist_failed', 'The exact handoff continuation identity could not be persisted.', array( 'status' => 500 ));
-			}
-		}
+		$allocation_identity = $this->worktree_bind_handoff_allocation_identity($result);
 		$continuation        = is_wp_error($allocation_identity) ? null : $this->worktree_handoff_continuation($allocation_identity);
 		$message             = null === $continuation
 			? 'The worktree allocation is committed but no verified handoff freshness proof or exact continuation is available. Do not repeat allocation or bootstrap; inspect the preserved allocation.'
@@ -511,18 +505,55 @@ trait WorkspaceWorktreeLifecycle {
 		);
 	}
 
+	/** Bind and confirm the continuation against the final persisted allocation record. */
+	private function worktree_bind_handoff_allocation_identity( array $result ): array|\WP_Error {
+		$identity = $this->worktree_handoff_allocation_identity($result);
+		if ( is_wp_error($identity) ) {
+			return $identity;
+		}
+
+		for ( $attempt = 0; $attempt < 2; ++$attempt ) {
+			$bound = WorktreeContextInjector::store_lifecycle_metadata( (string) $identity['handle'], array( 'handoff_continuation_identity' => $identity ));
+			if ( is_wp_error($bound) || ! $bound ) {
+				return new \WP_Error('worktree_handoff_allocation_identity_persist_failed', 'The exact handoff continuation identity could not be persisted.', array( 'status' => 500 ));
+			}
+
+			$confirmed = $this->worktree_handoff_allocation_identity($result);
+			if ( is_wp_error($confirmed) ) {
+				return $confirmed;
+			}
+			if ( $this->worktree_handoff_proof_canonical_json($confirmed) === $this->worktree_handoff_proof_canonical_json($identity) ) {
+				$metadata = WorktreeContextInjector::get_metadata_fresh( (string) $identity['handle']);
+				if ( is_array($metadata) && $this->worktree_handoff_proof_canonical_json($identity) === $this->worktree_handoff_proof_canonical_json( (array) ( $metadata['handoff_continuation_identity'] ?? array() )) ) {
+					return $identity;
+				}
+			}
+			$identity = $confirmed;
+		}
+
+		return new \WP_Error('worktree_handoff_allocation_identity_unstable', 'The committed allocation changed while its exact handoff continuation identity was being persisted.', array( 'status' => 409 ));
+	}
+
 	/** Bind a continuation to one allocation and its exact post-bootstrap HEAD. */
 	private function worktree_handoff_allocation_identity( array $result ): array|\WP_Error {
 		$handle   = (string) ( $result['handle'] ?? '' );
 		$path     = (string) ( $result['path'] ?? '' );
 		$metadata = WorktreeContextInjector::get_metadata_fresh($handle);
-		$base_ref = $this->worktree_handoff_base_ref($metadata);
+		$readiness = WorktreeContextInjector::bootstrap_readiness($metadata);
+		if ( ! $readiness['ready'] ) {
+			return new \WP_Error(
+				'worktree_handoff_allocation_not_ready',
+				'The committed allocation has not persisted terminal bootstrap readiness; refusing to issue a contradictory handoff continuation.',
+				array( 'status' => 409, 'readiness' => $readiness )
+			);
+		}
 		if ( is_array($metadata) && '' === (string) ( $metadata['allocation_id'] ?? '' ) ) {
 			$allocation_id = bin2hex(random_bytes(16));
 			$stored        = WorktreeContextInjector::store_lifecycle_metadata($handle, array( 'allocation_id' => $allocation_id ));
 			$metadata      = is_wp_error($stored) || ! $stored ? $metadata : WorktreeContextInjector::get_metadata_fresh($handle);
 		}
-		if ( '' === $handle || '' === $path || ! is_array($metadata) || '' === (string) ( $metadata['allocation_id'] ?? '' ) || is_wp_error($base_ref) ) {
+		$base_ref = $this->worktree_handoff_base_ref($metadata);
+		if ( '' === $handle || '' === $path || ! is_array($metadata) || '' === (string) ( $metadata['allocation_id'] ?? '' ) || ! hash_equals( (string) ( $metadata['path'] ?? '' ), $path ) || is_wp_error($base_ref) ) {
 			return new \WP_Error('worktree_handoff_allocation_identity_missing', 'The committed allocation lacks exact continuation identity metadata.', array( 'status' => 409 ));
 		}
 		$head = $this->run_git($path, 'rev-parse --verify HEAD^{commit}', self::CLEANUP_GIT_PROBE_TIMEOUT);
@@ -1071,6 +1102,11 @@ trait WorkspaceWorktreeLifecycle {
 		$locked = $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
 		if ( is_wp_error($locked) ) {
 			return $locked;
+		}
+		if ( ! empty($locked['bootstrap_noop_completed']) ) {
+			$this->worktree_add_progress($progress_callback, 'bootstrap_start');
+			$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
+			unset($locked['bootstrap_noop_completed']);
 		}
 
 		// The reservation was committed during admission, before both lock handles
@@ -1635,12 +1671,23 @@ trait WorkspaceWorktreeLifecycle {
 				return $this->worktree_operation_timeout('bootstrap', $operation_timeout, $operation_started, array( 'readiness' => 'incomplete' ));
 			}
 			$reservation = WorktreeBootstrapper::remaining_demand_after_materialization($measurement_plan);
-			$recorded    = $this->record_bootstrap_outcome($wt_handle, 'running', array(), null, $reservation);
-			if ( is_wp_error($recorded) ) {
-				return $recorded;
+			if ( $this->worktree_bootstrap_plan_is_noop($measurement_plan) ) {
+				$response['bootstrap'] = WorktreeBootstrapper::bootstrap($wt_path, $remaining_seconds);
+				$response              = $this->record_completed_bootstrap($response);
+				if ( is_wp_error($response) ) {
+					return $response;
+				}
+				$after_capacity                       = $this->inspect_worktree_capacity($repo, $branch, false, array());
+				$response['capacity_evidence']        = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, true);
+				$response['bootstrap_noop_completed'] = true;
+			} else {
+				$recorded = $this->record_bootstrap_outcome($wt_handle, 'running', array(), null, $reservation);
+				if ( is_wp_error($recorded) ) {
+					return $recorded;
+				}
+				$response['bootstrap_deferred']    = true;
+				$response['bootstrap_reservation'] = $reservation;
 			}
-			$response['bootstrap_deferred']    = true;
-			$response['bootstrap_reservation'] = $reservation;
 		}
 		if ( ! is_dir($wt_path) || ! file_exists($wt_path . '/.git') ) {
 			return new \WP_Error(
@@ -1654,8 +1701,10 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 		if ( $bootstrap ) {
-			$response['bootstrap_capacity_before']  = $bootstrap_before_capacity;
-			$response['bootstrap_measurement_plan'] = $measurement_plan;
+			if ( empty($response['bootstrap_noop_completed']) ) {
+				$response['bootstrap_capacity_before']  = $bootstrap_before_capacity;
+				$response['bootstrap_measurement_plan'] = $measurement_plan;
+			}
 		} else {
 			$response['capacity_evidence'] = array(
 				'outcome'  => 'bootstrap_disabled',
@@ -1696,6 +1745,14 @@ trait WorkspaceWorktreeLifecycle {
 		$this->emit_workspace_changed('worktree_add', $repo, $wt_handle, $wt_path);
 
 		return $response;
+	}
+
+	/** Whether target-tree planning proves bootstrap has no dependency work. */
+	private function worktree_bootstrap_plan_is_noop( array $plan ): bool {
+		$counts = (array) ( $plan['counts'] ?? array() );
+		return 0 === (int) ( $counts['submodules'] ?? 0 )
+			&& 0 === (int) ( $counts['package_roots'] ?? 0 )
+			&& 0 === (int) ( $counts['composer_roots'] ?? 0 );
 	}
 
 	/** Renew the capacity lease at observable lifecycle boundaries only. */
@@ -2427,11 +2484,11 @@ trait WorkspaceWorktreeLifecycle {
 
 		$this->worktree_add_progress($progress_callback, 'bootstrap_start');
 		$response['bootstrap'] = WorktreeBootstrapper::bootstrap( (string) $response['path'], $remaining_seconds, fn( array $process ) => $this->record_bootstrap_active_child( (string) $response['handle'], (int) ( $process['pid'] ?? 0 )), fn( array $process ) => $this->clear_bootstrap_active_child( (string) $response['handle'], (int) ( $process['pid'] ?? 0 )));
-		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 		$response = $this->record_completed_bootstrap($response);
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
+		$this->worktree_add_progress($progress_callback, 'bootstrap_complete');
 		$after_capacity                = $this->inspect_worktree_capacity($repo, $branch, false, array());
 		$measurement_plan              = (array) ( $response['bootstrap_measurement_plan'] ?? array() );
 		$bootstrap_before_capacity     = (array) ( $response['bootstrap_capacity_before'] ?? array() );

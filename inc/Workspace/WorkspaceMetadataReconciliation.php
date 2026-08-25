@@ -570,6 +570,9 @@ trait WorkspaceMetadataReconciliation {
 		if ( null === $state ) {
 			return 'invalid_lifecycle_state';
 		}
+		if ( null !== $this->worktree_dead_bootstrap_coordinator_state($metadata) ) {
+			return 'dead_bootstrap_coordinator';
+		}
 
 		$liveness = WorktreeContextInjector::classify_liveness($metadata);
 		if ( WorktreeCleanupCandidateClassifier::needs_lifecycle_reconciliation($metadata, (string) ( $liveness['liveness'] ?? '' )) ) {
@@ -659,6 +662,11 @@ trait WorkspaceMetadataReconciliation {
 					'hint'          => 'Reattach the worktree to the stored branch before applying metadata reconciliation, or remove it manually after review.',
 				)
 			);
+		}
+
+		$dead_bootstrap = $this->worktree_dead_bootstrap_coordinator_state($metadata);
+		if ( null !== $dead_bootstrap ) {
+			return $this->build_dead_bootstrap_coordinator_reconciliation_proposal($base_row, $metadata, $path, $dead_bootstrap);
 		}
 
 		$dirty = $wt['dirty'] ?? null;
@@ -759,6 +767,78 @@ trait WorkspaceMetadataReconciliation {
 		}
 
 		return $this->build_worktree_metadata_backfill_proposal($base_row, $dirty, $unpushed, $metadata_missing, $invalid_fields, $proposed, $source_map);
+	}
+
+	/** Return verified-dead ownership evidence for a bootstrap left running. */
+	private function worktree_dead_bootstrap_coordinator_state( array $metadata ): ?array {
+		$bootstrap = is_array($metadata['provisioning']['bootstrap'] ?? null) ? $metadata['provisioning']['bootstrap'] : array();
+		if ( 'running' !== ( $bootstrap['outcome'] ?? null ) ) {
+			return null;
+		}
+
+		$coordinator = WorktreeContextInjector::bootstrap_owner_state($bootstrap['coordinator'] ?? $bootstrap['owner'] ?? null);
+		$child       = isset($bootstrap['active_child'])
+			? WorktreeContextInjector::bootstrap_owner_state($bootstrap['active_child'])
+			: array( 'state' => 'stale', 'reason' => 'no_active_child' );
+		if ( 'stale' !== ( $coordinator['state'] ?? null ) || 'stale' !== ( $child['state'] ?? null ) ) {
+			return null;
+		}
+
+		return array(
+			'coordinator'  => $coordinator,
+			'active_child' => $child,
+		);
+	}
+
+	/** Build a deterministic terminal repair for a verified-dead bootstrap. */
+	private function build_dead_bootstrap_coordinator_reconciliation_proposal( array $base_row, array $metadata, string $path, array $owner_state ): array {
+		$detected = WorktreeBootstrapper::detect($path);
+		$noop     = empty($detected['submodules']) && array() === (array) $detected['package_roots'] && array() === (array) $detected['composer_roots'];
+		$outcome  = $noop ? 'succeeded' : 'interrupted';
+		$reason   = $noop ? 'dead_coordinator_noop_bootstrap' : 'dead_coordinator_interrupted_bootstrap';
+
+		$proposed = $metadata;
+		$proposed['observed_at']                                 = gmdate('c');
+		$proposed['provisioning']['bootstrap']['outcome']        = $outcome;
+		$proposed['provisioning']['bootstrap']['completed_at']   = gmdate('c');
+		$proposed['provisioning']['bootstrap']['reason']         = $reason;
+		$proposed['provisioning']['bootstrap']['steps']          = array();
+		$proposed['provisioning']['bootstrap']['reconciliation'] = array(
+			'source'        => 'worktree_reconcile_metadata',
+			'owner_state'   => $owner_state,
+			'detected_work' => $detected,
+		);
+		unset(
+			$proposed['provisioning']['bootstrap']['capacity_reservation'],
+			$proposed['provisioning']['bootstrap']['coordinator'],
+			$proposed['provisioning']['bootstrap']['active_child'],
+			$proposed['provisioning']['bootstrap']['owner']
+		);
+
+		$source_map = array(
+			'handle'          => 'metadata',
+			'repo'            => 'metadata',
+			'branch'          => 'metadata',
+			'path'            => 'metadata',
+			'created_at'      => 'metadata',
+			'observed_at'     => 'reconcile_run',
+			'lifecycle_state' => 'metadata',
+			'provisioning'    => 'process_liveness_and_target_detection',
+		);
+
+		return array(
+			'proposal' => array_merge(
+				$base_row,
+				array(
+					'reason_code'       => 'dead_bootstrap_coordinator',
+					'reason'            => $reason,
+					'bootstrap_outcome' => $outcome,
+					'owner_state'       => $owner_state,
+					'proposed_metadata' => $proposed,
+					'source_map'        => $source_map,
+				)
+			),
+		);
 	}
 
 	/**
@@ -1492,6 +1572,15 @@ trait WorkspaceMetadataReconciliation {
 			if ( array() !== $mismatches ) {
 				$skipped[] = $this->build_reconcile_apply_skip($row, $current, 'plan_identity_mismatch', 'planned identity does not match current row: ' . implode('; ', $mismatches));
 				continue;
+			}
+			if ( 'dead_bootstrap_coordinator' === ( $row['reason_code'] ?? null ) ) {
+				$current_metadata = WorktreeContextInjector::get_metadata_fresh($handle) ?? array();
+				$planned_phase    = (array) ( $row['metadata']['provisioning']['bootstrap'] ?? array() );
+				$current_phase    = (array) ( $current_metadata['provisioning']['bootstrap'] ?? array() );
+				if ( $planned_phase !== $current_phase || null === $this->worktree_dead_bootstrap_coordinator_state($current_metadata) ) {
+					$skipped[] = $this->build_reconcile_apply_skip($row, $current, 'plan_not_current', 'bootstrap ownership changed after the dead-coordinator repair was planned');
+					continue;
+				}
 			}
 
 			$metadata   = (array) ( $row['proposed_metadata'] ?? array() );

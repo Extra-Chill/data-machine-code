@@ -1663,16 +1663,18 @@ class WorktreeContextInjector {
 			return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
 		}
 
+		$fresh_metadata  = self::get_metadata_fresh($handle) ?? array();
 		$stored_metadata = array();
 		$updated         = SqliteBusyRetry::run(
 			'worktree_lifecycle_metadata_option',
-			static function () use ( $handle, $metadata, &$stored_metadata ): bool {
+			static function () use ( $handle, $metadata, $fresh_metadata, &$stored_metadata ): bool {
 				$all = get_option( self::METADATA_OPTION, array() );
 				if ( ! is_array( $all ) ) {
 					$all = array();
 				}
 
-				$existing        = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? $all[ $handle ] : self::get_inventory_metadata( $handle ) ?? array();
+				$option_metadata = isset( $all[ $handle ] ) && is_array( $all[ $handle ] ) ? (array) $all[ $handle ] : array();
+				$existing        = self::merge_lifecycle_metadata_sources($option_metadata, $fresh_metadata);
 				$stored_metadata = array_merge( $existing, $metadata );
 				$all[ $handle ]  = $stored_metadata;
 
@@ -2078,13 +2080,12 @@ class WorktreeContextInjector {
 			return $inventory_metadata;
 		}
 
-		$inventory_seen = strtotime( (string) ( $inventory_metadata['last_seen_at'] ?? '' ) );
-		$option_seen    = strtotime( (string) ( $option_metadata['last_seen_at'] ?? '' ) );
-		$inventory_seen = false !== $inventory_seen ? $inventory_seen : 0;
-		$option_seen    = false !== $option_seen ? $option_seen : 0;
-		return $option_seen > $inventory_seen
-			? array_merge($inventory_metadata, $option_metadata)
-			: array_merge($option_metadata, $inventory_metadata);
+		return self::merge_lifecycle_metadata_sources($option_metadata, $inventory_metadata);
+	}
+
+	/** Inventory is the committed record; retain option-only fields for legacy rows. */
+	private static function merge_lifecycle_metadata_sources( array $option_metadata, array $inventory_metadata ): array {
+		return array_merge($option_metadata, $inventory_metadata);
 	}
 
 	/**
