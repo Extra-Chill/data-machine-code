@@ -2,6 +2,27 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.0] - 2026-08-25
+
+### Added
+- attach tracker ownership
+
+### Fixed
+- reject expired lease renewal
+- suppress lock directory creation races
+- preserve committed handoff lifecycle
+- close capacity lease deadline gaps
+- bound capacity leases to acquisition
+- compact capacity advisories
+- narrow SQLite error suppression
+- harden handoff metadata recovery
+- reject tracker projection drift
+- stabilize committed handoff continuation
+- isolate lock progress timing
+- scale finalizer dirty probe budget
+- stream lock admission progress
+- qualify primary freshness evidence
+
 ## [0.69.13] - 2026-08-25
 
 ### Changed
