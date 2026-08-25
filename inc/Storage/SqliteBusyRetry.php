@@ -16,9 +16,9 @@ final class SqliteBusyRetry {
 	private const DEFAULT_MAX_DELAY_MS    = 250;
 
 	/**
-	 * Retry only a database write which reports a transient SQLite busy/locked failure.
+	 * Retry only a database operation which reports a transient SQLite busy/locked failure.
 	 *
-	 * @param callable():mixed $operation DB-only mutation callback.
+	 * @param callable():mixed $operation DB-only operation callback.
 	 * @param array<string,int> $options   Optional retry bounds.
 	 * @return mixed|\WP_Error
 	 */
@@ -65,7 +65,7 @@ final class SqliteBusyRetry {
 				if ( $elapsed_ms >= $max_wait_ms ) {
 					return new \WP_Error(
 						'workspace_sqlite_lock_contention',
-						'SQLite remained locked while updating the Data Machine Code workspace registry. Retry this command after concurrent writers finish. MySQL is recommended for concurrent fleet workloads.',
+						'SQLite remained locked while accessing the Data Machine Code workspace registry. Retry this command after concurrent writers finish. MySQL is recommended for concurrent fleet workloads.',
 						array(
 							'status'              => 503,
 							'retryable'           => true,

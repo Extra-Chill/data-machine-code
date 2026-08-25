@@ -256,6 +256,7 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	private const HANDOFF_REMOTE_PROBE_TIMEOUT = 5;
+	private const HANDOFF_CONTINUATION_RESERVE_SECONDS = 2;
 
 	/**
 	 * Revalidate the exact server-issued proof with a bounded remote probe.
@@ -472,20 +473,21 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($result) || empty($result['success']) ) {
 			return $result;
 		}
-		$deadline = min($operation_deadline ?? INF, microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT);
+		$continuation_deadline = min($operation_deadline ?? INF, microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT);
+		$deadline              = $continuation_deadline - self::HANDOFF_CONTINUATION_RESERVE_SECONDS;
 		if ( $this->worktree_handoff_remaining_seconds($deadline) <= 0 ) {
 			$result['handoff_freshness'] = array(
 				'status' => 'unverified',
 				'reason' => 'worktree_handoff_revalidation_timeout',
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		if ( empty($result['handle']) || empty($result['path']) ) {
 			$result['handoff_freshness'] = array(
 				'status' => 'unverified',
 				'reason' => 'allocation_identity_missing',
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		$primary  = $this->get_primary_path(explode('@', (string) $result['handle'], 2)[0]);
 		$metadata = WorktreeContextInjector::get_metadata_fresh( (string) $result['handle']) ?? array();
@@ -494,7 +496,7 @@ trait WorkspaceWorktreeLifecycle {
 				'status' => 'unverified',
 				'reason' => 'worktree_handoff_revalidation_timeout',
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		$base_ref = $this->worktree_handoff_base_ref($metadata);
 		if ( is_wp_error($base_ref) ) {
@@ -502,7 +504,7 @@ trait WorkspaceWorktreeLifecycle {
 				'status' => 'unverified',
 				'reason' => $base_ref->get_error_code(),
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
 		if ( empty($fetch['ok']) ) {
@@ -511,7 +513,7 @@ trait WorkspaceWorktreeLifecycle {
 				'reason' => 'fetch_failed',
 				'fetch'  => $fetch,
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		$proof = $this->worktree_handoff_proof( (string) $result['handle'], (string) $result['path'], $primary, $base_ref, $deadline, bin2hex(random_bytes(16)));
 		if ( is_wp_error($proof) ) {
@@ -521,7 +523,7 @@ trait WorkspaceWorktreeLifecycle {
 				'reason'     => $reason,
 				'error_code' => $proof->get_error_code(),
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		$stored = WorktreeContextInjector::store_lifecycle_metadata( (string) $result['handle'], array( 'handoff_freshness_proof' => $proof ));
 		if ( is_wp_error($stored) || ! $stored ) {
@@ -530,7 +532,7 @@ trait WorkspaceWorktreeLifecycle {
 				'reason'     => 'metadata_persist_failed',
 				'error_code' => is_wp_error($stored) ? $stored->get_error_code() : null,
 			);
-			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $deadline);
+			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
 		$result['metadata']          = array_merge($metadata, array( 'handoff_freshness_proof' => $proof ));
 		$result['handoff_freshness'] = array(
@@ -3587,6 +3589,17 @@ trait WorkspaceWorktreeLifecycle {
 			return new \WP_Error('worktree_not_found', sprintf('Worktree "%s" does not exist on disk.', $parsed['dir_name']), array( 'status' => 404 ));
 		}
 
+		$result = WorkspaceMutationLock::with_repo(
+			$this->workspace_path,
+			$parsed['repo'],
+			fn() => $this->worktree_finalize_locked($parsed, $wt_path, $normalized_state, $pr, $owner_terminal_outcome)
+		);
+
+		return $this->decorate_worktree_finalize_recovery($result, $parsed['dir_name'], $normalized_state, $pr, $owner_terminal_outcome);
+	}
+
+	/** Run finalizer safety checks and metadata persistence under repository ownership. */
+	private function worktree_finalize_locked( array $parsed, string $wt_path, string $normalized_state, ?string $pr, ?string $owner_terminal_outcome ): array|\WP_Error {
 		$existing_metadata = WorktreeContextInjector::get_metadata($parsed['dir_name']) ?? array();
 		$metadata          = WorktreeContextInjector::build_finalizer_metadata($normalized_state, $pr, $owner_terminal_outcome, $existing_metadata);
 		$metadata          = array_merge(
@@ -3654,6 +3667,45 @@ trait WorkspaceWorktreeLifecycle {
 			'metadata'        => $stored,
 			'message'         => sprintf('Worktree "%s" marked %s.', $parsed['dir_name'], (string) ( $stored['lifecycle_state'] ?? $normalized_state )),
 		);
+	}
+
+	/** Attach one exact idempotent replay command to a retry-safe finalization failure. */
+	private function decorate_worktree_finalize_recovery( mixed $result, string $handle, string $state, ?string $pr, ?string $owner_terminal_outcome ): mixed {
+		if ( ! is_wp_error($result) ) {
+			return $result;
+		}
+
+		$data = (array) $result->get_error_data();
+		if ( empty($data['retry_safe']) && empty($data['retryable']) ) {
+			return $result;
+		}
+
+		$command = $this->worktree_finalize_retry_command($handle, $state, $pr, $owner_terminal_outcome);
+		if ( null !== $command ) {
+			$data['retry_command'] = $command;
+		}
+		return new \WP_Error($result->get_error_code(), $result->get_error_message(), $data);
+	}
+
+	/** Build a secret-safe replay of the normalized finalizer request. */
+	private function worktree_finalize_retry_command( string $handle, string $state, ?string $pr, ?string $owner_terminal_outcome ): ?string {
+		$parts = array(
+			'wp datamachine-code workspace worktree finalize',
+			escapeshellarg($handle),
+			'--state=' . escapeshellarg($state),
+		);
+		if ( null !== $pr && '' !== trim($pr) ) {
+			$parsed_url = parse_url($pr);
+			if ( is_array($parsed_url) && ( isset($parsed_url['user']) || isset($parsed_url['pass']) ) ) {
+				return null;
+			}
+			$parts[] = '--pr=' . escapeshellarg(trim($pr));
+		}
+		if ( null !== $owner_terminal_outcome && '' !== trim($owner_terminal_outcome) ) {
+			$parts[] = '--owner-terminal-outcome=' . escapeshellarg(trim($owner_terminal_outcome));
+		}
+
+		return implode(' ', $parts);
 	}
 
 	/**
