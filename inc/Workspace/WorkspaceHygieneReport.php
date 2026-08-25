@@ -578,7 +578,8 @@ trait WorkspaceHygieneReport {
 			if ( '.' === $entry || '..' === $entry || str_starts_with( (string) $entry, '.' ) ) {
 				continue;
 			}
-			if ( null !== $budget && $budget->expired() ) {
+			$budget_expired = null !== $budget && $budget->expired();
+			if ( $budget_expired ) {
 				$partial    = true;
 				$next_entry = (string) $entry;
 				break;
@@ -593,7 +594,8 @@ trait WorkspaceHygieneReport {
 			$parsed      = $this->parse_handle($entry);
 			if ( 1 === $examined || 0 === $examined % 25 ) {
 				$this->emit_workspace_hygiene_progress($progress, 'filesystem_inventory', (string) $parsed['repo'], 'Inspecting workspace entry ' . $entry . '.');
-				if ( null !== $budget && $budget->expired() ) {
+				$budget_expired = null !== $budget && $budget->expired();
+				if ( $budget_expired ) {
 					$partial    = true;
 					$next_entry = (string) $entry;
 					break;
