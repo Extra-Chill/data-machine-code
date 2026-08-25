@@ -11,7 +11,7 @@ function handoff_deadline_contract_assert( bool $condition, string $message ): v
 $source = (string) file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 handoff_deadline_contract_assert(str_contains($source, '$deadline = microtime(true) + self::HANDOFF_REMOTE_PROBE_TIMEOUT;'), 'Handoff revalidation does not establish its deadline before lock acquisition.');
 handoff_deadline_contract_assert(str_contains($source, 'function () use ( $handle, $proof, $deadline )'), 'Handoff deadline is not passed through the locked revalidation phase.');
-handoff_deadline_contract_assert(2 === substr_count($source, 'WorktreeContextInjector::get_metadata_fresh($handle);') || 1 === substr_count($source, 'WorktreeContextInjector::get_metadata_fresh($handle);'), 'Handoff metadata lookup is not visible to the deadline contract.');
+handoff_deadline_contract_assert(4 === substr_count($source, 'WorktreeContextInjector::get_metadata_fresh($handle);'), 'Handoff add, resume, compatibility backfill, and revalidation metadata lookups are not visible to the deadline contract.');
 handoff_deadline_contract_assert(str_contains($source, "'ls-remote --symref origin HEAD', \$timeout_seconds"), 'Handoff proof did not require bounded remote default-branch evidence.');
 handoff_deadline_contract_assert(str_contains($source, "'remote_default_changed_during_verification'"), 'Handoff proof does not reject a remote advertisement that differs from the fetched remote ref.');
 handoff_deadline_contract_assert(str_contains($source, "new \\WP_Error('worktree_handoff_revalidation_timeout'"), 'Bounded remote-default timeout does not produce the typed handoff timeout.');

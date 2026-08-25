@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.69.10] - 2026-08-25
+
+### Fixed
+- resume committed worktree handoffs
+
 ## [0.69.9] - 2026-08-25
 
 ### Fixed
