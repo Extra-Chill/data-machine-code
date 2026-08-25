@@ -18,6 +18,7 @@ function apply_filters(string $hook, mixed $value, mixed ...$args): mixed { retu
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
 use DataMachineCode\Workspace\WorkspaceMutationLock;
+use DataMachineCode\Workspace\Workspace;
 
 final class Lock_Contention_Wpdb {
 	public string $prefix = 'wp_';
@@ -74,10 +75,19 @@ function lock_sqlite_worker(array $args): void {
 	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo);
 
 	if ('allocation' === $mode) {
-		$result = WorkspaceMutationLock::with_repo($workspace, $repo, static function (WorkspaceMutationLock $lock): mixed {
+		$result = WorkspaceMutationLock::with_repo($workspace, $repo, static function (WorkspaceMutationLock $lock) use ($workspace, $repo): mixed {
 			$heartbeat = $lock->heartbeat(array('contention_phase' => 'allocation'));
-			return is_wp_error($heartbeat) ? $heartbeat : 'allocated';
+			if (is_wp_error($heartbeat)) { return $heartbeat; }
+			file_put_contents($workspace . '/' . $repo . '-allocated', 'allocated');
+			return 'allocated';
 		}, 2);
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+
+	if ('lifecycle' === $mode) {
+		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
+		$result = (new Workspace())->worktree_add($repo, 'contention/fail-closed', 'refs/heads/main', false, false, false, false, true);
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
@@ -94,6 +104,15 @@ function lock_sqlite_worker(array $args): void {
 			file_put_contents($ready, 'ready');
 			lock_sqlite_wait($go);
 			return 'mutation-complete';
+		}, 1);
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
+		return;
+	}
+	if ('heartbeat-handoff' === $mode) {
+		$result = WorkspaceMutationLock::with_repo($workspace, $repo, static function (WorkspaceMutationLock $lock) use ($ready, $go): mixed {
+			file_put_contents($ready, 'ready');
+			lock_sqlite_wait($go);
+			return $lock->heartbeat(array('contention_phase' => 'admitted'));
 		}, 1);
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
@@ -121,7 +140,8 @@ function lock_sqlite_finish(array $worker): array {
 	$error = stream_get_contents($pipes[2]);
 	fclose($pipes[1]); fclose($pipes[2]);
 	lock_sqlite_assert(0 === proc_close($process), 'SQLite contention worker failed: ' . $error);
-	lock_sqlite_assert(!str_contains($output, '<div'), 'SQLite debug HTML escaped the canonical retry boundary: ' . $output);
+	lock_sqlite_assert('' === trim($error), 'SQLite contention worker leaked stderr: ' . $error);
+	lock_sqlite_assert(!str_contains($output . $error, '<div') && !str_contains(strtolower($output . $error), 'database is locked'), 'Raw SQLite diagnostics escaped the canonical retry boundary: ' . $output . $error);
 	$result = json_decode($output, true);
 	lock_sqlite_assert(is_array($result), 'SQLite contention worker returned invalid JSON: ' . $output);
 	return $result;
@@ -134,6 +154,21 @@ function lock_sqlite_signal_worker(string $mode, string $database, string $works
 	return array($worker, $ready, $go);
 }
 function lock_sqlite_cleanup_signals(string ...$paths): void { foreach ($paths as $path) { @unlink($path); } }
+function lock_sqlite_run(array $command, ?string $cwd = null): string {
+	$process = proc_open($command, array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes, $cwd);
+	lock_sqlite_assert(is_resource($process), 'Could not start fixture command: ' . implode(' ', $command));
+	$output = stream_get_contents($pipes[1]); $error = stream_get_contents($pipes[2]);
+	fclose($pipes[1]); fclose($pipes[2]);
+	lock_sqlite_assert(0 === proc_close($process), 'Fixture command failed: ' . $error);
+	return trim($output);
+}
+function lock_sqlite_remove_tree(string $path): void {
+	if (!is_dir($path) || is_link($path)) { @unlink($path); return; }
+	foreach (scandir($path) ?: array() as $entry) {
+		if ('.' !== $entry && '..' !== $entry) { lock_sqlite_remove_tree($path . '/' . $entry); }
+	}
+	@rmdir($path);
+}
 
 $database = tempnam(sys_get_temp_dir(), 'dmc-lock-sqlite-');
 $workspace = sys_get_temp_dir() . '/dmc-lock-sqlite-' . bin2hex(random_bytes(6));
@@ -148,17 +183,39 @@ try {
 	foreach (range(1, 8) as $number) { $workers[] = lock_sqlite_start(array('allocation', $database, $workspace, 'repo-' . $number, '2000')); }
 	usleep(150000);
 	$setup->exec('COMMIT');
-	foreach ($workers as $worker) { $result = lock_sqlite_finish($worker); lock_sqlite_assert('allocated' === ($result['success'] ?? null), 'Brief multi-process allocation contention did not serialize successfully.'); }
+	foreach ($workers as $number => $worker) {
+		$result = lock_sqlite_finish($worker);
+		lock_sqlite_assert('allocated' === ($result['success'] ?? null), 'Brief multi-process allocation contention did not serialize successfully.');
+		lock_sqlite_assert(is_file($workspace . '/repo-' . ($number + 1) . '-allocated'), 'Concurrent ownership was reported before its allocation callback completed.');
+	}
 	lock_sqlite_assert(8 === (int) $setup->query("SELECT COUNT(*) FROM wp_datamachine_code_locks WHERE status = 'released'")->fetchColumn(), 'Concurrent allocations left missing or active ownership rows.');
 
 	// Exhausted acquisition returns typed retry evidence and releases the OS flock.
 	$setup->exec('BEGIN EXCLUSIVE');
+	$started = microtime(true);
 	$acquire = lock_sqlite_finish(lock_sqlite_start(array('acquire', $database, $workspace, 'acquire-exhausted', '100')));
-	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($acquire['error'] ?? null) && 'workspace_lock_register' === ($acquire['data']['operation'] ?? null), 'Exhausted acquisition did not retain canonical contention diagnostics.');
+	lock_sqlite_assert((microtime(true) - $started) < 2, 'Exhausted acquisition exceeded its bounded retry envelope.');
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($acquire['error'] ?? null) && true === ($acquire['data']['retryable'] ?? null) && 'workspace_lock_register' === ($acquire['data']['operation'] ?? null), 'Exhausted acquisition did not retain canonical contention diagnostics.');
+	lock_sqlite_assert(100 === ($acquire['data']['max_wait_ms'] ?? null) && ($acquire['data']['waited_ms'] ?? 0) >= 100, 'Exhausted acquisition did not report its configured retry bound.');
 	$raw = fopen($workspace . '/.locks/worktree-acquire-exhausted.lock', 'c');
 	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Failed DB acquisition retained the authoritative OS flock.');
 	flock($raw, LOCK_UN); fclose($raw);
 	$setup->exec('COMMIT');
+
+	// The real worktree lifecycle must stop before Git mutation when ownership
+	// registration cannot be made durable.
+	$primary = $workspace . '/lifecycle-repo';
+	mkdir($primary);
+	lock_sqlite_run(array('git', 'init', '--initial-branch=main'), $primary);
+	lock_sqlite_run(array('git', 'config', 'user.email', 'test@example.test'), $primary);
+	lock_sqlite_run(array('git', 'config', 'user.name', 'DMC Test'), $primary);
+	lock_sqlite_run(array('git', 'commit', '--allow-empty', '-m', 'fixture'), $primary);
+	$setup->exec('BEGIN EXCLUSIVE');
+	$lifecycle = lock_sqlite_finish(lock_sqlite_start(array('lifecycle', $database, $workspace, 'lifecycle-repo', '100')));
+	$setup->exec('COMMIT');
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($lifecycle['error'] ?? null) && 'workspace_lock_register' === ($lifecycle['data']['operation'] ?? null), 'Worktree add did not preserve lock-registration contention.');
+	lock_sqlite_assert(!is_dir($workspace . '/lifecycle-repo@contention-fail-closed'), 'Failed ownership registration allowed a worktree path mutation.');
+	lock_sqlite_assert('' === lock_sqlite_run(array('git', 'branch', '--list', 'contention/fail-closed'), $primary), 'Failed ownership registration allowed a branch mutation.');
 
 	// Heartbeat retries through a short lock, then reports both writes if exhausted.
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);
@@ -170,8 +227,17 @@ try {
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-exhausted', 100);
 	$setup->exec('BEGIN EXCLUSIVE'); file_put_contents($go, 'go');
 	$heartbeat = lock_sqlite_finish($worker);
-	lock_sqlite_assert('workspace_lock_heartbeat' === ($heartbeat['phase']['data']['operation'] ?? null), 'Exhausted heartbeat lost its canonical operation receipt.');
+	lock_sqlite_assert('workspace_sqlite_lock_contention' === ($heartbeat['phase']['error'] ?? null) && 'workspace_lock_heartbeat' === ($heartbeat['phase']['data']['operation'] ?? null), 'Exhausted heartbeat lost its canonical operation receipt.');
 	lock_sqlite_assert('workspace_lock_release' === ($heartbeat['release']['data']['operation'] ?? null) && true === ($heartbeat['release']['data']['filesystem_lock_released'] ?? null), 'Exhausted heartbeat cleanup hid release contention or retained the OS flock.');
+	$setup->exec('COMMIT'); lock_sqlite_cleanup_signals($ready, $go);
+
+	// If an admitted callback and its cleanup both contend, preserve the phase
+	// failure and attach release evidence instead of replacing it.
+	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat-handoff', $database, $workspace, 'heartbeat-handoff', 100);
+	$setup->exec('BEGIN EXCLUSIVE'); file_put_contents($go, 'go');
+	$heartbeat_handoff = lock_sqlite_finish($worker);
+	lock_sqlite_assert('workspace_lock_heartbeat' === ($heartbeat_handoff['data']['operation'] ?? null), 'Automatic release replaced the admitted callback contention receipt.');
+	lock_sqlite_assert('workspace_lock_release' === ($heartbeat_handoff['data']['lock_release_error']['operation'] ?? null) && true === ($heartbeat_handoff['data']['lock_release_error']['filesystem_lock_released'] ?? null), 'Admitted callback contention omitted compact release evidence.');
 	$setup->exec('COMMIT'); lock_sqlite_cleanup_signals($ready, $go);
 
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('release', $database, $workspace, 'release-recovers', 1000);
@@ -194,11 +260,6 @@ try {
 
 	echo "workspace-lock-sqlite-contention ok\n";
 } finally {
-	foreach (glob($workspace . '/.locks/requests/*') ?: array() as $file) { @unlink($file); }
-	@rmdir($workspace . '/.locks/requests');
-	foreach (glob($workspace . '/.locks/*') ?: array() as $file) { @unlink($file); }
-	@rmdir($workspace . '/.locks');
-	foreach (glob($workspace . '/*') ?: array() as $file) { @unlink($file); }
-	@rmdir($workspace);
+	lock_sqlite_remove_tree($workspace);
 	@unlink($database);
 }

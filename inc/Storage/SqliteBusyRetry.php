@@ -64,6 +64,7 @@ final class SqliteBusyRetry {
 						'SQLite remained locked while updating the Data Machine Code workspace registry. Retry this command after concurrent writers finish. MySQL is recommended for concurrent fleet workloads.',
 						array(
 							'status'              => 503,
+							'retryable'           => true,
 							'backend'             => 'sqlite',
 							'operation'           => $operation_name,
 							'attempts'            => $attempts,
