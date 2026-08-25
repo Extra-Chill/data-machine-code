@@ -19,7 +19,7 @@ final class WorkspaceLockStore {
 
 	private const DEFAULT_EXPIRES_SECONDS      = 900;
 	private const DEFAULT_RELEASED_TTL_SECONDS = 604800;
-	private const SQLITE_LOCK_MAX_WAIT_MS = 5000;
+	private const SQLITE_LOCK_MAX_WAIT_MS      = 5000;
 
 	/**
 	 * Whether a WordPress database handle is available.
