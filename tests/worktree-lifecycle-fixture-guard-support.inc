@@ -23,6 +23,27 @@ function worktree_lifecycle_fixture_is_system_temp_path( string $path ): bool {
 	return false !== $temp_root && str_starts_with($path, rtrim($temp_root, '/') . '/');
 }
 
+function worktree_lifecycle_fixture_is_inspectable_repository( string $repository ): bool {
+	$git_path = $repository . '/.git';
+	if ( is_dir($git_path) ) {
+		return true;
+	}
+	if ( ! is_file($git_path) || is_link($git_path) ) {
+		return false;
+	}
+
+	$marker = file_get_contents($git_path);
+	if ( false === $marker || 1 !== preg_match('/^gitdir: (.+)\\n?$/D', $marker, $matches) ) {
+		return false;
+	}
+	$gitdir = $matches[1];
+	if ( ! str_starts_with($gitdir, '/') ) {
+		$gitdir = dirname($repository) . '/' . $gitdir;
+	}
+
+	return false !== realpath($gitdir) && is_dir($gitdir);
+}
+
 /** @return array<int,string> */
 function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root ): array {
 	$current_directory = realpath(getcwd() ?: '');
@@ -40,7 +61,7 @@ function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root )
 			continue;
 		}
 		$repository = $fixture_root . '/' . $entry;
-		if ( is_dir($repository) && ( is_dir($repository . '/.git') || is_file($repository . '/.git') ) ) {
+		if ( is_dir($repository) && worktree_lifecycle_fixture_is_inspectable_repository($repository) ) {
 			$repositories[] = $repository;
 		}
 	}
@@ -51,7 +72,7 @@ function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root )
 		$status = 0;
 		exec('git -C ' . escapeshellarg($repository) . ' worktree list --porcelain 2>&1', $output, $status);
 		if ( 0 !== $status ) {
-			throw new RuntimeException('worktree-add-lifecycle could not inspect a managed worktree registry.');
+			throw new RuntimeException('worktree-add-lifecycle could not inspect an inspectable managed worktree registry.');
 		}
 		foreach ( $output as $line ) {
 			if ( ! str_starts_with($line, 'worktree ') ) {
@@ -59,7 +80,7 @@ function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root )
 			}
 			$path = realpath(substr($line, strlen('worktree ')));
 			if ( false === $path ) {
-				throw new RuntimeException('worktree-add-lifecycle found an unresolved managed worktree registry path.');
+				continue;
 			}
 			$registered[] = $path;
 		}

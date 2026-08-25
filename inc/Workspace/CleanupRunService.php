@@ -34,34 +34,56 @@ class CleanupRunService {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function plan( array $opts = array() ): array|\WP_Error {
-		$plan = $this->workspace->workspace_cleanup_plan( $opts );
-		if ( $plan instanceof \WP_Error ) {
-			return $plan;
-		}
-
-		$items  = $this->plan_items( $plan );
+		$mode   = (string) ( $opts['mode'] ?? 'cleanup_plan' );
 		$run_id = $this->repository->create_run(
 			array(
-				'mode'                  => (string) ( $opts['mode'] ?? $plan['mode'] ?? 'cleanup_plan' ),
-				'status'                => 'planned',
-				'policy'                => $plan['safety_policy'] ?? array(),
+				'mode'                  => $mode,
+				'status'                => 'planning',
+				'policy'                => array(
+					'applies_inline'                => false,
+					'force_artifact_cleanup'        => ! empty( $opts['force_artifact_cleanup'] ),
+					'allow_active_artifact_cleanup' => ! empty( $opts['allow_active_artifact_cleanup'] ),
+					'destructive_rows_need_review'  => true,
+				),
 				'requested_by_user_id'  => isset( $opts['user_id'] ) ? (int) $opts['user_id'] : null,
 				'requested_by_agent_id' => isset( $opts['agent_id'] ) ? (int) $opts['agent_id'] : null,
-				'summary'               => $plan['summary'] ?? array(),
+				'summary'               => $this->planning_summary( $mode, 'planning' ),
 			)
 		);
 		if ( $run_id instanceof \WP_Error ) {
 			return $run_id;
 		}
-		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
-		$updated         = $this->update_run_or_error( $run_id, array( 'summary' => $plan['summary'] ), 'planned' );
-		if ( $updated instanceof \WP_Error ) {
-			return $updated;
+
+		try {
+			$plan = $this->workspace->workspace_cleanup_plan( $opts );
+		} catch ( \Throwable $error ) {
+			return $this->planning_failure( $run_id, $mode, 'cleanup_plan_discovery_exception', $error->getMessage(), 500 );
 		}
+		if ( $plan instanceof \WP_Error ) {
+			$error_data = $plan->get_error_data();
+			return $this->planning_failure( $run_id, $mode, (string) $plan->get_error_code(), $plan->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
+		}
+
+		$items           = $this->plan_items( $plan );
+		$plan['summary'] = $this->materialize_plan_recommended_commands( (array) ( $plan['summary'] ?? array() ), $run_id );
 
 		$inserted = $this->repository->add_items( $run_id, $items );
 		if ( $inserted instanceof \WP_Error ) {
-			return $inserted;
+			$error_data = $inserted->get_error_data();
+			return $this->planning_failure( $run_id, $mode, (string) $inserted->get_error_code(), $inserted->get_error_message(), is_array( $error_data ) ? (int) ( $error_data['status'] ?? 500 ) : 500 );
+		}
+		$updated = $this->update_run_or_error(
+			$run_id,
+			array(
+				'expected_status' => 'planning',
+				'status'          => 'planned',
+				'policy'          => $plan['safety_policy'] ?? array(),
+				'summary'         => $plan['summary'],
+			),
+			'planned'
+		);
+		if ( $updated instanceof \WP_Error ) {
+			return $updated;
 		}
 
 		$plan['run_id']          = $run_id;
@@ -98,6 +120,83 @@ class CleanupRunService {
 		return $summary;
 	}
 
+	/** @return array<string,mixed> */
+	private function planning_summary( string $mode, string $state, string $error_code = '', string $error_message = '' ): array {
+		$summary = array(
+			'planning' => array(
+				'phase'      => 'workspace_cleanup_plan',
+				'state'      => $state,
+				'mode'       => $mode,
+				'updated_at' => gmdate( 'c' ),
+			),
+			'recovery' => array(
+				'kind'    => 'cleanup_plan_discovery',
+				'message' => 'Planning has not produced a reviewed cleanup batch. This run cannot be applied.',
+			),
+		);
+		if ( '' !== $error_code ) {
+			$summary['planning']['error'] = array(
+				'code'    => $error_code,
+				'message' => $error_message,
+			);
+		}
+
+		return $summary;
+	}
+
+	/** @return \WP_Error */
+	private function planning_failure( string $run_id, string $mode, string $error_code, string $error_message, int $status ): \WP_Error {
+		$summary             = $this->planning_summary( $mode, 'planning_failed', $error_code, $error_message );
+		$recovery            = array(
+			'run_id'           => $run_id,
+			'state'            => 'planning_failed',
+			'status_command'   => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
+			'evidence_command' => sprintf( 'studio wp datamachine-code workspace cleanup evidence %s --format=json', $run_id ),
+			'apply_authorized' => false,
+		);
+		$summary['recovery'] = array_merge( $summary['recovery'], $recovery );
+		$checkpoint          = $this->update_run_or_error(
+			$run_id,
+			array(
+				'expected_status' => 'planning',
+				'status'          => 'planning_failed',
+				'completed_at'    => gmdate( 'Y-m-d H:i:s' ),
+				'summary'         => $summary,
+			),
+			'planning_failed'
+		);
+		if ( $checkpoint instanceof \WP_Error ) {
+			return new \WP_Error(
+				$checkpoint->get_error_code(),
+				$checkpoint->get_error_message(),
+				array_merge(
+					(array) ( $checkpoint->get_error_data() ?? array() ),
+					array(
+						'planning_error' => array(
+							'code'    => $error_code,
+							'message' => $error_message,
+						),
+						'recovery'       => $recovery,
+					)
+				)
+			);
+		}
+
+		return new \WP_Error(
+			$error_code,
+			$error_message,
+			array(
+				'status'         => $status,
+				'run_id'         => $run_id,
+				'planning_error' => array(
+					'code'    => $error_code,
+					'message' => $error_message,
+				),
+				'recovery'       => $recovery,
+			)
+		);
+	}
+
 	/**
 	 * Apply pending rows from a DB-backed run.
 	 *
@@ -109,6 +208,18 @@ class CleanupRunService {
 		$run = $this->repository->get_run( $run_id );
 		if ( null === $run ) {
 			return new \WP_Error( 'cleanup_run_not_found', sprintf( 'Cleanup run not found: %s', $run_id ), array( 'status' => 404 ) );
+		}
+		if ( ! in_array( (string) ( $run['status'] ?? '' ), array( 'planned', 'applying', 'needs_resume', 'completed' ), true ) ) {
+			return new \WP_Error(
+				'cleanup_run_not_ready',
+				sprintf( 'Cleanup run %s is not a completed reviewed plan.', $run_id ),
+				array(
+					'status'   => 409,
+					'run_id'   => $run_id,
+					'state'    => (string) ( $run['status'] ?? '' ),
+					'recovery' => (array) ( $run['summary']['recovery'] ?? array() ),
+				)
+			);
 		}
 
 		$limit                = $this->apply_limit( $opts );
@@ -125,12 +236,16 @@ class CleanupRunService {
 			);
 		}
 
+		$transition = array(
+			'status'     => 'applying',
+			'started_at' => gmdate( 'Y-m-d H:i:s' ),
+		);
+		if ( 'applying' !== (string) ( $run['status'] ?? '' ) ) {
+			$transition['expected_status'] = (string) ( $run['status'] ?? '' );
+		}
 		$updated = $this->update_run_or_error(
 			$run_id,
-			array(
-				'status'     => 'applying',
-				'started_at' => gmdate( 'Y-m-d H:i:s' ),
-			),
+			$transition,
 			'applying'
 		);
 		if ( $updated instanceof \WP_Error ) {
@@ -373,10 +488,13 @@ class CleanupRunService {
 	private function discovery_row( array $run ): array {
 		$run_id     = (string) ( $run['run_id'] ?? '' );
 		$safe       = 'safe_workspace_cleanup' === (string) ( $run['mode'] ?? '' );
+		$planning   = in_array( (string) ( $run['status'] ?? '' ), array( 'planning', 'planning_failed' ), true );
 		$request_id = (string) ( $run['policy']['request_id'] ?? '' );
-		$resume     = $safe
+		$resume     = $planning
+			? sprintf( 'studio wp datamachine-code workspace cleanup plan --mode=%s --format=json', (string) ( $run['mode'] ?? 'cleanup_plan' ) )
+			: ( $safe
 			? 'studio wp datamachine-code workspace cleanup safe --format=json' . ( '' !== $request_id ? ' --request-id=' . escapeshellarg( $request_id ) : '' )
-			: sprintf( 'studio wp datamachine-code workspace cleanup resume %s --format=json', $run_id );
+			: sprintf( 'studio wp datamachine-code workspace cleanup resume %s --format=json', $run_id ) );
 		return array(
 			'run_id'       => $run_id,
 			'mode'         => (string) ( $run['mode'] ?? '' ),

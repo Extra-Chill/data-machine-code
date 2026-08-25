@@ -14,9 +14,29 @@ final class StandaloneWorktreeProvider {
 	private const IDENTITY_SCHEMA = 'datamachine-code/worktree-identity/v1';
 	private const SAFETY_SCHEMA   = 'datamachine-code/worktree-safety/v1';
 	private const CONVERGE_SCHEMA = 'datamachine-code/worktree-convergence/v1';
+	private const CAPABILITIES_SCHEMA = 'datamachine-code/worktree-provider-capabilities/v1';
 	private const TOKEN_PREFIX    = 'dmc-worktree-v1.';
 	private const PROBE_TIMEOUT   = 2.0;
 	private const LOCK_TIMEOUT    = 2.0;
+
+	/** @return array<string,mixed> */
+	public function capabilities(): array {
+		return array(
+			'schema'                => self::CAPABILITIES_SCHEMA,
+			'operations'            => array( 'capabilities', 'identity', 'safety', 'converge' ),
+			'identity_schema'       => self::IDENTITY_SCHEMA,
+			'tracker_fields'        => array( 'task_url', 'task_ref' ),
+			'attachment_operation'  => 'datamachine-code/workspace-worktree-attach-tracker',
+			'attachment_preview_input' => array( 'dry_run' => true ),
+			'attachment_apply_input'   => array( 'dry_run' => false ),
+			'attachment_preview_statuses' => array( 'eligible', 'already_attached' ),
+			'attachment_apply_statuses'   => array( 'attached', 'already_attached' ),
+			'attachment_identity_fields'  => array( 'handle', 'path', 'branch', 'worktree_sha', 'task_identity' ),
+			'attachment_apply_receipt'    => true,
+			'attachment_standalone' => false,
+			'authorization_bearing' => false,
+		);
+	}
 
 	/**
 	 * Resolve immutable local identity without loading WordPress or probing safety.
@@ -50,12 +70,16 @@ final class StandaloneWorktreeProvider {
 			return $this->not_owned('git_directory_not_found', $parsed['dir_name'], $started);
 		}
 
+		$tracker  = $this->read_tracker($git_dir);
 		$identity = array(
 			'handle'  => $parsed['dir_name'],
 			'path'    => $real,
 			'branch'  => $branch,
 			'primary' => ! $parsed['is_worktree'],
 			'git_dir' => $git_dir,
+			'task_url' => $tracker['task_url'],
+			'task_ref' => $tracker['task_ref'],
+			'tracker'  => $tracker,
 		);
 
 		return array_merge(
@@ -257,7 +281,21 @@ final class StandaloneWorktreeProvider {
 			&& $identity['path'] === ( $current['path'] ?? null )
 			&& $identity['branch'] === ( $current['branch'] ?? null )
 			&& $identity['primary'] === ( $current['primary'] ?? null )
-			&& $identity['git_dir'] === ( $current['git_dir'] ?? null );
+			&& $identity['git_dir'] === ( $current['git_dir'] ?? null )
+			&& $identity['task_url'] === ( $current['task_url'] ?? null )
+			&& $identity['task_ref'] === ( $current['task_ref'] ?? null );
+	}
+
+	/** @return array{task_url:?string,task_ref:?string} */
+	private function read_tracker( string $git_dir ): array {
+		$payload = @file_get_contents($git_dir . '/datamachine-code-task.json');
+		$data    = is_string($payload) ? json_decode($payload, true) : null;
+		$url     = is_array($data) && is_string($data['task_url'] ?? null) ? $data['task_url'] : null;
+		$ref     = is_array($data) && is_string($data['task_ref'] ?? null) ? trim($data['task_ref']) : '';
+		return array(
+			'task_url' => TaskUrl::canonicalize($url),
+			'task_ref' => '' !== $ref && ! preg_match('/\s/', $ref) ? strtolower($ref) : null,
+		);
 	}
 
 	/** @return resource|null */
@@ -355,7 +393,7 @@ final class StandaloneWorktreeProvider {
 	}
 
 	/**
-	 * @param array{handle:string,path:string,branch:string,primary:bool,git_dir:string} $identity
+	 * @param array{handle:string,path:string,branch:string,primary:bool,git_dir:string,task_url:?string,task_ref:?string,tracker:array} $identity
 	 */
 	private function encode_token( array $identity ): string {
 		$payload = json_encode($identity, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -364,7 +402,7 @@ final class StandaloneWorktreeProvider {
 	}
 
 	/**
-	 * @return array{handle:string,path:string,branch:string,primary:bool,git_dir:string}|null
+	 * @return array{handle:string,path:string,branch:string,primary:bool,git_dir:string,task_url:?string,task_ref:?string,tracker:array}|null
 	 */
 	private function decode_token( string $token ): ?array {
 		if ( ! str_starts_with($token, self::TOKEN_PREFIX) ) {
@@ -384,10 +422,24 @@ final class StandaloneWorktreeProvider {
 			|| ! is_string($decoded['path'] ?? null)
 			|| ! is_string($decoded['branch'] ?? null)
 			|| ! is_bool($decoded['primary'] ?? null)
-			|| ! is_string($decoded['git_dir'] ?? null) ) {
+			|| ! is_string($decoded['git_dir'] ?? null)
+			|| ( ! is_string($decoded['task_url'] ?? null) && null !== ( $decoded['task_url'] ?? null ) )
+			|| ( ! is_string($decoded['task_ref'] ?? null) && null !== ( $decoded['task_ref'] ?? null ) ) ) {
 			return null;
 		}
-		return $decoded;
+		return array(
+			'handle'   => $decoded['handle'],
+			'path'     => $decoded['path'],
+			'branch'   => $decoded['branch'],
+			'primary'  => $decoded['primary'],
+			'git_dir'  => $decoded['git_dir'],
+			'task_url' => $decoded['task_url'] ?? null,
+			'task_ref' => $decoded['task_ref'] ?? null,
+			'tracker'  => array(
+				'task_url' => $decoded['task_url'] ?? null,
+				'task_ref' => $decoded['task_ref'] ?? null,
+			),
+		);
 	}
 
 	/**

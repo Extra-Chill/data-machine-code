@@ -278,7 +278,10 @@ class WorkspaceTools extends BaseTool
             return $this->buildErrorResponse('Workspace show ability not available.', 'workspace_show');
         }
 
-        $input = array( 'name' => $parameters['name'] ?? '' );
+        $input = array(
+            'name'    => $parameters['name'] ?? '',
+            'refresh' => ! empty($parameters['refresh']),
+        );
         $input = $this->resolveWorkspaceInputAliases($input, array( 'name' ));
         $result = $ability->execute($input);
 
@@ -779,7 +782,11 @@ class WorkspaceTools extends BaseTool
 
         $result = $ability->execute($input);
         if (is_wp_error($result) ) {
-            return $this->buildErrorResponse($result->get_error_message(), $tool_name);
+            $response               = $this->buildErrorResponse($result->get_error_message(), $tool_name);
+            $response['error_code'] = $result->get_error_code();
+            $error_data             = (array) $result->get_error_data();
+            $response['error_data'] = ! empty($error_data['mutation_committed']) ? $error_data : $this->sanitizeWorkspaceResult($error_data, $input);
+            return $response;
         }
 
         return array(
@@ -1163,6 +1170,10 @@ class WorkspaceTools extends BaseTool
             'name' => array(
             'type'        => 'string',
             'description' => 'Workspace repository directory name.',
+                    ),
+                    'refresh' => array(
+                        'type'        => 'boolean',
+                        'description' => 'Fetch the tracked remote under a bounded timeout before classifying primary freshness.',
                     ),
             ),
             'required'   => array( 'name' ),

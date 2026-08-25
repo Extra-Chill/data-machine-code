@@ -83,7 +83,7 @@ function process_runner_assert_running( int $pid, string $message ): void {
 	}
 }
 
-$cwd = sys_get_temp_dir();
+$cwd = dirname(__DIR__);
 
 $spec = CommandSpec::from_argv(
 	array( PHP_BINARY, '-r', 'fwrite(STDOUT, getenv("DMC_COMMAND_SPEC_TEST") . "|" . basename(getcwd()));' ),
@@ -101,6 +101,17 @@ $result = ProcessRunner::run($spec, array( 'separate_streams' => true ));
 process_runner_assert_not_error($result, 'ProcessRunner should execute argv specs.');
 process_runner_assert_same('argv-ok|' . basename($cwd), $result['stdout'], 'CommandSpec preserves argv, cwd, and env policy.');
 process_runner_assert_same('', $result['stderr'], 'CommandSpec captures stderr separately.');
+
+$process_events = array();
+$completed = ProcessRunner::run(
+	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'exit(0);' )),
+	array(
+		'on_start' => static function ( array $process ) use ( &$process_events ): void { $process_events['start'] = (int) ($process['pid'] ?? 0); },
+		'on_complete' => static function ( array $process ) use ( &$process_events ): void { $process_events['complete'] = (int) ($process['pid'] ?? 0); },
+	)
+);
+process_runner_assert_not_error($completed, 'ProcessRunner should complete lifecycle callbacks.');
+process_runner_assert_same($process_events['start'] ?? 0, $process_events['complete'] ?? -1, 'ProcessRunner completion must identify the started child.');
 
 $stdin_result = ProcessRunner::run(
 	CommandSpec::from_argv(array( PHP_BINARY, '-r', 'fwrite(STDOUT, stream_get_contents(STDIN));' )),
@@ -210,6 +221,18 @@ if ( 'Windows' !== PHP_OS_FAMILY ) {
 	}
 	process_runner_assert_running($sibling_pid, 'GitRunner cleanup must not signal an unrelated sibling.');
 	process_runner_assert_less_than(3.0, $elapsed, 'GitRunner string commands must not wait for pipe-owning descendants.');
+	$leak_args = '-c ' . escapeshellarg('alias.leak=!sh -c ' . escapeshellarg('echo "fatal: https://user:secret@example.test/repo?token=secret-token" >&2; exit 1')) . ' leak';
+	$leak      = GitRunner::run(sys_get_temp_dir(), $leak_args, 1);
+	process_runner_assert_same(true, $leak instanceof WP_Error, 'GitRunner must return a typed remote diagnostic failure.');
+	$leak_output = (string) ( $leak->get_error_data()['output'] ?? '' );
+	process_runner_assert_same(false, str_contains($leak_output, 'user:secret') || str_contains($leak_output, 'secret-token'), 'GitRunner leaked remote URL credentials.');
+	process_runner_assert_same(true, str_contains($leak_output, 'https://***@example.test/repo?token=***'), 'GitRunner did not retain the sanitized remote diagnostic.');
+	$adversarial_diagnostic = 'api_key=api-secret client_secret: client-secret Authorization: Bearer bearer-secret authorization=token token-secret Bearer standalone-secret https://example.test/repo?api_key=query-key&client_secret=query-secret';
+	$redacted_diagnostic    = GitRunner::redact_diagnostic($adversarial_diagnostic);
+	foreach ( array( 'api-secret', 'client-secret', 'bearer-secret', 'token-secret', 'standalone-secret', 'query-key', 'query-secret' ) as $secret ) {
+		process_runner_assert_same(false, str_contains($redacted_diagnostic, $secret), 'GitRunner leaked an adversarial credential form.');
+	}
+	process_runner_assert_same(true, str_contains($redacted_diagnostic, 'api_key=***') && str_contains($redacted_diagnostic, 'client_secret: ***') && str_contains($redacted_diagnostic, 'Authorization: ***') && str_contains($redacted_diagnostic, 'Bearer ***'), 'GitRunner did not preserve redacted diagnostic context.');
 	proc_terminate($sibling, 9);
 	proc_close($sibling);
 }

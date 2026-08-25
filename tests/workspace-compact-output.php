@@ -56,6 +56,7 @@ $worktree_add = WorkspaceCompactOutput::worktree_add_result(
 		'base'           => 'origin/main',
 		'slug'           => 'bounded-output',
 		'created_branch' => true,
+		'handoff_freshness' => array( 'status' => 'unverified', 'reason' => 'remote_freshness_probe_unsupported' ),
 		'disk_budget'    => array(
 			'status'                  => 'warn',
 			'creation_allowed'        => true,
@@ -64,6 +65,10 @@ $worktree_add = WorkspaceCompactOutput::worktree_add_result(
 			'projected_demand_bytes' => 200000,
 			'trigger_reasons'        => array( 'low_free_space' ),
 			'typed_trigger_reasons'  => array( array( 'code' => 'worktree_count_warning_threshold', 'severity' => 'advisory', 'resource' => 'worktree_count', 'threshold' => 'warning_floor' ) ),
+			'diagnostic_id'          => 'workspace_capacity',
+			'advisory_fingerprint'   => 'fingerprint-1',
+			'evidence_reference'     => 'workspace_capacity@fingerprint',
+			'recovery_actions'       => array( array( 'action' => 'inspect', 'command' => 'studio wp datamachine-code workspace hygiene --format=json' ) ),
 			'calibration'            => array_fill(0, 20, str_repeat('x', 100)),
 		),
 		'bootstrap'      => array(
@@ -82,6 +87,13 @@ compact_output_assert('warn' === ( $worktree_add['capacity']['status'] ?? null )
 compact_output_assert(true === ( $worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact worktree add output must expose admission permission.');
 compact_output_assert(false === ( $worktree_add['capacity']['force_override_required'] ?? null ), 'Compact worktree add output must expose whether force is required.');
 compact_output_assert('advisory' === ( $worktree_add['capacity']['typed_trigger_reasons'][0]['severity'] ?? null ), 'Compact worktree add output must expose typed trigger severity.');
+compact_output_assert('fingerprint-1' === ( $worktree_add['capacity']['advisory_fingerprint'] ?? null ) && 'workspace_capacity@fingerprint' === ( $worktree_add['capacity']['evidence_reference'] ?? null ), 'Compact worktree add output must retain advisory suppression identity.');
+compact_output_assert('inspect' === ( $worktree_add['capacity']['recovery_actions'][0]['action'] ?? null ), 'Compact worktree add output must retain structured recovery actions.');
+compact_output_assert('unverified' === ( $worktree_add['handoff_freshness']['status'] ?? null ) && 'remote_freshness_probe_unsupported' === ( $worktree_add['handoff_freshness']['reason'] ?? null ), 'Compact worktree add output must preserve the explicit freshness decision.');
+
+$dry_run_handoff = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'dry_run' => true, 'created' => false, 'handle' => 'repo@dry-run', 'handoff_freshness' => array( 'status' => 'not_applicable', 'reason' => 'non_allocation_dry_run' ) ));
+compact_output_assert('not_applicable' === ( $dry_run_handoff['handoff_freshness']['status'] ?? null ) && 'non_allocation_dry_run' === ( $dry_run_handoff['handoff_freshness']['reason'] ?? null ), 'Compact output must preserve dry-run non-allocation handoff status.');
+compact_output_assert(true === ( $dry_run_handoff['dry_run'] ?? null ) && false === ( $dry_run_handoff['created'] ?? null ), 'Compact output must preserve dry-run non-allocation state.');
 
 $legacy_forced_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'disk_budget' => array( 'status' => 'warning', 'forced' => true, 'trigger_reasons' => array( 'projected_free_bytes_percentage_refusal_floor' ) ) ));
 compact_output_assert(true === ( $legacy_forced_worktree_add['capacity']['creation_allowed'] ?? null ), 'Compact legacy forced warning output must derive allowed admission.');
@@ -93,6 +105,11 @@ compact_output_assert(! isset($worktree_add['bootstrap']['steps'][0]['output_tai
 compact_output_assert(! isset($worktree_add['bootstrap']['steps'][0]['output_evidence']), 'Compact worktree add output must reserve command evidence for verbose output.');
 compact_output_assert(in_array('low_free_space', (array) ( $worktree_add['warning_codes'] ?? array() ), true), 'Compact worktree add output must preserve warning codes.');
 compact_output_assert(true === ( $worktree_add['evidence']['verbose']['input']['verbose'] ?? null ), 'Compact worktree add output must provide an explicit verbose evidence request.');
+
+$offline_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'handle' => 'repo@offline', 'fetch_failed' => true ));
+compact_output_assert(in_array('fetch_failed', (array) ( $offline_worktree_add['warning_codes'] ?? array() ), true), 'Successful offline worktree output must retain fetch_failed warning evidence.');
+$timed_out_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'handle' => 'repo@fetch-timeout', 'fetch_failed' => true, 'fetch_timed_out' => true ));
+compact_output_assert(in_array('fetch_failed', (array) ( $timed_out_worktree_add['warning_codes'] ?? array() ), true) && in_array('fetch_timed_out', (array) ( $timed_out_worktree_add['warning_codes'] ?? array() ), true), 'Successful fetch-timeout worktree output must retain both freshness warning codes.');
 
 $hygiene_candidate_rows = $large_rows;
 $hygiene_candidate_rows[0]['dirty']                        = null;

@@ -10,18 +10,27 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(WorkspaceLockStore::class) ) {
 	include_once __DIR__ . '/WorkspaceLockStore.php';
+}
+if ( ! class_exists(WallClockBudget::class) ) {
+	include_once dirname(__DIR__) . '/Support/WallClockBudget.php';
+}
+if ( ! class_exists(TaskUrl::class) ) {
+	include_once __DIR__ . '/TaskUrl.php';
 }
 
 final class WorkspaceMutationLock {
 
 
 
-	private const POLL_USEC = 100000;
-	private const REQUEST_EXPIRES_SECONDS = 900;
+	private const POLL_USEC                 = 100000;
+	private const REQUEST_EXPIRES_SECONDS   = 900;
+	private const PROGRESS_INTERVAL_SECONDS = 5.0;
 
 	/**
 	 * @var resource|null
@@ -50,6 +59,7 @@ final class WorkspaceMutationLock {
 	 * @param  callable $callback       Callback to run while locked.
 	 * @param  int      $timeout        Seconds to wait for the lock.
 	 * @param  array    $metadata       Owner evidence persisted with the lock.
+	 * @param  callable|null $progress_callback Best-effort admission observer.
 	 * @return mixed|\WP_Error Callback result or lock acquisition error.
 	 */
 	public static function with_repo(
@@ -57,18 +67,22 @@ final class WorkspaceMutationLock {
 		string $repo,
 		callable $callback,
 		int $timeout = 30,
-		array $metadata = array()
+		array $metadata = array(),
+		?callable $progress_callback = null
 	): mixed {
-		$lock = self::acquire($workspace_path, $repo, $timeout, $metadata);
+		$lock = self::acquire($workspace_path, $repo, $timeout, $metadata, $progress_callback);
 		if ( is_wp_error($lock) ) {
 			return $lock;
 		}
 
+		$result  = null;
+		$release = true;
 		try {
-			return self::invoke_callback($callback, $lock);
+			$result = self::invoke_callback($callback, $lock);
 		} finally {
-			$lock->release();
+			$release = $lock->release();
 		}
+		return is_wp_error($release) ? self::completed_callback_error($release, $result) : $result;
 	}
 
 	/**
@@ -81,7 +95,9 @@ final class WorkspaceMutationLock {
 	public static function with_repos( string $workspace_path, array $repos, callable $callback, int $timeout = 30 ): mixed {
 		$repos = array_values(array_unique(array_filter(array_map(array( self::class, 'sanitize_repo_key' ), $repos))));
 		sort($repos, SORT_STRING);
-		$locks = array();
+		$locks         = array();
+		$result        = null;
+		$release_error = null;
 
 		try {
 			foreach ( $repos as $repo ) {
@@ -92,12 +108,16 @@ final class WorkspaceMutationLock {
 				$locks[] = $lock;
 			}
 
-			return $callback();
+			$result = $callback();
 		} finally {
 			foreach ( array_reverse($locks) as $lock ) {
-				$lock->release();
+				$released = $lock->release();
+				if ( null === $release_error && is_wp_error($released) ) {
+					$release_error = $released;
+				}
 			}
 		}
+		return $release_error instanceof \WP_Error ? self::completed_callback_error($release_error, $result) : $result;
 	}
 
 	/**
@@ -107,9 +127,10 @@ final class WorkspaceMutationLock {
 	 * @param  string $repo           Primary repo handle.
 	 * @param  int    $timeout        Seconds to wait for the lock.
 	 * @param  array  $metadata       Owner evidence persisted with the lock.
+	 * @param  callable|null $progress_callback Best-effort admission observer.
 	 * @return self|\WP_Error Lock object or retryable error.
 	 */
-	public static function acquire( string $workspace_path, string $repo, int $timeout = 30, array $metadata = array() ): self|\WP_Error {
+	public static function acquire( string $workspace_path, string $repo, int $timeout = 30, array $metadata = array(), ?callable $progress_callback = null ): self|\WP_Error {
 		$workspace_path = rtrim($workspace_path, '/');
 		$repo           = self::sanitize_repo_key($repo);
 
@@ -125,8 +146,8 @@ final class WorkspaceMutationLock {
 		if ( ! is_dir($lock_dir) ) {
 			$created = function_exists('wp_mkdir_p')
 			? wp_mkdir_p($lock_dir)
-             // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir -- Fallback for non-WordPress smoke tests.
-			: mkdir($lock_dir, 0755, true);
+			 // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir,WordPress.PHP.NoSilencedErrors.Discouraged -- Atomic local lock setup handles the suppressed race by rechecking the directory.
+			: @mkdir($lock_dir, 0755, true);
 			if ( ! $created && ! is_dir($lock_dir) ) {
 				return new \WP_Error(
 					'workspace_lock_create_failed',
@@ -136,9 +157,23 @@ final class WorkspaceMutationLock {
 			}
 		}
 
-		$lock_path    = $lock_dir . '/worktree-' . $repo . '.lock';
+		$lock_path = $lock_dir . '/worktree-' . $repo . '.lock';
 		self::prune_stale_requests($lock_dir);
 		$request_path = self::record_request($lock_dir, $repo, $lock_path);
+		if ( '' === $request_path || ! is_file($request_path) ) {
+			return new \WP_Error(
+				'workspace_lock_request_create_failed',
+				sprintf('Failed to persist workspace lock request for "%s".', $repo),
+				array(
+					'status'             => 500,
+					'retryable'          => true,
+					'repo'               => $repo,
+					'scope'              => $repo,
+					'lock_key'           => 'worktree-' . $repo,
+					'mutation_committed' => false,
+				)
+			);
+		}
 		$request_id   = '' === $request_path ? '' : basename($request_path, '.json');
 		$handle       = fopen($lock_path, 'c'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		if ( false === $handle ) {
@@ -152,10 +187,32 @@ final class WorkspaceMutationLock {
 
 		$started = microtime(true);
 		$timeout = max(0, $timeout);
+		$first_attempt        = true;
+		$acquisition_deadline = isset($metadata['_acquisition_deadline']) && is_numeric($metadata['_acquisition_deadline']) ? (float) $metadata['_acquisition_deadline'] : null;
+		unset($metadata['_acquisition_deadline']);
+		self::emit_progress($progress_callback, array(
+			'operation'            => 'workspace_mutation_lock',
+			'phase'                => 'lock_request',
+			'state'                => 'registered',
+			'request_id'           => $request_id,
+			'scope'                => $repo,
+			'lock_key'             => 'worktree-' . $repo,
+			'queue_position'       => self::request_queue_position($lock_dir, $lock_path, $request_path),
+			'wait_timeout_seconds' => $timeout,
+		));
+		if ( 0 < $timeout && ( microtime(true) - $started ) >= $timeout ) {
+			return self::timed_out_error($repo, $lock_path, $request_path, $timeout, $started, $handle, $progress_callback);
+		}
+		$last_progress = null;
 
 		do {
 			self::update_request($request_path, 'queued');
-			if ( self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$acquired = self::request_is_head($lock_dir, $lock_path, $request_path) && flock($handle, LOCK_EX | LOCK_NB); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+			$elapsed  = microtime(true) - $started;
+			$deadline_live = null === $acquisition_deadline || microtime(true) < $acquisition_deadline;
+			if ( $acquired && $deadline_live && ( ( 0 === $timeout && $first_attempt ) || $elapsed < $timeout ) ) {
+				$metadata                  = WorkspaceLockStore::activate_lease($metadata);
+				$metadata['owner_context'] = WorkspaceLockStore::default_owner_context();
 				self::update_request($request_path, 'acquiring');
 				$lock_id = WorkspaceLockStore::register_acquired(
 					array(
@@ -166,7 +223,7 @@ final class WorkspaceMutationLock {
 							'workspace_path' => $workspace_path,
 							'lock_path'      => $lock_path,
 							'request_id'     => $request_id,
-							'owner_context'  => WorkspaceLockStore::default_owner_context(),
+							'owner_context'  => $metadata['owner_context'],
 						)),
 					)
 				);
@@ -180,41 +237,43 @@ final class WorkspaceMutationLock {
 				self::update_request($request_path, 'acquired');
 				return new self($handle, (int) $lock_id, $request_path, $metadata);
 			}
-
-			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
-				$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
-				$error_data['wait_timeout_seconds'] = $timeout;
-				$error_data['timed_out']            = true;
-				self::remove_request($request_path);
-				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-				return new \WP_Error(
-					'workspace_repo_busy',
-					sprintf(
-						'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes. Inspect lock status with `%s`; prune stale/orphaned locks with `%s` after confirming no active holder remains.',
-						$repo,
-						(string) ( $error_data['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' ),
-						(string) ( $error_data['stale_prune_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )
-					),
-					$error_data
-				);
+			if ( $acquired ) {
+				flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 			}
 
+			$now = microtime(true);
+			if ( null === $last_progress || ( $now - $last_progress ) >= self::PROGRESS_INTERVAL_SECONDS ) {
+				self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'queued');
+				$now           = microtime(true);
+				$last_progress = $now;
+			}
+
+			if ( 0 === $timeout || ( $now - $started ) >= $timeout || ! $deadline_live ) {
+				return self::timed_out_error($repo, $lock_path, $request_path, $timeout, $started, $handle, $progress_callback);
+			}
+
+			$first_attempt = false;
 			usleep(self::POLL_USEC);
 		} while ( true );
 	}
 
-	public function release(): void {
+	public function release(): true|\WP_Error {
 		if ( null === $this->handle ) {
-			return;
+			return true;
 		}
 
-		WorkspaceLockStore::release($this->lock_id);
+		$released = WorkspaceLockStore::release($this->lock_id);
 		flock($this->handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($this->handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		$this->handle  = null;
 		$this->lock_id = 0;
 		self::remove_request($this->request_path);
 		$this->request_path = '';
+		if ( is_wp_error($released) ) {
+			$data = array_merge( (array) $released->get_error_data(), array( 'filesystem_lock_released' => true ));
+			return new \WP_Error($released->get_error_code(), $released->get_error_message(), $data);
+		}
+		return true;
 	}
 
 	/** Refresh the DB lease for callers that reach a bounded long-running phase. */
@@ -228,6 +287,29 @@ final class WorkspaceMutationLock {
 		}
 		$this->metadata = array_merge($this->metadata, $metadata);
 		return WorkspaceLockStore::heartbeat($this->lock_id, $this->metadata);
+	}
+
+	/** Return the acquisition-bounded lease deadline, when one was declared. */
+	public function lease_deadline(): ?int {
+		$deadline = strtotime((string) ( $this->metadata['expected_release_at'] ?? '' ));
+		return false === $deadline ? null : $deadline;
+	}
+
+	/** Whether this object still owns its authoritative OS lock handle. */
+	public function is_active(): bool {
+		return null !== $this->handle;
+	}
+
+	/** Return bounded ownership evidence without exposing arbitrary caller metadata. */
+	public function lease_evidence(): array {
+		return array(
+			'os_lock_active'        => $this->is_active(),
+			'lease_strategy'        => $this->metadata['lease_strategy'] ?? null,
+			'lease_activated_at'    => $this->metadata['lease_activated_at'] ?? null,
+			'expected_release_at'   => $this->metadata['expected_release_at'] ?? null,
+			'lease_duration_seconds' => isset($this->metadata['lease_duration_seconds']) ? (int) $this->metadata['lease_duration_seconds'] : null,
+			'owner'                 => $this->metadata['owner_context'] ?? WorkspaceLockStore::default_owner_context(),
+		);
 	}
 
 	/** Invoke legacy zero-argument callbacks without a new argument. */
@@ -245,6 +327,7 @@ final class WorkspaceMutationLock {
 			if ( 0 === $reflection->getNumberOfParameters() && ! $reflection->isVariadic() ) {
 				return $callback();
 			}
+		// phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- Reflection is only a compatibility probe.
 		} catch ( \ReflectionException | \TypeError ) {
 			// Callable reflection is best-effort; PHP remains the invocation authority.
 		}
@@ -253,15 +336,106 @@ final class WorkspaceMutationLock {
 	}
 
 	/**
+	 * Close an expired waiter without allowing its protected mutation to run.
+	 *
+	 * @param resource $handle Open filesystem lock handle.
+	 */
+	private static function timed_out_error( string $repo, string $lock_path, string $request_path, int $timeout, float $started, $handle, ?callable $progress_callback ): \WP_Error {
+		$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
+		$error_data['wait_timeout_seconds'] = $timeout;
+		$error_data['timed_out']            = true;
+		self::remove_request($request_path);
+		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'timed_out', $error_data);
+		return new \WP_Error(
+			'workspace_repo_busy',
+			sprintf(
+				'Workspace repo "%s" is busy with another worktree lifecycle mutation. Retry after the current add/remove/cleanup/prune operation completes. Inspect lock status with `%s`; prune stale/orphaned locks with `%s` after confirming no active holder remains.',
+				$repo,
+				(string) ( $error_data['status_command'] ?? 'wp datamachine-code workspace worktree locks --format=json' ),
+				(string) ( $error_data['stale_prune_command'] ?? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json' )
+			),
+			$error_data
+		);
+	}
+
+	/** Emit queue progress without allowing diagnostics to alter lock admission. */
+	private static function emit_lock_wait_progress( ?callable $callback, string $repo, string $lock_path, string $request_path, int $timeout, float $started, string $state, ?array $data = null ): void {
+		if ( null === $callback ) {
+			return;
+		}
+		$data = $data ?? self::busy_error_data($repo, $lock_path, $request_path);
+		self::emit_progress($callback, array_filter(array(
+			'operation'              => 'workspace_mutation_lock',
+			'phase'                  => 'lock_wait',
+			'state'                  => $state,
+			'request_id'             => $data['request_id'] ?? basename($request_path, '.json'),
+			'scope'                  => $repo,
+			'lock_key'               => $data['lock_key'] ?? 'worktree-' . $repo,
+			'queue_position'         => $data['queue_position'] ?? null,
+			'owner'                  => $data['owner'] ?? null,
+			'elapsed_seconds'        => round(max(0.0, microtime(true) - $started), 3),
+			'wait_timeout_seconds'   => $timeout,
+			'retry_after_seconds'    => $data['retry_after_seconds'] ?? null,
+			'estimated_wait_seconds' => $data['estimated_wait_seconds'] ?? null,
+			'eta_status'             => $data['eta_status'] ?? null,
+		), static fn( mixed $value ): bool => null !== $value && '' !== $value));
+	}
+
+	/** Best-effort observers must never interrupt a protected mutation. */
+	private static function emit_progress( ?callable $callback, array $event ): void {
+		if ( null === $callback ) {
+			return;
+		}
+		try {
+			$callback($event);
+		} catch ( \Throwable ) {
+			// Presentation failures cannot change lock ownership or queue order.
+		}
+	}
+
+	/** Preserve terminal ownership-write failure after a callback has returned. */
+	private static function completed_callback_error( \WP_Error $error, mixed $result ): \WP_Error {
+		if ( is_wp_error($result) ) {
+			$release_data = (array) $error->get_error_data();
+			$data         = array_merge(
+				(array) $result->get_error_data(),
+				array(
+					'lock_release_error' => array(
+						'code'                     => $error->get_error_code(),
+						'operation'                => $release_data['operation'] ?? null,
+						'retryable'                => $release_data['retryable'] ?? false,
+						'filesystem_lock_released' => $release_data['filesystem_lock_released'] ?? false,
+					),
+				)
+			);
+			return new \WP_Error($result->get_error_code(), $result->get_error_message(), $data);
+		}
+
+		$data = array_merge(
+			(array) $error->get_error_data(),
+			array(
+				'lock_callback_completed'  => true,
+				'lock_callback_error_code' => null,
+			)
+		);
+		return new \WP_Error($error->get_error_code(), $error->get_error_message(), $data);
+	}
+
+	/**
 	 * Summarize DB-visible and filesystem lock state.
 	 *
 	 * @return array<string,mixed>
 	 */
-	public static function status( string $workspace_path ): array {
-		$filesystem = self::filesystem_status($workspace_path);
-		$queue      = self::queued_requests($workspace_path);
-		$database   = WorkspaceLockStore::status();
-		$stale      = self::stale_lock_report($database, $filesystem);
+	public static function status( string $workspace_path, ?WallClockBudget $budget = null ): array {
+		$budget     = $budget ?? WallClockBudget::from_seconds(5, '5s');
+		$filesystem = self::filesystem_status($workspace_path, $budget);
+		$queue      = $budget->expired() ? array() : self::queued_requests($workspace_path, $budget);
+		$database   = $budget->remaining_seconds() < 1.0
+			? array( 'available' => false, 'state' => 'budget_exhausted', 'active' => 0, 'stale' => 0, 'released' => 0, 'total' => 0 )
+			: WorkspaceLockStore::status();
+		$stale      = self::stale_lock_report($database, $filesystem, $budget);
+		$partial    = $budget->expired() || ! empty($filesystem['partial']) || ! empty($stale['partial']) || empty($database['available']);
 
 		return array(
 			'database'          => $database,
@@ -276,6 +450,8 @@ final class WorkspaceMutationLock {
 			'retention_enabled' => true,
 			'policy'            => self::retention_policy(),
 			'queue'             => $queue,
+			'partial'           => $partial,
+			'evidence'          => array( 'wall_clock_budget' => $budget->evidence() ),
 		);
 	}
 
@@ -284,17 +460,23 @@ final class WorkspaceMutationLock {
 	 *
 	 * @return array<string,mixed>
 	 */
-	public static function prune_stale( string $workspace_path, bool $dry_run = false ): array {
-		$before    = self::status($workspace_path);
+	public static function prune_stale( string $workspace_path, bool $dry_run = false, ?WallClockBudget $budget = null ): array {
+		$budget    = $budget ?? WallClockBudget::from_seconds(10, '10s');
+		$before    = self::status($workspace_path, $budget);
 		$protected = self::active_filesystem_lock_keys( (array) ( $before['filesystem'] ?? array() ) );
-		$db_pruned = $dry_run ? array(
+		$db_pruned = $budget->remaining_seconds() < 1.0 ? array(
+			'dry_run'         => $dry_run,
+			'skipped'         => true,
+			'reason'          => 'budget_exhausted',
+			'candidate_count' => (int) ( $before['database']['stale'] ?? 0 ),
+		) : ( $dry_run ? array(
 			'dry_run'          => true,
 			'protected_active' => count($protected),
 			'protected_keys'   => $protected,
 			'candidate_count'  => (int) ( $before['database']['stale'] ?? 0 ),
-		) : WorkspaceLockStore::prune_expired($protected);
-		$fs_pruned = self::prune_stale_filesystem_locks($workspace_path, $dry_run);
-		$after     = self::status($workspace_path);
+		) : WorkspaceLockStore::prune_expired($protected) );
+		$fs_pruned = self::prune_stale_filesystem_locks($workspace_path, $dry_run, $budget);
+		$after     = $budget->remaining_seconds() < 1.0 ? array( 'available' => false, 'state' => 'budget_exhausted' ) : self::status($workspace_path, $budget);
 
 		return array(
 			'dry_run'    => $dry_run,
@@ -302,6 +484,8 @@ final class WorkspaceMutationLock {
 			'database'   => $db_pruned,
 			'filesystem' => $fs_pruned,
 			'after'      => $after,
+			'partial'    => $budget->expired() || ! empty($fs_pruned['partial']) || 'budget_exhausted' === (string) ( $after['state'] ?? '' ),
+			'evidence'   => array( 'wall_clock_budget' => $budget->evidence() ),
 		);
 	}
 
@@ -315,15 +499,25 @@ final class WorkspaceMutationLock {
 	}
 
 	private static function admission_error( \WP_Error $error, string $repo, string $lock_path, string $request_id ): \WP_Error {
-		$data = (array) $error->get_error_data();
+		$data  = (array) $error->get_error_data();
+		$owner = WorkspaceLockStore::default_owner_context();
+		unset($owner['wp_cli_args']);
+		if ( isset($owner['datamachine_task_url']) ) {
+			$task_url = TaskUrl::canonicalize_for_replay($owner['datamachine_task_url']);
+			if ( null === $task_url ) {
+				unset($owner['datamachine_task_url']);
+			} else {
+				$owner['datamachine_task_url'] = $task_url;
+			}
+		}
 		$data = array_merge(
 			$data,
 			array(
-				'resource'      => $lock_path,
-				'repo'          => $repo,
-				'request_id'    => $request_id,
-				'owner'         => WorkspaceLockStore::default_owner_context(),
-				'retry_command' => sprintf('wp datamachine-code workspace worktree add %s <branch> --from=origin/main', $repo),
+				'resource'              => $lock_path,
+				'repo'                  => $repo,
+				'request_id'            => $request_id,
+				'owner'                 => $owner,
+				'lock_callback_started' => false,
 			)
 		);
 		return new \WP_Error($error->get_error_code(), $error->get_error_message(), $data);
@@ -334,22 +528,31 @@ final class WorkspaceMutationLock {
 		if ( ! is_dir($request_dir) && ! @mkdir($request_dir, 0755, true) && ! is_dir($request_dir) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir,WordPress.PHP.NoSilencedErrors.Discouraged -- Atomic local lock setup handles the suppressed race by rechecking the directory.
 			return '';
 		}
-		$request_id = bin2hex(random_bytes(12));
-		$path       = $request_dir . '/' . $request_id . '.json';
+		$request_id     = bin2hex(random_bytes(12));
+		$path           = $request_dir . '/' . $request_id . '.json';
 		$queue_position = count(self::queued_requests_for_resource($lock_dir, $lock_path)) + 1;
 		self::write_request($path, array(
-			'request_id' => $request_id,
-			'repo'       => $repo,
-			'resource'   => $lock_path,
-			'state'      => 'queued',
-			'pid'        => getmypid(),
-			'created_at' => self::request_time(),
-			'heartbeat_at' => self::request_time(),
-			'expires_at' => self::request_expires_at(),
-			'queue_order' => sprintf('%020.6F-%s', microtime(true), $request_id),
+			'request_id'     => $request_id,
+			'repo'           => $repo,
+			'resource'       => $lock_path,
+			'state'          => 'queued',
+			'pid'            => getmypid(),
+			'created_at'     => self::request_time(),
+			'heartbeat_at'   => self::request_time(),
+			'expires_at'     => self::request_expires_at(),
+			'queue_order'    => sprintf('%020.6F-%s', microtime(true), $request_id),
 			'queue_position' => $queue_position,
 		));
 		return $path;
+	}
+
+	private static function request_queue_position( string $lock_dir, string $lock_path, string $request_path ): int {
+		foreach ( self::queued_requests_for_resource($lock_dir, $lock_path) as $position => $request ) {
+			if ( (string) ( $request['path'] ?? '' ) === $request_path ) {
+				return $position + 1;
+			}
+		}
+		return 1;
 	}
 
 	private static function update_request( string $path, string $state ): void {
@@ -360,10 +563,10 @@ final class WorkspaceMutationLock {
 		if ( ! is_array($data) ) {
 			return;
 		}
-		$data['state']      = $state;
-		$data['updated_at'] = self::request_time();
+		$data['state']        = $state;
+		$data['updated_at']   = self::request_time();
 		$data['heartbeat_at'] = self::request_time();
-		$data['expires_at'] = self::request_expires_at();
+		$data['expires_at']   = self::request_expires_at();
 		self::write_request($path, $data);
 	}
 
@@ -392,13 +595,16 @@ final class WorkspaceMutationLock {
 	}
 
 	/** @return array<int,array<string,mixed>> */
-	private static function queued_requests( string $workspace_path ): array {
+	private static function queued_requests( string $workspace_path, ?WallClockBudget $budget = null ): array {
 		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
-		self::prune_stale_requests($lock_dir);
+		self::prune_stale_requests($lock_dir, $budget);
 		$files = glob($lock_dir . '/requests/*.json');
 		$files = false !== $files ? $files : array();
 		$rows  = array();
 		foreach ( array_slice($files, 0, 25) as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$row = self::read_request($file);
 			if ( is_array($row) && ! self::request_is_stale($row) ) {
 				$rows[] = $row;
@@ -406,24 +612,27 @@ final class WorkspaceMutationLock {
 				self::remove_request($file);
 			}
 		}
-		usort($rows, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? $left['created_at'] ?? ''), (string) ($right['queue_order'] ?? $right['created_at'] ?? '')));
+		usort($rows, static fn( array $left, array $right ): int => strcmp( (string) ( $left['queue_order'] ?? $left['created_at'] ?? '' ), (string) ( $right['queue_order'] ?? $right['created_at'] ?? '' )));
 		$positions = array();
 		foreach ( $rows as &$row ) {
 			if ( 'queued' !== (string) ( $row['state'] ?? '' ) ) {
 				continue;
 			}
-			$resource = (string) ( $row['resource'] ?? '' );
+			$resource               = (string) ( $row['resource'] ?? '' );
 			$positions[ $resource ] = (int) ( $positions[ $resource ] ?? 0 ) + 1;
-			$row['queue_position'] = $positions[ $resource ];
+			$row['queue_position']  = $positions[ $resource ];
 		}
 		unset($row);
 		return $rows;
 	}
 
 	/** Reclaim dead or expired queue tokens before selecting the FIFO head. */
-	private static function prune_stale_requests( string $lock_dir ): void {
+	private static function prune_stale_requests( string $lock_dir, ?WallClockBudget $budget = null ): void {
 		$files = glob($lock_dir . '/requests/*.json');
 		foreach ( false === $files ? array() : $files as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$request = self::read_request($file);
 			if ( is_array($request) && self::request_is_stale($request) ) {
 				self::remove_request($file);
@@ -445,34 +654,52 @@ final class WorkspaceMutationLock {
 			return true;
 		}
 
-		$expires = strtotime((string) ( $request['expires_at'] ?? $request['updated_at'] ?? $request['created_at'] ?? '' ));
+		$expires = strtotime( (string) ( $request['expires_at'] ?? $request['updated_at'] ?? $request['created_at'] ?? '' ));
 		return false === $expires || $expires < self::request_time_timestamp();
 	}
 
 	/** @return array{state:string,reason:string} */
 	private static function request_owner_liveness( array $request ): array {
 		$override = function_exists('apply_filters') ? apply_filters('datamachine_code_workspace_lock_request_liveness', null, $request) : null;
-		if ( is_array($override) && in_array((string) ( $override['state'] ?? '' ), array( 'live', 'exited', 'unknown' ), true) ) {
-			return array( 'state' => (string) $override['state'], 'reason' => (string) ( $override['reason'] ?? 'runtime_override' ) );
+		if ( is_array($override) && in_array( (string) ( $override['state'] ?? '' ), array( 'live', 'exited', 'unknown' ), true) ) {
+			return array(
+				'state'  => (string) $override['state'],
+				'reason' => (string) ( $override['reason'] ?? 'runtime_override' ),
+			);
 		}
 
 		$pid = (int) ( $request['pid'] ?? 0 );
 		if ( $pid <= 0 || ! function_exists('posix_kill') ) {
-			return array( 'state' => 'unknown', 'reason' => $pid <= 0 ? 'missing_pid' : 'posix_unavailable' );
+			return array(
+				'state'  => 'unknown',
+				'reason' => $pid <= 0 ? 'missing_pid' : 'posix_unavailable',
+			);
 		}
 		if ( @posix_kill($pid, 0) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- POSIX liveness probes report false with an errno.
-			return array( 'state' => 'live', 'reason' => 'pid_signalable' );
+			return array(
+				'state'  => 'live',
+				'reason' => 'pid_signalable',
+			);
 		}
 		$errno = function_exists('posix_get_last_error') ? posix_get_last_error() : 0;
 		$esrch = defined('POSIX_ESRCH') ? POSIX_ESRCH : 3;
 		$eperm = defined('POSIX_EPERM') ? POSIX_EPERM : 1;
 		if ( $esrch === $errno ) {
-			return array( 'state' => 'exited', 'reason' => 'esrch' );
+			return array(
+				'state'  => 'exited',
+				'reason' => 'esrch',
+			);
 		}
 		if ( $eperm === $errno ) {
-			return array( 'state' => 'unknown', 'reason' => 'eperm' );
+			return array(
+				'state'  => 'unknown',
+				'reason' => 'eperm',
+			);
 		}
-		return array( 'state' => 'unknown', 'reason' => 'probe_failed' );
+		return array(
+			'state'  => 'unknown',
+			'reason' => 'probe_failed',
+		);
 	}
 
 	private static function request_time(): string {
@@ -547,10 +774,13 @@ final class WorkspaceMutationLock {
 	 * @param array<string,mixed> $filesystem Filesystem lock status.
 	 * @return array<string,mixed>
 	 */
-	private static function stale_lock_report( array $database, array $filesystem ): array {
+	private static function stale_lock_report( array $database, array $filesystem, ?WallClockBudget $budget = null ): array {
 		$active_filesystem_keys = self::active_filesystem_lock_keys($filesystem);
 		$database_rows          = array();
 		foreach ( (array) ( $database['locks'] ?? array() ) as $lock ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			if ( ! is_array($lock) || 'stale' !== (string) ( $lock['state'] ?? '' ) ) {
 				continue;
 			}
@@ -582,6 +812,9 @@ final class WorkspaceMutationLock {
 
 		$filesystem_rows = array();
 		foreach ( (array) ( $filesystem['locks'] ?? array() ) as $lock ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			if ( ! is_array($lock) || 'stale' !== (string) ( $lock['state'] ?? '' ) ) {
 				continue;
 			}
@@ -611,6 +844,7 @@ final class WorkspaceMutationLock {
 			'safety'                 => 'Preview is non-destructive. Apply prunes expired DB rows and old unlocked filesystem lock files only; live filesystem flocks are reported and protected.',
 			'database'               => $database_rows,
 			'filesystem'             => $filesystem_rows,
+			'partial'                => null !== $budget && $budget->expired(),
 		);
 	}
 
@@ -686,14 +920,14 @@ final class WorkspaceMutationLock {
 		if ( is_array($active_lock) ) {
 			$data['active_lock'] = $active_lock;
 			$data['owner']       = array_filter(array(
-				'owner'          => $active_lock['owner'] ?? null,
-				'run_id'         => $active_lock['run_id'] ?? null,
-				'job_id'         => $active_lock['job_id'] ?? null,
-				'owner_context'  => $active_lock['metadata']['owner_context'] ?? null,
-				'acquired_at'    => $active_lock['acquired_at'] ?? null,
-				'heartbeat_at'   => $active_lock['heartbeat_at'] ?? null,
+				'owner'                 => $active_lock['owner'] ?? null,
+				'run_id'                => $active_lock['run_id'] ?? null,
+				'job_id'                => $active_lock['job_id'] ?? null,
+				'owner_context'         => $active_lock['metadata']['owner_context'] ?? null,
+				'acquired_at'           => $active_lock['acquired_at'] ?? null,
+				'heartbeat_at'          => $active_lock['heartbeat_at'] ?? null,
 				'heartbeat_age_seconds' => $active_lock['heartbeat_age_seconds'] ?? null,
-				'source'         => 'database',
+				'source'                => 'database',
 			));
 			if ( isset($active_lock['age_seconds']) ) {
 				$data['age_seconds'] = (int) $active_lock['age_seconds'];
@@ -701,15 +935,15 @@ final class WorkspaceMutationLock {
 			if ( isset($active_lock['retry_after_seconds']) ) {
 				// Preserve lease timing for stale-owner recovery without presenting it
 				// as the healthy owner's expected completion time.
-				$data['retry_after_seconds']       = (int) $active_lock['retry_after_seconds'];
+				$data['retry_after_seconds']      = (int) $active_lock['retry_after_seconds'];
 				$data['lease_expires_in_seconds'] = (int) $active_lock['retry_after_seconds'];
 			}
 			$expected_release_at = (string) ( $active_lock['metadata']['expected_release_at'] ?? '' );
 			$expected_release    = '' === $expected_release_at ? false : strtotime($expected_release_at);
 			if ( false !== $expected_release ) {
-				$data['expected_release_at']     = $expected_release_at;
-				$data['estimated_wait_seconds']  = max(0, $expected_release - time());
-				$data['eta_status']              = 'owner_operation_deadline';
+				$data['expected_release_at']    = $expected_release_at;
+				$data['estimated_wait_seconds'] = max(0, $expected_release - time());
+				$data['eta_status']             = 'owner_operation_deadline';
 			}
 		} elseif ( is_wp_error($active_lock) ) {
 			$data['lock_store_error'] = $active_lock->get_error_message();
@@ -725,13 +959,13 @@ final class WorkspaceMutationLock {
 				'phase' => 'lock_wait',
 				'state' => 'timed_out',
 			);
-			$request = self::read_request($request_path);
+			$request            = self::read_request($request_path);
 			if ( is_array($request) && isset($request['queue_position']) ) {
 				$data['queue_position'] = (int) $request['queue_position'];
 			}
 			$queue = self::queued_requests_for_resource(dirname($lock_path), $lock_path);
 			foreach ( $queue as $position => $request ) {
-				if ( $request_path === (string) ($request['path'] ?? '') ) {
+				if ( (string) ( $request['path'] ?? '' ) === $request_path ) {
 					$data['queue_position'] = $position + 1;
 					break;
 				}
@@ -752,19 +986,19 @@ final class WorkspaceMutationLock {
 		$rows  = array();
 		foreach ( false === $files ? array() : $files as $file ) {
 			$row = self::read_request($file);
-			if ( is_array($row) && 'queued' === (string) ($row['state'] ?? '') && $lock_path === (string) ($row['resource'] ?? '') ) {
+			if ( is_array($row) && 'queued' === (string) ( $row['state'] ?? '' ) && (string) ( $row['resource'] ?? '' ) === $lock_path ) {
 				$row['path'] = $file;
 				$rows[]      = $row;
 			}
 		}
-		usort($rows, static fn( array $left, array $right ): int => strcmp((string) ($left['queue_order'] ?? $left['created_at'] ?? ''), (string) ($right['queue_order'] ?? $right['created_at'] ?? '')));
+		usort($rows, static fn( array $left, array $right ): int => strcmp( (string) ( $left['queue_order'] ?? $left['created_at'] ?? '' ), (string) ( $right['queue_order'] ?? $right['created_at'] ?? '' )));
 		return $rows;
 	}
 
 	/** Only the oldest live request may contend for the OS flock. */
 	private static function request_is_head( string $lock_dir, string $lock_path, string $request_path ): bool {
 		$queue = self::queued_requests_for_resource($lock_dir, $lock_path);
-		return array() !== $queue && $request_path === (string) ( $queue[0]['path'] ?? '' );
+		return array() !== $queue && (string) ( $queue[0]['path'] ?? '' ) === $request_path;
 	}
 
 	/**
@@ -785,7 +1019,7 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function filesystem_status( string $workspace_path ): array {
+	private static function filesystem_status( string $workspace_path, ?WallClockBudget $budget = null ): array {
 		$lock_dir    = rtrim($workspace_path, '/') . '/.locks';
 		$files       = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
 		$files       = false === $files ? array() : $files;
@@ -795,8 +1029,13 @@ final class WorkspaceMutationLock {
 		$active_keys = array();
 		$stale_keys  = array();
 		$locks       = array();
+		$partial     = false;
 
 		foreach ( $files as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				$partial = true;
+				break;
+			}
 			$entry = self::filesystem_lock_entry($file);
 			if ( empty($entry) ) {
 				continue;
@@ -824,6 +1063,8 @@ final class WorkspaceMutationLock {
 			'stale_keys'  => array_values(array_filter($stale_keys)),
 			'recent'      => $recent,
 			'locks'       => $locks,
+			'partial'     => $partial,
+			'observed'    => count($locks),
 			'guidance'    => self::recovery_guidance(),
 		);
 	}
@@ -897,7 +1138,7 @@ final class WorkspaceMutationLock {
 	/**
 	 * @return array<string,mixed>
 	 */
-	private static function prune_stale_filesystem_locks( string $workspace_path, bool $dry_run ): array {
+	private static function prune_stale_filesystem_locks( string $workspace_path, bool $dry_run, ?WallClockBudget $budget = null ): array {
 		$lock_dir = rtrim($workspace_path, '/') . '/.locks';
 		$files    = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
 		$files    = false === $files ? array() : $files;
@@ -907,6 +1148,9 @@ final class WorkspaceMutationLock {
 		$skipped  = array();
 
 		foreach ( $files as $file ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			$mtime = filemtime($file);
 			if ( false === $mtime || $mtime >= $cutoff ) {
 				$skipped[] = array(
@@ -948,6 +1192,7 @@ final class WorkspaceMutationLock {
 			'removed'       => $removed,
 			'skipped_count' => count($skipped),
 			'skipped'       => $skipped,
+			'partial'       => count($removed) + count($skipped) < count($files),
 		);
 	}
 

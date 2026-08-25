@@ -230,6 +230,33 @@ class WorktreeInventoryRepository {
 	}
 
 	/**
+	 * Return a bounded set of inventory rows for an exact task URL or reference.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function findByTaskRef( string $task_ref, int $limit = 201 ): array {
+		global $wpdb;
+
+		$task_ref = trim($task_ref);
+		$limit    = max(1, min(201, $limit));
+		if ( '' === $task_ref || ! isset($wpdb) || ! method_exists($wpdb, 'get_results') || ! method_exists($wpdb, 'prepare') ) {
+			return array();
+		}
+
+		$table = self::table_name();
+		$sql   = $wpdb->prepare(
+			'SELECT * FROM %i WHERE task_url = %s OR LOWER(task_ref) = LOWER(%s) ORDER BY handle ASC LIMIT %d',
+			$table,
+			$task_ref,
+			$task_ref,
+			$limit
+		);
+		$rows = $wpdb->get_results($sql, ARRAY_A);
+
+		return is_array($rows) ? array_map(array( $this, 'decode_row' ), $rows) : array();
+	}
+
+	/**
 	 * Mark a known row as missing on disk instead of dropping it silently.
 	 */
 	public function mark_missing( string $handle ): bool {

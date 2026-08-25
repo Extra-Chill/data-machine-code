@@ -6,11 +6,28 @@ use DataMachine\Cli\BaseCommand;
 use DataMachineCode\Cli\CliResponseRenderer;
 use DataMachineCode\Runtime\ManagedReleaseDrift;
 use DataMachineCode\Runtime\RuntimeSourceDoctor;
+use DataMachineCode\Abilities\WorkspaceAbilities;
 use WP_CLI;
 
 defined('ABSPATH') || exit;
 
 final class RuntimeCommand extends BaseCommand {
+	/**
+	 * Show the compact loaded-runtime and managed-source comparison.
+	 *
+	 * [--format=<format>]
+	 * : Output format.
+	 * ---
+	 * default: json
+	 * options:
+	 *   - json
+	 * ---
+	 *
+	 * @subcommand identity
+	 */
+	public function identity( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		WP_CLI::line((string) wp_json_encode(WorkspaceAbilities::runtimeIdentity(array()), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+	}
 	/**
 	 * Inspect or converge the configured managed release channel.
 	 *

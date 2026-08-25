@@ -9,6 +9,7 @@ namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\CommandSpec;
 use DataMachineCode\Support\ProcessRunner;
+use DataMachineCode\Support\WallClockBudget;
 
 defined('ABSPATH') || exit;
 
@@ -17,6 +18,9 @@ if ( ! class_exists(ProcessRunner::class) ) {
 }
 if ( ! class_exists(WorkspaceEmergencyCandidateSelector::class) ) {
 	require_once __DIR__ . '/WorkspaceEmergencyCandidateSelector.php';
+}
+if ( ! class_exists(WallClockBudget::class) ) {
+	require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 }
 
 trait WorkspaceHygieneReport {
@@ -47,42 +51,46 @@ trait WorkspaceHygieneReport {
 		$size_limit              = isset($opts['size_limit']) ? max(0, (int) $opts['size_limit']) : self::HYGIENE_DEFAULT_SIZE_LIMIT;
 		$size_entry_timeout      = isset($opts['size_entry_timeout']) ? max(1, (int) $opts['size_entry_timeout']) : self::HYGIENE_DEFAULT_SIZE_ENTRY_TIMEOUT;
 		$size_total_timeout      = isset($opts['size_total_timeout']) ? max(1, (int) $opts['size_total_timeout']) : self::HYGIENE_DEFAULT_SIZE_TOTAL_TIMEOUT;
+		$budget                  = WallClockBudget::from_duration($opts['until_budget'] ?? null, '30s', 'invalid_workspace_hygiene_budget');
+		if ( is_wp_error($budget) ) {
+			return $budget;
+		}
 
 		$inventory_refresh = null;
+		$listing           = null;
 		if ( $refresh_inventory ) {
-			$inventory_refresh = $this->worktree_inventory_refresh();
+			$inventory_refresh = $this->worktree_inventory_refresh($budget);
 			if ( $inventory_refresh instanceof \WP_Error ) {
 				return $inventory_refresh;
 			}
 		}
 
 		if ( $include_worktree_status ) {
-			$listing = $this->worktree_list();
-			if ( is_wp_error($listing) ) {
-				return $listing;
+			$remaining_budget = $budget->remaining_duration();
+			if ( null === $remaining_budget ) {
+				$listing = array( 'worktrees' => array(), 'partial' => true, 'diagnostics' => array( 'budget_exhaustion_reason' => 'budget_exhausted_before_worktree_status' ) );
+			} else {
+				$listing = $this->worktree_list(null, null, array( 'include_status' => true, 'include_disk' => false, 'all' => true, 'wall_clock_budget' => $budget ));
+				if ( is_wp_error($listing) ) {
+					return $listing;
+				}
 			}
 			$worktrees            = (array) ( $listing['worktrees'] ?? array() );
 			$worktree_status_mode = 'full_git_status';
 		} else {
-			$worktrees            = $this->build_workspace_inventory_rows();
+			$worktrees            = $this->build_workspace_inventory_rows($budget);
 			$worktree_status_mode = 'top_level_inventory';
 		}
 
-		$size_report    = $include_sizes ? $this->build_workspace_size_report($size_limit, $size_entry_timeout, $size_total_timeout) : $this->empty_workspace_size_report($size_limit, false, $size_entry_timeout, $size_total_timeout);
+		$remaining_size_seconds = $budget->probe_timeout_seconds($size_total_timeout);
+		$size_report    = $include_sizes && $remaining_size_seconds > 0 ? $this->build_workspace_size_report($size_limit, $size_entry_timeout, $remaining_size_seconds) : $this->empty_workspace_size_report($size_limit, $include_sizes, $size_entry_timeout, $size_total_timeout);
 		$cleanup        = null;
 		$cleanup_error  = null;
-		$locks          = WorkspaceMutationLock::status($this->workspace_path);
+		$locks          = $budget->expired() ? array( 'available' => false, 'state' => 'budget_exhausted' ) : WorkspaceMutationLock::status($this->workspace_path, $budget);
 		$remote_backend = $this->build_remote_workspace_backend_report();
 
-		if ( $include_cleanup ) {
-			$cleanup = $this->worktree_cleanup_merged(
-				array(
-					'dry_run'        => true,
-					'force'          => false,
-					'skip_github'    => true,
-					'inventory_only' => true,
-				)
-			);
+		if ( $include_cleanup && ! $budget->expired() ) {
+			$cleanup = $this->worktree_cleanup_inventory_only('', '', false, null, 0, '', $worktrees, $budget);
 			if ( $cleanup instanceof \WP_Error ) {
 				$cleanup_error = array(
 					'code'    => $cleanup->get_error_code(),
@@ -101,6 +109,13 @@ trait WorkspaceHygieneReport {
 				'stale_locks' => array( 'count' => (int) ( $locks['stale_locks']['count'] ?? $locks['stale'] ?? 0 ) ),
 			)
 		);
+
+		$partial = $budget->expired()
+			|| ! empty($inventory_refresh['partial'])
+			|| ! empty($listing['partial'])
+			|| ! empty($locks['partial'])
+			|| ! empty($cleanup['pagination']['partial'])
+			|| ( $include_sizes && empty($size_report['scan_complete']) );
 
 		return array(
 			'success'                   => true,
@@ -134,6 +149,13 @@ trait WorkspaceHygieneReport {
 					)
 				)
 			),
+			'partial'                   => $partial,
+			'continuation'              => array(
+				'available'    => $partial,
+				'reason'       => $partial ? 'report_budget_exhausted_or_probe_incomplete' : null,
+				'next_command' => $partial ? 'wp datamachine-code workspace hygiene --format=json' : null,
+			),
+			'evidence'                  => array( 'wall_clock_budget' => $budget->evidence() ),
 		);
 	}
 
@@ -466,7 +488,7 @@ trait WorkspaceHygieneReport {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function build_workspace_inventory_rows(): array {
+	private function build_workspace_inventory_rows( ?WallClockBudget $budget = null ): array {
 		if ( '' === $this->workspace_path || ! is_dir($this->workspace_path) ) {
 			return array();
 		}
@@ -476,8 +498,12 @@ trait WorkspaceHygieneReport {
 			return array();
 		}
 
+		$metadata_by_handle = $this->workspace_inventory_metadata_map();
 		$rows = array();
 		foreach ( $entries as $entry ) {
+			if ( null !== $budget && $budget->expired() ) {
+				break;
+			}
 			if ( '.' === $entry || '..' === $entry || str_starts_with( (string) $entry, '.' ) ) {
 				continue;
 			}
@@ -490,7 +516,7 @@ trait WorkspaceHygieneReport {
 			$parsed      = $this->parse_handle($entry);
 			$kind        = $this->classify_workspace_entry_kind($entry, $parsed, $path);
 			$is_worktree = 'worktree' === $kind;
-			$metadata    = $is_worktree ? WorktreeContextInjector::get_metadata($parsed['dir_name']) : null;
+			$metadata    = $is_worktree ? ( $metadata_by_handle[ $parsed['dir_name'] ] ?? null ) : null;
 
 			$liveness     = WorktreeContextInjector::classify_liveness(is_array($metadata) ? $metadata : null);
 			$owner        = WorktreeContextInjector::summarize_owner(is_array($metadata) ? $metadata : null);
@@ -524,10 +550,6 @@ trait WorkspaceHygieneReport {
 				'metadata'              => $metadata,
 			);
 
-			if ( 'primary' === $kind ) {
-				$row['primary_freshness'] = $this->build_primary_freshness_report($path, $parsed['dir_name']);
-			}
-
 			$base_branch_warning = $this->base_branch_worktree_warning($row);
 			if ( null !== $base_branch_warning ) {
 				$row['base_branch_warning'] = $base_branch_warning;
@@ -537,6 +559,29 @@ trait WorkspaceHygieneReport {
 		}
 
 		return $rows;
+	}
+
+	/** Load lifecycle metadata once instead of issuing one database query per worktree. */
+	private function workspace_inventory_metadata_map(): array {
+		$metadata = array();
+		if ( class_exists('\DataMachineCode\Storage\WorktreeInventoryRepository') ) {
+			$repository = new \DataMachineCode\Storage\WorktreeInventoryRepository();
+			foreach ( $repository->list() as $row ) {
+				$handle = (string) ( $row['handle'] ?? '' );
+				if ( '' !== $handle && is_array($row['metadata'] ?? null) ) {
+					$metadata[ $handle ] = (array) $row['metadata'];
+				}
+			}
+		}
+		if ( function_exists('get_option') ) {
+			$legacy = get_option(WorktreeContextInjector::METADATA_OPTION, array());
+			foreach ( is_array($legacy) ? $legacy : array() as $handle => $row ) {
+				if ( is_array($row) ) {
+					$metadata[ (string) $handle ] = array_merge((array) ( $metadata[ (string) $handle ] ?? array() ), $row);
+				}
+			}
+		}
+		return $metadata;
 	}
 
 	/**

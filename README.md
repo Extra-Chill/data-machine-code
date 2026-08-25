@@ -148,6 +148,9 @@ wp datamachine-code workspace list --format=json --envelope
 wp datamachine-code workspace list --all --include-status --format=json
 wp datamachine-code workspace clone https://github.com/org/repo.git
 wp datamachine-code workspace show repo-name
+# Default freshness compares cached tracking refs and is reported as local_tracking_current.
+# Opt into a bounded network fetch for remote_verified_current evidence.
+wp datamachine-code workspace show repo-name --refresh
 
 # Worktrees — one per branch, parallel-safe
 wp datamachine-code workspace worktree add repo-name fix/foo

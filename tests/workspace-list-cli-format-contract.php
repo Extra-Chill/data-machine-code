@@ -30,6 +30,11 @@ namespace DataMachineCode\Workspace {
 		}
 	}
 	class WorkspaceAliasResolver {}
+	class WorktreeDiskBudget {
+		public static function format_advisory( array $capacity ): string { return (string) ( $capacity['advisory'] ?? '' ); }
+		public static function format_summary( array $capacity ): string { return (string) ( $capacity['summary'] ?? '' ); }
+		public static function format_trigger_reasons( array $capacity ): array { return (array) ( $capacity['trigger_reasons'] ?? array() ); }
+	}
 }
 
 namespace {
@@ -49,6 +54,7 @@ namespace {
 		public static array $logs = array();
 		public static function line( string $message ): void { self::$lines[] = $message; }
 		public static function log( string $message ): void { self::$logs[] = $message; }
+		public static function warning( string $message ): void { self::$logs[] = $message; }
 		public static function error( string $message ): void { throw new RuntimeException($message); }
 	}
 	final class WorkspaceListAbility {
@@ -92,6 +98,14 @@ namespace {
 			array( 'name' => 'repo-b@task', 'repo' => 'repo-b', 'is_worktree' => true, 'git' => true, 'path' => '/workspace/repo-b@task' ),
 		),
 		'summary' => array( 'workspace' => '/workspace', 'total' => 100, 'primary' => 20, 'worktree' => 70, 'context' => 10, 'non_git' => 0, 'repos' => array() ),
+		'workspace_capacity' => array(
+			'status' => 'warning',
+			'creation_allowed' => true,
+			'force_override_required' => false,
+			'trigger_reasons' => array( 'worktree_count_warning_threshold' ),
+			'advisory_fingerprint' => 'abc',
+			'advisory' => 'Capacity advisory [workspace_capacity@abc]: admission allowed.',
+		),
 	);
 	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
 	$command = new WorkspaceCommand();
@@ -117,6 +131,11 @@ namespace {
 	}
 
 	cli_format_reset();
+	$command->list_repos(array(), array());
+	cli_format_assert(1 === count(array_filter(WP_CLI::$logs, static fn( string $line ): bool => str_starts_with($line, 'Capacity advisory ['))), 'Multi-repository table output must emit exactly one command-level capacity advisory.');
+	cli_format_assert(! isset(BaseCommand::$formatted[0]['items'][0]['workspace_capacity']), 'Capacity evidence must not be duplicated into repository rows.');
+
+	cli_format_reset();
 	$command->list_repos(array(), array( 'format' => 'json' ));
 	$rows_json = json_decode(WP_CLI::$lines[0] ?? '', true);
 	cli_format_assert(2 === count($rows_json) && 'repo-a' === ($rows_json[0]['name'] ?? null), 'Default JSON must preserve the legacy row array.');
@@ -125,17 +144,32 @@ namespace {
 	$command->list_repos(array(), array( 'format' => 'json', 'envelope' => true ));
 	$envelope_json = json_decode(WP_CLI::$lines[0] ?? '', true);
 	cli_format_assert(100 === ($envelope_json['total'] ?? null) && 'cursor-2' === ($envelope_json['next_cursor'] ?? null), 'Envelope JSON must explicitly expose pagination metadata.');
+	cli_format_assert('abc' === ($envelope_json['workspace_capacity']['advisory_fingerprint'] ?? null) && ! isset($envelope_json['repos'][0]['workspace_capacity']), 'Envelope JSON must retain one deduplicated command-level capacity evidence object.');
 
 	cli_format_reset();
 	$command->list_repos(array(), array( 'summary' => true, 'format' => 'json' ));
 	$summary_json = json_decode(WP_CLI::$lines[0] ?? '', true);
 	cli_format_assert(100 === ($summary_json['total'] ?? null) && ! isset($summary_json['repos'][0]['name']), 'Summary JSON must serialize the full aggregate summary, not the current page.');
 	cli_format_assert(2 === ($summary_json['returned'] ?? null) && 'cursor-2' === ($summary_json['next_cursor'] ?? null), 'Summary JSON must retain page continuation metadata.');
+	cli_format_assert('abc' === ($summary_json['workspace_capacity']['advisory_fingerprint'] ?? null), 'Summary JSON must retain lossless command-level capacity evidence.');
 
 	cli_format_reset();
 	$command->list_repos(array(), array( 'summary' => true ));
 	cli_format_assert(in_array('Workspace: /workspace', WP_CLI::$logs, true), 'Table summary must identify the workspace.');
 	cli_format_assert(100 === (BaseCommand::$formatted[0]['items'][0]['count'] ?? null), 'Table summary must report total inventory, not the current page.');
+	cli_format_assert(1 === count(array_filter(WP_CLI::$logs, static fn( string $line ): bool => str_starts_with($line, 'Capacity advisory ['))), 'Multi-repository summary must emit exactly one compact capacity advisory.');
+
+	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility(array_merge($result, array( 'repos' => array(), 'returned' => 0, 'next_cursor' => null )));
+	cli_format_reset();
+	$command->list_repos(array(), array( 'repo' => 'missing' ));
+	cli_format_assert(1 === count(array_filter(WP_CLI::$logs, static fn( string $line ): bool => str_starts_with($line, 'Capacity advisory ['))), 'Empty filtered inventory must retain one command-level capacity advisory.');
+	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
+
+	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility(array_merge($result, array( 'total' => null, 'partial' => true, 'diagnostics' => array( 'scan_elapsed_seconds' => 5.0, 'budget_exhaustion_reason' => 'scan_budget_exhausted' ) )));
+	cli_format_reset();
+	$command->list_repos(array(), array());
+	cli_format_assert(str_contains(WP_CLI::$logs[0] ?? '', 'totals incomplete after 5.00s (scan_budget_exhausted)'), 'Partial table output must not coerce an unknown total to zero.');
+	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
 
 	foreach ( array( 'csv', 'yaml' ) as $format ) {
 		cli_format_reset();

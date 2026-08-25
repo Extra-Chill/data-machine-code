@@ -5,7 +5,9 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 
 function workspace_hygiene_contract_assert_contains( string $needle, string $haystack, string $message ): void {
-	if ( ! str_contains($haystack, $needle) ) {
+	$normalized_needle   = preg_replace('/\s+/', ' ', $needle);
+	$normalized_haystack = preg_replace('/\s+/', ' ', $haystack);
+	if ( ! str_contains((string) $normalized_haystack, (string) $normalized_needle) ) {
 		throw new RuntimeException($message . ' Missing: ' . $needle);
 	}
 }
@@ -37,7 +39,7 @@ workspace_hygiene_contract_assert_contains("'entry_timeout'", $hygiene, 'Workspa
 workspace_hygiene_contract_assert_contains("'total_timeout'", $hygiene, 'Workspace hygiene must classify whole-pass timeouts.');
 workspace_hygiene_contract_assert_not_contains("exec(sprintf('du -sk", $hygiene, 'Workspace hygiene must not invoke unbounded du through exec.');
 
-workspace_hygiene_contract_assert_contains("'include_sizes'           => ! empty(\$assoc_args['include-sizes'])", $cli, 'CLI hygiene must require explicit size opt-in.');
+workspace_hygiene_contract_assert_contains("'include_sizes'           => ! empty( \$assoc_args['include-sizes'] )", $cli, 'CLI hygiene must require explicit size opt-in.');
 workspace_hygiene_contract_assert_contains("'include_sizes'           => false", $cli, 'Cleanup-run inventory mode must not force size scans.');
 workspace_hygiene_contract_assert_not_contains("'include_sizes'           => true", $cli, 'CLI wrappers must not opt into size scans by default.');
 

@@ -30,6 +30,9 @@ use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorktreeDiskBudget;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
+use DataMachineCode\Runtime\RuntimeSourceSkewDiagnostic;
+use DataMachineCode\Workspace\WorkspaceSourceResolver;
+use DataMachineCode\Workspace\StandaloneWorktreeProvider;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -159,8 +162,12 @@ class WorkspaceAbilities {
 							'returned'         => array( 'type' => 'integer' ),
 							'next_cursor'      => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
-							'summary'          => array( 'type' => 'object' ),
-							'repos'            => array(
+							'summary'            => array( 'type' => 'object' ),
+							'workspace_capacity' => array(
+								'type'        => 'object',
+								'description' => 'One command-level, lossless workspace capacity envelope with a stable diagnostic ID, advisory fingerprint, evidence reference, and recovery actions.',
+							),
+							'repos'              => array(
 								'type'  => 'array',
 								'items' => array(
 									'type'       => 'object',
@@ -178,6 +185,20 @@ class WorkspaceAbilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'listRepos' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-runtime-identity',
+				array(
+					'label'               => 'Get Workspace Runtime Identity',
+					'description'         => 'Return the loaded plugin identity and its authoritative registered source identity using bounded, read-only workspace discovery.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'runtimeIdentity' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
@@ -203,6 +224,7 @@ class WorkspaceAbilities {
 							'exec_available'      => array( 'type' => 'boolean' ),
 							'proc_open_available' => array( 'type' => 'boolean' ),
 							'git_path'            => array( 'type' => 'string' ),
+							'runtime_identity'    => array( 'type' => 'object' ),
 							'remediation'         => array( 'type' => 'string' ),
 						),
 					),
@@ -224,6 +246,10 @@ class WorkspaceAbilities {
 							'name' => array(
 								'type'        => 'string',
 								'description' => 'Workspace handle: `<repo>` for primary checkout or `<repo>@<branch-slug>` for a worktree.',
+							),
+							'refresh' => array(
+								'type'        => 'boolean',
+								'description' => 'Fetch the tracked remote under a bounded timeout before classifying primary freshness. Worktrees are unchanged.',
 							),
 						),
 						'required'   => array( 'name' ),
@@ -1427,7 +1453,29 @@ class WorkspaceAbilities {
 							),
 							'apply_intent'   => array( 'type' => 'object' ),
 							'apply'          => array( 'type' => 'object' ),
-							'legacy_handoff' => array( 'type' => 'object' ),
+							'legacy_handoff' => array( 'type' => array( 'object', 'null' ) ),
+						),
+						'oneOf'      => array(
+							array(
+								'properties' => array(
+									'disposition'    => array(
+										'type' => 'string',
+										'enum' => array( 'create', 'exact_reuse', 'adoptable', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ),
+									),
+									'legacy_handoff' => self::worktreeLegacyHandoffSchema( nullable: true ),
+								),
+								'required'   => array( 'disposition' ),
+							),
+							array(
+								'properties' => array(
+									'disposition'    => array(
+										'type' => 'string',
+										'enum' => array( 'legacy_handoff_required' ),
+									),
+									'legacy_handoff' => self::worktreeLegacyHandoffSchema( required: true ),
+								),
+								'required'   => array( 'disposition', 'legacy_handoff' ),
+							),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreePlan' ),
@@ -1594,6 +1642,8 @@ class WorkspaceAbilities {
 						'type'       => 'object',
 						'properties' => array(
 							'success'                   => array( 'type' => 'boolean' ),
+							'dry_run'                   => array( 'type' => 'boolean' ),
+							'created'                   => array( 'type' => 'boolean' ),
 							'handle'                    => array( 'type' => 'string' ),
 							'path'                      => array( 'type' => 'string' ),
 							'branch'                    => array( 'type' => 'string' ),
@@ -1657,6 +1707,12 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Present only when fetch_timed_out=true. The bounded freshness-fetch budget in seconds.',
 							),
+							'handoff_freshness'         => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffFreshnessSchemaProperties(),
+								'required'    => array( 'status' ),
+								'description' => 'Required handoff contract. verified includes a metadata-bound proof; unverified requires explicit allow_unverified_freshness; not_applicable identifies a non-allocation dry-run.',
+							),
 							'stale_commits_behind'      => array(
 								'type'        => 'integer',
 								'description' => 'For the existing-local-branch path, how many commits the worktree branch is behind its configured upstream. Omitted when no upstream is configured.',
@@ -1706,8 +1762,180 @@ class WorkspaceAbilities {
 								'description' => 'Present only when `rebase_succeeded=false`. Trimmed error output from the failing rebase.',
 							),
 						),
+						'required'   => array( 'success', 'handoff_freshness' ),
 					),
 					'execute_callback'    => array( self::class, 'worktreeAdd' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-attach-tracker',
+				array(
+					'label'               => 'Attach Worktree Tracker Ownership',
+					'description'         => 'Preview or attach a task URL or reference for one exact active, clean, same-site/agent/session managed allocation without changing Git state.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle'   => array( 'type' => 'string' ),
+							'task_url' => array( 'type' => 'string' ),
+							'task_ref' => array( 'type' => 'string' ),
+							'dry_run'  => array(
+								'type'        => 'boolean',
+								'description' => 'If true, execute every attachment predicate and return eligible or already_attached without metadata, lock, or Git mutation.',
+							),
+						),
+						'required'   => array( 'handle' ),
+						'anyOf'      => array(
+							array( 'required' => array( 'task_url' ) ),
+							array( 'required' => array( 'task_ref' ) ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'             => array( 'type' => 'boolean' ),
+							'dry_run'             => array( 'type' => 'boolean' ),
+							'status'              => array( 'type' => 'string', 'enum' => array( 'eligible', 'attached', 'already_attached' ) ),
+							'handle'              => array( 'type' => 'string' ),
+							'path'                => array( 'type' => 'string' ),
+							'branch'              => array( 'type' => 'string' ),
+							'worktree_sha'        => array( 'type' => 'string' ),
+							'tracker'             => array( 'type' => 'object' ),
+							'task_identity'       => array( 'type' => 'string' ),
+							'allocation_identity' => array( 'type' => 'object' ),
+							'provider_resolution' => array( 'type' => 'object' ),
+							'receipt'             => array( 'type' => 'object' ),
+						),
+						'required' => array( 'success', 'status', 'handle', 'tracker', 'allocation_identity', 'provider_resolution' ),
+					),
+					'execute_callback'    => array( self::class, 'worktreeAttachTracker' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-provider-capabilities',
+				array(
+					'label'               => 'Inspect Standalone Worktree Provider Capabilities',
+					'description'         => 'Return the generic standalone provider operations, tracker fields, and managed attachment ability contract.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'worktreeProviderCapabilities' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-handoff-resume',
+				array(
+					'label'               => 'Resume Committed Worktree Handoff',
+					'description'         => 'Revalidate one exact committed allocation after add could not complete handoff freshness. This read-only continuation does not fetch, allocate, plan capacity, inject context, run bootstrap, or persist lifecycle metadata.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle'              => array(
+								'type'        => 'string',
+								'description' => 'Exact managed worktree handle returned by the partial-success add result.',
+							),
+							'allocation_identity' => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffAllocationIdentitySchemaProperties(),
+								'required'    => self::worktreeHandoffAllocationIdentitySchemaRequired(),
+								'description' => 'Exact server-issued identity returned in the add error continuation input.',
+							),
+						),
+						'required'   => array( 'handle', 'allocation_identity' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'             => array( 'type' => 'boolean' ),
+							'status'              => array(
+								'type' => 'string',
+								'enum' => array( 'current', 'contention' ),
+							),
+							'handle'              => array( 'type' => 'string' ),
+							'mutation_committed'  => array( 'type' => 'boolean' ),
+							'allocation_identity' => array(
+								'type'       => 'object',
+								'properties' => self::worktreeHandoffAllocationIdentitySchemaProperties(),
+								'required'   => self::worktreeHandoffAllocationIdentitySchemaRequired(),
+							),
+							'observation'         => array(
+								'type'       => 'object',
+								'properties' => self::worktreeHandoffProofSchemaProperties(),
+								'required'   => self::worktreeHandoffProofSchemaRequired(),
+							),
+							'read_only'           => array( 'type' => 'boolean' ),
+							'continuation'        => array( 'type' => 'object' ),
+							'contention'          => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeHandoffResume' ),
+					'permission_callback' => fn() => PermissionHelper::can_manage(),
+					'meta'                => array( 'show_in_rest' => false ),
+				)
+			);
+
+			AbilityRegistry::register(
+				'datamachine-code/workspace-worktree-handoff-revalidate',
+				array(
+					'label'               => 'Revalidate Worktree Handoff Freshness',
+					'description'         => 'Return a bounded current/drift observation for an immediate consumer converge-or-refuse decision; this does not hold a lease across external admission.',
+					'category'            => 'datamachine-code-workspace',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'handle' => array(
+								'type'        => 'string',
+								'description' => 'Managed worktree handle.',
+							),
+							'proof'  => array(
+								'type'        => 'object',
+								'properties'  => self::worktreeHandoffProofSchemaProperties(),
+								'required'    => self::worktreeHandoffProofSchemaRequired(),
+								'description' => 'Exact proof returned by worktree add.',
+							),
+						),
+						'required'   => array( 'handle', 'proof' ),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'status'     => array(
+								'type' => 'string',
+								'enum' => array( 'current', 'drift', 'fetch_failed', 'contention' ),
+							),
+							'handle'     => array( 'type' => 'string' ),
+							'proof'      => array(
+								'type'       => 'object',
+								'properties' => self::worktreeHandoffProofSchemaProperties(),
+								'required'   => self::worktreeHandoffProofSchemaRequired(),
+							),
+							'drift'      => array( 'type' => 'object' ),
+							'fetch'      => array( 'type' => 'object' ),
+							'contention' => array( 'type' => 'object' ),
+							'error'      => array(
+								'type'       => 'object',
+								'properties' => array(
+									'code'    => array(
+										'type' => 'string',
+										'enum' => array( 'invalid_worktree_handoff_proof', 'untrusted_worktree_handoff_proof', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'remote_default_changed_during_verification', 'worktree_handoff_base_unresolved' ),
+									),
+									'message' => array( 'type' => 'string' ),
+								),
+							),
+						),
+					),
+					'execute_callback'    => array( self::class, 'worktreeHandoffRevalidate' ),
 					'permission_callback' => fn() => PermissionHelper::can_manage(),
 					'meta'                => array( 'show_in_rest' => false ),
 				)
@@ -1828,6 +2056,10 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Maximum seconds for the complete size pass. Default 30.',
 							),
+							'until_budget'            => array(
+								'type'        => 'string',
+								'description' => 'Shared wall-clock budget for inventory, optional probes, lock status, and cleanup review. Defaults to 30s.',
+							),
 						),
 					),
 					'output_schema'       => array(
@@ -1848,6 +2080,9 @@ class WorkspaceAbilities {
 							'locks'                  => array( 'type' => 'object' ),
 							'cleanup'                => array( 'type' => 'object' ),
 							'notes'                  => array( 'type' => 'array' ),
+							'partial'                => array( 'type' => 'boolean' ),
+							'continuation'           => array( 'type' => 'object' ),
+							'evidence'               => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'workspaceHygieneReport' ),
@@ -2139,6 +2374,14 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional exact worktree handle. Filters before status and disk probes.',
 							),
+							'task_ref'       => array(
+								'type'        => 'string',
+								'description' => 'Optional exact recorded task URL or task reference. Filters before pagination and expensive probes.',
+							),
+							'owner_run_ref'  => array(
+								'type'        => 'string',
+								'description' => 'Optional exact recorded owner-run reference. Filters before pagination and expensive probes.',
+							),
 							'state'          => array(
 								'type'        => 'string',
 								'description' => 'Optional lifecycle state filter.',
@@ -2166,18 +2409,25 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Return every matching row.',
 							),
+							'until_budget'   => array(
+								'type'        => 'string',
+								'description' => 'Shared wall-clock budget for inventory and requested probes. Defaults to 5s, or 30s with all=true.',
+							),
 						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
 							'success'          => array( 'type' => 'boolean' ),
-							'total'            => array( 'type' => 'integer' ),
+							'total'            => array( 'type' => array( 'integer', 'null' ) ),
 							'returned'         => array( 'type' => 'integer' ),
 							'next_cursor'      => array( 'type' => array( 'string', 'null' ) ),
 							'status_requested' => array( 'type' => 'boolean' ),
 							'disk_requested'   => array( 'type' => 'boolean' ),
 							'summary'          => array( 'type' => 'object' ),
+							'partial'          => array( 'type' => 'boolean' ),
+							'continuation'     => array( 'type' => 'object' ),
+							'diagnostics'      => array( 'type' => 'object' ),
 							'fields_skipped'   => array(
 								'type'        => 'array',
 								'description' => 'Probe groups skipped on this listing (e.g. "status", "disk"). Empty when full data is requested.',
@@ -2888,6 +3138,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Also include repaired metadata rows. Requires explicit opt-in and still runs fresh safety probes before removal.',
 							),
+							'until_budget'              => array(
+								'type'        => 'string',
+								'description' => 'Shared wall-clock budget for discovery, safety probes, lock admission, and removals. Defaults to 30s.',
+							),
 							'scope'                     => array(
 								'type'        => 'string',
 								'description' => 'Operator scope label preserved from cleanup continuation guidance.',
@@ -3207,7 +3461,13 @@ class WorkspaceAbilities {
 				$options[ $key ] = $input[ $key ];
 			}
 		}
-		return $workspace->list_repos( $repo, $type, $options );
+		$result = $workspace->list_repos( $repo, $type, $options );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$result['workspace_capacity'] = WorktreeDiskBudget::inspect($workspace->get_path());
+
+		return $result;
 	}
 
 	/**
@@ -3225,12 +3485,45 @@ class WorkspaceAbilities {
 		return array_merge(
 			$diagnostic,
 			array(
-				'success'        => true,
-				'backend'        => $backend,
-				'local_backend'  => $diagnostic['backend'] ?? 'local_git',
-				'workspace_path' => $workspace->get_path(),
-				'remediation'    => $remediation,
+				'success'          => true,
+				'backend'          => $backend,
+				'local_backend'    => $diagnostic['backend'] ?? 'local_git',
+				'workspace_path'   => $workspace->get_path(),
+				'runtime_identity' => self::runtimeIdentity(array()),
+				'remediation'      => $remediation,
 			)
+		);
+	}
+
+	/** @return array<string,mixed> */
+	public static function runtimeIdentity( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$config      = apply_filters('datamachine_code_runtime_identity_config', array(
+			'runtime_file'      => DATAMACHINE_CODE_PATH . 'data-machine-code.php',
+			'runtime_version'   => DATAMACHINE_CODE_VERSION,
+			'source_path'       => defined('DATAMACHINE_CODE_SOURCE_PATH') ? DATAMACHINE_CODE_SOURCE_PATH : '',
+			'source_repository' => 'https://github.com/Extra-Chill/data-machine-code.git',
+		));
+		$config      = is_array($config) ? $config : array();
+		$source_path = (string) ( $config['source_path'] ?? '' );
+		$resolution  = array();
+		if ( '' === trim($source_path) ) {
+			$workspace_path = isset($config['workspace_path']) ? (string) $config['workspace_path'] : ( new Workspace() )->get_path();
+			$resolution     = WorkspaceSourceResolver::discover(
+				$workspace_path,
+				(string) ( $config['source_repository'] ?? 'https://github.com/Extra-Chill/data-machine-code.git' ),
+				'data-machine-code.php',
+				(int) ( $config['source_discovery_entry_limit'] ?? 1000 ),
+				(float) ( $config['source_discovery_budget_seconds'] ?? 1.0 )
+			);
+			if ( 'resolved' === ( $resolution['state'] ?? '' ) ) {
+				$source_path = (string) ( $resolution['source_path'] ?? '' );
+			}
+		}
+		return RuntimeSourceSkewDiagnostic::inspect(
+			(string) ( $config['runtime_file'] ?? DATAMACHINE_CODE_PATH . 'data-machine-code.php' ),
+			(string) ( $config['runtime_version'] ?? DATAMACHINE_CODE_VERSION ),
+			$source_path,
+			$resolution
 		);
 	}
 
@@ -3243,7 +3536,7 @@ class WorkspaceAbilities {
 	public static function showRepo( array $input ): array|\WP_Error {
 		$workspace = new Workspace();
 		$handle    = (string) ( $input['name'] ?? '' );
-		$local     = $workspace->show_repo( $handle );
+		$local     = $workspace->show_repo( $handle, ! empty( $input['refresh'] ) );
 		if ( ! is_wp_error( $local ) && empty( $local['is_context'] ) ) {
 			return $local;
 		}
@@ -3497,7 +3790,12 @@ class WorkspaceAbilities {
 			'properties' => array(
 				'status'            => array(
 					'type'        => 'string',
-					'description' => 'One of current, stale, diverged, ahead, detached, no_upstream, or unknown.',
+					'enum'        => array( 'local_tracking_current', 'remote_verified_current', 'stale', 'diverged', 'ahead', 'detached', 'no_upstream', 'unknown' ),
+					'description' => 'Freshness classification. Zero cached divergence is local_tracking_current unless a successful bounded fetch establishes remote_verified_current.',
+				),
+				'verification_scope' => array(
+					'type' => 'string',
+					'enum' => array( 'local_tracking', 'remote_verified' ),
 				),
 				'branch'            => array( 'type' => array( 'string', 'null' ) ),
 				'upstream'          => array( 'type' => array( 'string', 'null' ) ),
@@ -3506,6 +3804,19 @@ class WorkspaceAbilities {
 				'detached'          => array( 'type' => 'boolean' ),
 				'local_refs'        => array( 'type' => 'boolean' ),
 				'fetch_checked'     => array( 'type' => 'boolean' ),
+				'network_verification_attempted' => array( 'type' => 'boolean' ),
+				'tracking_ref_observed_at'       => array( 'type' => array( 'string', 'null' ) ),
+				'remote_verified_at'             => array( 'type' => array( 'string', 'null' ) ),
+				'verification_timeout_seconds'   => array( 'type' => array( 'integer', 'null' ) ),
+				'verification_error'             => array(
+					'type'       => array( 'object', 'null' ),
+					'properties' => array(
+						'code'      => array( 'type' => 'string' ),
+						'message'   => array( 'type' => 'string' ),
+						'timed_out' => array( 'type' => 'boolean' ),
+					),
+				),
+				'verification_command' => array( 'type' => 'string' ),
 				'suggested_command' => array( 'type' => array( 'string', 'null' ) ),
 			),
 		);
@@ -3828,6 +4139,16 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitAdd( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			$paths = $input['paths'] ?? array();
+			if ( ! is_array( $paths ) ) {
+				$paths = array();
+			}
+
+			return $workspace->git_add( $input['name'] ?? '', $paths, ! empty( $input['allow_primary_mutation'] ) );
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$paths = $input['paths'] ?? array();
 			return ( new RemoteWorkspaceBackend() )->git_add(
@@ -3836,7 +4157,6 @@ class WorkspaceAbilities {
 			);
 		}
 
-		$workspace = new Workspace();
 		$paths     = $input['paths'] ?? array();
 
 		if ( ! is_array( $paths ) ) {
@@ -3870,6 +4190,15 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitCommit( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			return $workspace->git_commit(
+				$input['name'] ?? '',
+				$input['message'] ?? '',
+				! empty( $input['allow_dangerous_primary_mutation'] )
+			);
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->git_commit(
 				$input['name'] ?? '',
@@ -3878,7 +4207,6 @@ class WorkspaceAbilities {
 			return self::decorate_remote_workspace_result( 'git_commit', $result );
 		}
 
-		$workspace = new Workspace();
 		return $workspace->git_commit(
 			$input['name'] ?? '',
 			$input['message'] ?? '',
@@ -3893,6 +4221,18 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function gitPush( array $input ): array|\WP_Error {
+		$workspace = new Workspace();
+		if ( RemoteWorkspaceBackend::should_handle() && null !== self::showLocalWorkspaceHandleIfPresent( $workspace, (string) ( $input['name'] ?? '' ) ) ) {
+			return $workspace->git_push(
+				$input['name'] ?? '',
+				$input['remote'] ?? 'origin',
+				$input['branch'] ?? null,
+				! empty( $input['allow_dangerous_primary_mutation'] ),
+				! empty( $input['force_with_lease'] ),
+				$input['expected_sha'] ?? null
+			);
+		}
+
 		if ( RemoteWorkspaceBackend::should_handle() ) {
 			$result = ( new RemoteWorkspaceBackend() )->git_push(
 				$input['name'] ?? '',
@@ -3902,7 +4242,6 @@ class WorkspaceAbilities {
 			return self::decorate_remote_workspace_result( 'git_push', $result );
 		}
 
-		$workspace = new Workspace();
 		return $workspace->git_push(
 			$input['name'] ?? '',
 			$input['remote'] ?? 'origin',
@@ -4261,6 +4600,7 @@ class WorkspaceAbilities {
 		$force                      = ! empty( $input['force'] );
 		$remediate_capacity         = ! empty( $input['remediate_capacity'] );
 		$remediate_capacity_dry_run = ! empty( $input['remediate_capacity_dry_run'] );
+		$progress_callback          = isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null;
 		$require_task_tracker       = array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true;
 		$task                       = array();
 		$intent                     = array();
@@ -4299,7 +4639,8 @@ class WorkspaceAbilities {
 					$intent,
 					$reuse_policy,
 					$remediate_capacity,
-					$remediate_capacity_dry_run
+					$remediate_capacity_dry_run,
+					$progress_callback
 				),
 				$input
 			);
@@ -4323,7 +4664,8 @@ class WorkspaceAbilities {
 				$input['from'] ?? null,
 				$task,
 				$intent,
-				$reuse_policy
+				$reuse_policy,
+				$allow_unverified_freshness
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				return self::worktree_add_response( self::decorate_remote_workspace_result( 'worktree_add', $result ), $input );
@@ -4345,7 +4687,8 @@ class WorkspaceAbilities {
 			$intent,
 			$reuse_policy,
 			$remediate_capacity,
-			$remediate_capacity_dry_run
+			$remediate_capacity_dry_run,
+			$progress_callback
 		);
 		return self::worktree_add_response( $result, $input );
 	}
@@ -4369,6 +4712,26 @@ class WorkspaceAbilities {
 	/** Apply a previously returned missing-primary restore plan. */
 	public static function primaryRestoreApply( array $input ): array|\WP_Error {
 		return ( new Workspace() )->primary_restore_apply( (array) ( $input['plan'] ?? array() ) );
+	}
+
+	public static function worktreeHandoffRevalidate( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_handoff_revalidate( (string) ( $input['handle'] ?? '' ), (array) ( $input['proof'] ?? array() ) );
+	}
+
+	public static function worktreeAttachTracker( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_attach_tracker((string) ( $input['handle'] ?? '' ), array_filter(array(
+			'task_url' => $input['task_url'] ?? null,
+			'task_ref' => $input['task_ref'] ?? null,
+		), static fn( mixed $value ): bool => is_string($value) && '' !== trim($value)), ! empty($input['dry_run']));
+	}
+
+	/** @return array<string,mixed> */
+	public static function worktreeProviderCapabilities( array $input ): array { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		return ( new StandaloneWorktreeProvider() )->capabilities();
+	}
+
+	public static function worktreeHandoffResume( array $input ): array|\WP_Error {
+		return ( new Workspace() )->worktree_handoff_resume( (string) ( $input['handle'] ?? '' ), (array) ( $input['allocation_identity'] ?? array() ) );
 	}
 
 	public static function worktreeLegacyHandoffApply( array $input ): array|\WP_Error {
@@ -4411,6 +4774,182 @@ class WorkspaceAbilities {
 			'require_task_tracker'       => array( 'type' => 'boolean' ),
 			...$policy,
 		);
+	}
+
+	/** Typed legacy handoff evidence returned by worktree planning. */
+	private static function worktreeLegacyHandoffSchema( bool $required = false, bool $nullable = false ): array {
+		$check = array( 'type' => 'boolean' );
+		if ( $required ) {
+			$check['enum'] = array( true );
+		}
+		$vetoes  = array(
+			'type'  => 'array',
+			'items' => array( 'type' => 'string' ),
+		);
+		$actions = array(
+			'type'  => 'array',
+			'items' => array(
+				'type'       => 'object',
+				'properties' => array(
+					'type'                    => array(
+						'type' => 'string',
+						'enum' => array( 'adopt_runtime', 'replace_isolated' ),
+					),
+					'ability'                 => array(
+						'type' => 'string',
+						'enum' => array( 'datamachine-code/workspace-worktree-legacy-handoff-apply' ),
+					),
+					'mode'                    => array(
+						'type' => 'string',
+						'enum' => array( 'adopt_runtime', 'replace_isolated' ),
+					),
+					'old_handle'              => array( 'type' => array( 'string', 'null' ) ),
+					'terminal_classification' => array(
+						'type' => 'string',
+						'enum' => array( 'superseded' ),
+					),
+					'lineage'                 => array( 'type' => 'object' ),
+				),
+				'required'   => array( 'type', 'ability', 'mode', 'old_handle', 'lineage' ),
+				'oneOf'      => array(
+					array(
+						'properties' => array(
+							'type' => array(
+								'type' => 'string',
+								'enum' => array( 'adopt_runtime' ),
+							),
+							'mode' => array(
+								'type' => 'string',
+								'enum' => array( 'adopt_runtime' ),
+							),
+						),
+					),
+					array(
+						'properties' => array(
+							'type' => array(
+								'type' => 'string',
+								'enum' => array( 'replace_isolated' ),
+							),
+							'mode' => array(
+								'type' => 'string',
+								'enum' => array( 'replace_isolated' ),
+							),
+						),
+						'required'   => array( 'terminal_classification' ),
+					),
+				),
+			),
+		);
+		if ( $required ) {
+			$vetoes['maxItems']  = 0;
+			$actions['minItems'] = 2;
+			$actions['maxItems'] = 2;
+		} else {
+			$vetoes['minItems']  = 1;
+			$actions['maxItems'] = 0;
+		}
+
+		return array(
+			'type'       => $nullable ? array( 'object', 'null' ) : 'object',
+			'properties' => array(
+				'type'          => array(
+					'type' => 'string',
+					'enum' => array( 'legacy_handoff' ),
+				),
+				'status'        => array(
+					'type' => 'string',
+					'enum' => array( $required ? 'legacy_handoff_required' : 'legacy_handoff_refused' ),
+				),
+				'candidate'     => array( 'type' => 'object' ),
+				'task_identity' => array( 'type' => 'string' ),
+				'owner'         => array( 'type' => 'object' ),
+				'runtime_delta' => array( 'type' => 'object' ),
+				'checks'        => array(
+					'type'       => 'object',
+					'properties' => array_fill_keys( array( 'same_repository', 'same_task', 'non_primary', 'clean', 'pushed', 'stopped_or_stale', 'unlocked', 'no_active_process', 'candidate_verifiable', 'runtime_mismatch' ), $check ),
+					'required'   => array( 'same_repository', 'same_task', 'non_primary', 'clean', 'pushed', 'stopped_or_stale', 'unlocked', 'no_active_process', 'candidate_verifiable', 'runtime_mismatch' ),
+				),
+				'vetoes'        => $vetoes,
+				'lineage'       => array( 'type' => 'object' ),
+				'actions'       => $actions,
+			),
+			'required'   => array( 'type', 'status', 'candidate', 'task_identity', 'owner', 'runtime_delta', 'checks', 'vetoes', 'lineage', 'actions' ),
+		);
+	}
+
+	/** Schema shared by allocation and revalidation handoff proof payloads. */
+	private static function worktreeHandoffProofSchemaProperties(): array {
+		return array(
+			'version'                       => array(
+				'type'        => 'integer',
+				'enum'        => array( 3 ),
+				'description' => 'Only proof schema version 3 is accepted. Earlier proofs must be replaced by a fresh allocation proof.',
+			),
+			'proof_id'                      => array( 'type' => 'string' ),
+			'handle'                        => array( 'type' => 'string' ),
+			'worktree_sha'                  => array( 'type' => 'string' ),
+			'resolved_base_ref'             => array( 'type' => 'string' ),
+			'resolved_base_sha'             => array( 'type' => 'string' ),
+			'remote_default_ref'            => array( 'type' => 'string' ),
+			'remote_default_sha'            => array( 'type' => 'string' ),
+			'remote_default_advertised_sha' => array(
+				'type'        => 'string',
+				'description' => 'Commit SHA advertised by git ls-remote --symref origin HEAD and matched to the fetched remote-tracking ref.',
+			),
+			'verified_at'                   => array(
+				'type'   => 'string',
+				'format' => 'date-time',
+			),
+			'digest'                        => array( 'type' => 'string' ),
+		);
+	}
+
+	/** Schema for the required allocation handoff freshness decision. */
+	private static function worktreeHandoffFreshnessSchemaProperties(): array {
+		return array(
+			'status'     => array(
+				'type' => 'string',
+				'enum' => array( 'verified', 'unverified', 'not_applicable' ),
+			),
+			'proof'      => array(
+				'type'       => 'object',
+				'properties' => self::worktreeHandoffProofSchemaProperties(),
+				'required'   => self::worktreeHandoffProofSchemaRequired(),
+			),
+			'reason'     => array(
+				'type' => 'string',
+				'enum' => array( 'allocation_identity_missing', 'fetch_failed', 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved', 'worktree_handoff_base_unresolved', 'proof_generation_failed', 'metadata_persist_failed', 'remote_freshness_probe_unsupported', 'non_allocation_dry_run' ),
+			),
+			'error_code' => array(
+				'type'        => 'string',
+				'description' => 'Underlying typed failure code when proof generation or metadata persistence could not complete.',
+			),
+		);
+	}
+
+	/** @return array<int,string> */
+	private static function worktreeHandoffProofSchemaRequired(): array {
+		return array( 'version', 'proof_id', 'handle', 'worktree_sha', 'resolved_base_ref', 'resolved_base_sha', 'remote_default_ref', 'remote_default_sha', 'remote_default_advertised_sha', 'verified_at', 'digest' );
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private static function worktreeHandoffAllocationIdentitySchemaProperties(): array {
+		return array(
+			'version'           => array( 'type' => 'integer', 'enum' => array( 1 ) ),
+			'allocation_id'     => array( 'type' => 'string' ),
+			'handle'            => array( 'type' => 'string' ),
+			'path'              => array( 'type' => 'string' ),
+			'branch'            => array( 'type' => 'string' ),
+			'worktree_sha'      => array( 'type' => 'string' ),
+			'resolved_base_ref' => array( 'type' => 'string' ),
+			'metadata_digest'   => array( 'type' => 'string' ),
+			'digest'            => array( 'type' => 'string' ),
+		);
+	}
+
+	/** @return array<int,string> */
+	private static function worktreeHandoffAllocationIdentitySchemaRequired(): array {
+		return array( 'version', 'allocation_id', 'handle', 'path', 'branch', 'worktree_sha', 'resolved_base_ref', 'metadata_digest', 'digest' );
 	}
 
 	/**
@@ -4513,8 +5052,16 @@ class WorkspaceAbilities {
 			'limit'          => $limit,
 			'all'            => ! empty( $input['all'] ),
 		);
+		foreach ( array( 'task_ref', 'owner_run_ref' ) as $filter ) {
+			if ( isset( $input[ $filter ] ) ) {
+				$opts[ $filter ] = (string) $input[ $filter ];
+			}
+		}
 		if ( isset( $input['cursor'] ) ) {
 			$opts['cursor'] = (string) $input['cursor'];
+		}
+		if ( isset( $input['until_budget'] ) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
 		}
 
 		return $workspace->worktree_list( $repo, $state, $opts );
@@ -4549,6 +5096,9 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['size_total_timeout'] ) ) {
 			$opts['size_total_timeout'] = (int) $input['size_total_timeout'];
+		}
+		if ( isset( $input['until_budget'] ) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
 		}
 
 		return $workspace->workspace_hygiene_report( $opts );
@@ -4777,7 +5327,15 @@ class WorkspaceAbilities {
 		);
 		if ( is_wp_error( $created_run_id ) ) {
 			$existing = $repository->get_run( $run_id );
-			return is_array( $existing ) ? self::safeCleanupRunEnvelope( $existing, $request_id ) : $created_run_id;
+			if ( is_array( $existing ) ) {
+				return self::safeCleanupRunEnvelope( $existing, $request_id );
+			}
+			$cause_data = (array) $created_run_id->get_error_data();
+			return new \WP_Error(
+				'safe_cleanup_run_persist_failed',
+				'Failed to persist the safe cleanup run before scheduling. No cleanup mutation was started.',
+				array_merge($cause_data, array( 'status' => (int) ( $cause_data['status'] ?? 503 ), 'phase' => 'run_persistence', 'run_id' => $run_id, 'request_id' => $request_id, 'mutation_committed' => false, 'retryable' => true ))
+			);
 		}
 
 		$params = array(
@@ -4803,7 +5361,7 @@ class WorkspaceAbilities {
 					'completed_at' => gmdate( 'Y-m-d H:i:s' ),
 				)
 			);
-			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ) );
+			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup. The durable failed run remains available for evidence and retry.', array( 'status' => 503, 'phase' => 'scheduling', 'run_id' => $run_id, 'request_id' => $request_id, 'mutation_committed' => false, 'durable_run_persisted' => true, 'commands' => self::safeCleanupRunCommands($run_id, $request_id) ) );
 		}
 		$job_id = (int) ( $scheduled['job_ids'][0] ?? $scheduled['batch_job_id'] ?? 0 );
 		if ( $job_id <= 0 ) {
@@ -4814,7 +5372,7 @@ class WorkspaceAbilities {
 					'completed_at' => gmdate( 'Y-m-d H:i:s' ),
 				)
 			);
-			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup.', array( 'status' => 500 ) );
+			return new \WP_Error( 'workspace_safe_cleanup_schedule_failed', 'Failed to schedule safe workspace cleanup. The durable failed run remains available for evidence and retry.', array( 'status' => 503, 'phase' => 'scheduling', 'run_id' => $run_id, 'request_id' => $request_id, 'mutation_committed' => false, 'durable_run_persisted' => true, 'commands' => self::safeCleanupRunCommands($run_id, $request_id) ) );
 		}
 		$repository->update_run( $run_id, array( 'parent_job_id' => $job_id ) );
 		$commands = self::safeCleanupRunCommands( $run_id, $request_id );
@@ -5232,6 +5790,12 @@ class WorkspaceAbilities {
 		}
 		if ( isset( $input['remove_timeout'] ) ) {
 			$opts['remove_timeout'] = (int) $input['remove_timeout'];
+		}
+		if ( isset( $input['until_budget'] ) ) {
+			$opts['until_budget'] = (string) $input['until_budget'];
+		}
+		if ( isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ) {
+			$opts['progress_callback'] = $input['progress_callback'];
 		}
 		if ( isset( $input['source'] ) && '' !== trim( (string) $input['source'] ) ) {
 			$opts['source'] = trim( (string) $input['source'] );
