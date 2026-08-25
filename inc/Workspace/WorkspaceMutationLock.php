@@ -20,8 +20,9 @@ final class WorkspaceMutationLock {
 
 
 
-	private const POLL_USEC               = 100000;
-	private const REQUEST_EXPIRES_SECONDS = 900;
+	private const POLL_USEC                 = 100000;
+	private const REQUEST_EXPIRES_SECONDS   = 900;
+	private const PROGRESS_INTERVAL_SECONDS = 5.0;
 
 	/**
 	 * @var resource|null
@@ -50,6 +51,7 @@ final class WorkspaceMutationLock {
 	 * @param  callable $callback       Callback to run while locked.
 	 * @param  int      $timeout        Seconds to wait for the lock.
 	 * @param  array    $metadata       Owner evidence persisted with the lock.
+	 * @param  callable|null $progress_callback Best-effort admission observer.
 	 * @return mixed|\WP_Error Callback result or lock acquisition error.
 	 */
 	public static function with_repo(
@@ -57,9 +59,10 @@ final class WorkspaceMutationLock {
 		string $repo,
 		callable $callback,
 		int $timeout = 30,
-		array $metadata = array()
+		array $metadata = array(),
+		?callable $progress_callback = null
 	): mixed {
-		$lock = self::acquire($workspace_path, $repo, $timeout, $metadata);
+		$lock = self::acquire($workspace_path, $repo, $timeout, $metadata, $progress_callback);
 		if ( is_wp_error($lock) ) {
 			return $lock;
 		}
@@ -116,9 +119,10 @@ final class WorkspaceMutationLock {
 	 * @param  string $repo           Primary repo handle.
 	 * @param  int    $timeout        Seconds to wait for the lock.
 	 * @param  array  $metadata       Owner evidence persisted with the lock.
+	 * @param  callable|null $progress_callback Best-effort admission observer.
 	 * @return self|\WP_Error Lock object or retryable error.
 	 */
-	public static function acquire( string $workspace_path, string $repo, int $timeout = 30, array $metadata = array() ): self|\WP_Error {
+	public static function acquire( string $workspace_path, string $repo, int $timeout = 30, array $metadata = array(), ?callable $progress_callback = null ): self|\WP_Error {
 		$workspace_path = rtrim($workspace_path, '/');
 		$repo           = self::sanitize_repo_key($repo);
 
@@ -161,6 +165,17 @@ final class WorkspaceMutationLock {
 
 		$started = microtime(true);
 		$timeout = max(0, $timeout);
+		self::emit_progress($progress_callback, array(
+			'operation'            => 'workspace_mutation_lock',
+			'phase'                => 'lock_request',
+			'state'                => 'registered',
+			'request_id'           => $request_id,
+			'scope'                => $repo,
+			'lock_key'             => 'worktree-' . $repo,
+			'queue_position'       => self::request_queue_position($lock_dir, $lock_path, $request_path),
+			'wait_timeout_seconds' => $timeout,
+		));
+		$last_progress = null;
 
 		do {
 			self::update_request($request_path, 'queued');
@@ -190,10 +205,17 @@ final class WorkspaceMutationLock {
 				return new self($handle, (int) $lock_id, $request_path, $metadata);
 			}
 
-			if ( 0 === $timeout || ( microtime(true) - $started ) >= $timeout ) {
+			$now = microtime(true);
+			if ( null === $last_progress || ( $now - $last_progress ) >= self::PROGRESS_INTERVAL_SECONDS ) {
+				self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'queued');
+				$last_progress = $now;
+			}
+
+			if ( 0 === $timeout || ( $now - $started ) >= $timeout ) {
 				$error_data                         = self::busy_error_data($repo, $lock_path, $request_path);
 				$error_data['wait_timeout_seconds'] = $timeout;
 				$error_data['timed_out']            = true;
+				self::emit_lock_wait_progress($progress_callback, $repo, $lock_path, $request_path, $timeout, $started, 'timed_out', $error_data);
 				self::remove_request($request_path);
 				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 				return new \WP_Error(
@@ -265,6 +287,41 @@ final class WorkspaceMutationLock {
 		}
 
 		return $callback($lock);
+	}
+
+	/** Emit queue progress without allowing diagnostics to alter lock admission. */
+	private static function emit_lock_wait_progress( ?callable $callback, string $repo, string $lock_path, string $request_path, int $timeout, float $started, string $state, ?array $data = null ): void {
+		if ( null === $callback ) {
+			return;
+		}
+		$data = $data ?? self::busy_error_data($repo, $lock_path, $request_path);
+		self::emit_progress($callback, array_filter(array(
+			'operation'              => 'workspace_mutation_lock',
+			'phase'                  => 'lock_wait',
+			'state'                  => $state,
+			'request_id'             => $data['request_id'] ?? basename($request_path, '.json'),
+			'scope'                  => $repo,
+			'lock_key'               => $data['lock_key'] ?? 'worktree-' . $repo,
+			'queue_position'         => $data['queue_position'] ?? null,
+			'owner'                  => $data['owner'] ?? null,
+			'elapsed_seconds'        => round(max(0.0, microtime(true) - $started), 3),
+			'wait_timeout_seconds'   => $timeout,
+			'retry_after_seconds'    => $data['retry_after_seconds'] ?? null,
+			'estimated_wait_seconds' => $data['estimated_wait_seconds'] ?? null,
+			'eta_status'             => $data['eta_status'] ?? null,
+		), static fn( mixed $value ): bool => null !== $value && '' !== $value));
+	}
+
+	/** Best-effort observers must never interrupt a protected mutation. */
+	private static function emit_progress( ?callable $callback, array $event ): void {
+		if ( null === $callback ) {
+			return;
+		}
+		try {
+			$callback($event);
+		} catch ( \Throwable ) {
+			// Presentation failures cannot change lock ownership or queue order.
+		}
 	}
 
 	/** Preserve terminal ownership-write failure after a callback has returned. */
@@ -393,6 +450,15 @@ final class WorkspaceMutationLock {
 			'queue_position' => $queue_position,
 		));
 		return $path;
+	}
+
+	private static function request_queue_position( string $lock_dir, string $lock_path, string $request_path ): int {
+		foreach ( self::queued_requests_for_resource($lock_dir, $lock_path) as $position => $request ) {
+			if ( (string) ( $request['path'] ?? '' ) === $request_path ) {
+				return $position + 1;
+			}
+		}
+		return 1;
 	}
 
 	private static function update_request( string $path, string $state ): void {

@@ -984,14 +984,14 @@ trait WorkspaceWorktreeLifecycle {
 		// handle path can reset a terminal checkout or rewrite its metadata.
 		if ( is_dir($wt_path) && ! $remediate_capacity_dry_run ) {
 			if ( 'recycle_terminal' === $reuse_policy ) {
-				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness));
+				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->recycle_terminal_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback);
 			}
 			if ( 'claim_expired' === $reuse_policy ) {
-				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness));
+				return WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->claim_expired_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback);
 			}
-			$reuse  = fn() => WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness));
+			$reuse  = fn() => WorkspaceMutationLock::with_repo($this->workspace_path, $repo, fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness), 30, array(), $progress_callback);
 			$reused = $bootstrap
-				? WorkspaceMutationLock::with_repo($this->workspace_path, 'workspace-capacity-admission', $reuse, self::worktree_capacity_admission_timeout_seconds(true))
+				? WorkspaceMutationLock::with_repo($this->workspace_path, 'workspace-capacity-admission', $reuse, self::worktree_capacity_admission_timeout_seconds(true), array(), $progress_callback)
 				: $reuse();
 			if ( is_wp_error($reused) || ! $bootstrap || empty($reused['bootstrap_deferred']) ) {
 				return $reused;
@@ -1016,7 +1016,9 @@ trait WorkspaceWorktreeLifecycle {
 			$this->workspace_path,
 			$repo,
 			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline, $progress_callback),
-			$capacity_timeout
+			$capacity_timeout,
+			array(),
+			$progress_callback
 		);
 		$preflight = $this->worktree_operation_lock_result($preflight, 'repo_preflight_lock_wait', $operation_timeout, $operation_started);
 		if ( is_wp_error($preflight) ) {
@@ -1065,7 +1067,8 @@ trait WorkspaceWorktreeLifecycle {
 				'expected_release_at'       => gmdate('c', (int) ceil($operation_deadline)),
 				'operation_timeout_seconds' => $operation_timeout,
 				'lease_strategy'            => 'operation_deadline',
-			)
+			),
+			$progress_callback
 		);
 
 		$locked = $this->worktree_operation_lock_result($locked, 'capacity_lock_wait', $operation_timeout, $operation_started);
@@ -1087,7 +1090,10 @@ trait WorkspaceWorktreeLifecycle {
 		return WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			$repo,
-			fn() => $this->worktree_add_handoff_proof($result, $allow_unverified_freshness)
+			fn() => $this->worktree_add_handoff_proof($result, $allow_unverified_freshness),
+			30,
+			array(),
+			$progress_callback
 		);
 	}
 
@@ -1278,7 +1284,9 @@ trait WorkspaceWorktreeLifecycle {
 				$this->workspace_path,
 				$repo,
 				fn() => $this->worktree_add_handoff_proof($this->reuse_existing_worktree($wt_handle, $branch, $from, $inject_context, $bootstrap, $task, $intent, $reuse_policy, $primary_path), $allow_unverified_freshness),
-				$repo_timeout
+				$repo_timeout,
+				array(),
+				$progress_callback
 			);
 		}
 		// The workspace capacity lock serializes admission. The target repo lock is
@@ -1548,7 +1556,7 @@ trait WorkspaceWorktreeLifecycle {
 					'operation_deadline'    => $operation_deadline,
 					'operation_timeout'     => $operation_timeout,
 					'operation_started'     => $operation_started,
-				), $progress_callback), $repo_timeout);
+				), $progress_callback), $repo_timeout, array(), $progress_callback);
 		$response = $this->worktree_operation_lock_result($response, 'repo_lock_wait', $operation_timeout, $operation_started);
 
 		if ( is_wp_error($response) ) {
