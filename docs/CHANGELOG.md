@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.70.1] - 2026-08-25
+
+### Changed
+- bound targeted show probes
+
 ## [0.70.0] - 2026-08-25
 
 ### Added
