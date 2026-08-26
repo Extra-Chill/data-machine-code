@@ -14,12 +14,6 @@ namespace DataMachine\Cli {
 	}
 }
 
-namespace DataMachine\Engine\AI\Tools {
-	class BaseTool {
-		protected function buildErrorResponse( string $message, string $tool ): array { return array( 'success' => false, 'message' => $message, 'tool_name' => $tool ); }
-	}
-}
-
 namespace DataMachineCode\Workspace {
 	class Workspace {
 		public static array $limit_inputs = array();
@@ -29,7 +23,6 @@ namespace DataMachineCode\Workspace {
 			return (int) $limit;
 		}
 	}
-	class WorkspaceAliasResolver {}
 	class WorktreeDiskBudget {
 		public static function format_advisory( array $capacity ): string { return (string) ( $capacity['advisory'] ?? '' ); }
 		public static function format_summary( array $capacity ): string { return (string) ( $capacity['summary'] ?? '' ); }
@@ -66,16 +59,12 @@ namespace {
 
 	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
-	require_once dirname(__DIR__) . '/inc/Tools/WorkspaceTools.php';
 	require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
 	use DataMachine\Cli\BaseCommand;
 	use DataMachineCode\Cli\Commands\WorkspaceCommand;
-	use DataMachineCode\Tools\WorkspaceTools;
 	use DataMachineCode\Abilities\WorkspaceAbilities;
 	use DataMachineCode\Workspace\Workspace;
-
-	final class WorkspaceListToolContract extends WorkspaceTools { public function __construct() {} }
 
 	function cli_format_assert( bool $condition, string $message ): void {
 		if ( ! $condition ) { throw new RuntimeException($message); }
@@ -109,7 +98,6 @@ namespace {
 	);
 	$GLOBALS['dmc_workspace_list_ability'] = new WorkspaceListAbility($result);
 	$command = new WorkspaceCommand();
-	$tool = new WorkspaceListToolContract();
 
 	foreach ( array( '1.5', 'junk', array( 1 ), true ) as $invalid_limit ) {
 		Workspace::$limit_inputs = array();
@@ -119,9 +107,6 @@ namespace {
 		} catch ( RuntimeException $error ) {
 			cli_format_assert($invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'CLI must validate the raw limit before coercion.');
 		}
-		Workspace::$limit_inputs = array();
-		$tool_result = $tool->handleList(array( 'limit' => $invalid_limit ));
-		cli_format_assert(false === ($tool_result['success'] ?? true) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Tool must validate the raw limit before coercion.');
 		Workspace::$limit_inputs = array();
 		$ability_result = WorkspaceAbilities::listRepos(array( 'limit' => $invalid_limit ));
 		cli_format_assert(is_wp_error($ability_result) && $invalid_limit === (Workspace::$limit_inputs[0] ?? null), 'Ability must validate the raw limit before coercion.');

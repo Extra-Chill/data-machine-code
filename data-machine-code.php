@@ -480,7 +480,6 @@ function datamachine_code_load_chat_tools() {
 	new \DataMachineCode\Tools\GitHubIssueTool();
 	new \DataMachineCode\Tools\GitHubPullRequestTool();
 	new \DataMachineCode\Tools\GitHubTools();
-	new \DataMachineCode\Tools\WorkspaceTools();
 	new \DataMachineCode\Tools\WorkspaceDiffTools();
 	new \DataMachineCode\Tools\WordPressRuntimeTools();
 }
