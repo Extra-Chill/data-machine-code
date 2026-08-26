@@ -56,7 +56,7 @@ final class CleanupRunControlOperation {
 			}
 
 			$children              = (array) ( $status['evidence']['children'] ?? array() );
-			$undrainable_child_ids = self::job_ids((array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
+			$undrainable_child_ids = self::job_ids( (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
 			if ( array() !== $undrainable_child_ids ) {
 				$repair                  = SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_child_ids);
 				$pass_repaired_child_ids = array_values(array_diff($undrainable_child_ids, (array) $repair['unrepairable']));
@@ -137,7 +137,10 @@ final class CleanupRunControlOperation {
 			$results[] = $result;
 		}
 
-		$output                       = $results[0] ?? array( 'success' => true, 'job_id' => $job_id );
+		$output                       = $results[0] ?? array(
+			'success' => true,
+			'job_id'  => $job_id,
+		);
 		$output['run_id']             = self::run_id($job_id);
 		$output['state']              = 'resume' === $operation ? 'running' : 'cancelled';
 		$output['controlled_job_ids'] = $target_job_ids;
@@ -153,10 +156,10 @@ final class CleanupRunControlOperation {
 		}
 
 		$children        = (array) ( $output['evidence']['children'] ?? array() );
-		$processing_ids  = self::job_ids((array) ( $children['processing_job_ids'] ?? array() ));
-		$failed_ids      = self::job_ids((array) ( $children['failed_job_ids'] ?? array() ));
-		$pending_ids     = self::job_ids((array) ( $children['pending_job_ids'] ?? array() ));
-		$undrainable_ids = self::job_ids((array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
+		$processing_ids  = self::job_ids( (array) ( $children['processing_job_ids'] ?? array() ));
+		$failed_ids      = self::job_ids( (array) ( $children['failed_job_ids'] ?? array() ));
+		$pending_ids     = self::job_ids( (array) ( $children['pending_job_ids'] ?? array() ));
+		$undrainable_ids = self::job_ids( (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ));
 
 		if ( 'resume' === $operation ) {
 			$repair        = SystemTaskDrainability::ensure_jobs_have_execute_step_actions($undrainable_ids);
