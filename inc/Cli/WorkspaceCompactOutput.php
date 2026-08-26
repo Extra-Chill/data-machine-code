@@ -35,6 +35,7 @@ class WorkspaceCompactOutput {
 				'recycled'          => isset( $result['recycled'] ) ? (bool) $result['recycled'] : null,
 				'adopted'           => isset( $result['adopted'] ) ? (bool) $result['adopted'] : null,
 				'handoff_freshness' => $result['handoff_freshness'] ?? null,
+				'freshness_transport' => $result['freshness_transport'] ?? null,
 				'message'           => $result['message'] ?? null,
 				'capacity'          => self::worktree_capacity_summary( $capacity ),
 				'bootstrap'         => self::worktree_bootstrap_summary( $bootstrap ),

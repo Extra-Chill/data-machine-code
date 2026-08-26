@@ -38,7 +38,7 @@ $recovered = WorktreeStalenessProbe::fetch(
 	}
 );
 staleness_retry_assert_same(2, $calls, 'A transient fetch failure must be retried once.');
-staleness_retry_assert_same(array( 'ok' => true, 'attempts' => 2 ), $recovered, 'A successful retry must verify freshness.');
+staleness_retry_assert_same(array( 'ok' => true, 'attempts' => 2, 'attempted_transports' => array( 'configured', 'configured' ), 'successful_transport' => 'configured', 'transport_fallback_used' => false ), $recovered, 'A successful retry must verify freshness.');
 
 $calls = 0;
 $failed = WorktreeStalenessProbe::fetch(

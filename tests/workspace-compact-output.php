@@ -125,6 +125,8 @@ $offline_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'succ
 compact_output_assert(in_array('fetch_failed', (array) ( $offline_worktree_add['warning_codes'] ?? array() ), true), 'Successful offline worktree output must retain fetch_failed warning evidence.');
 $timed_out_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'handle' => 'repo@fetch-timeout', 'fetch_failed' => true, 'fetch_timed_out' => true ));
 compact_output_assert(in_array('fetch_failed', (array) ( $timed_out_worktree_add['warning_codes'] ?? array() ), true) && in_array('fetch_timed_out', (array) ( $timed_out_worktree_add['warning_codes'] ?? array() ), true), 'Successful fetch-timeout worktree output must retain both freshness warning codes.');
+$transport_fallback_worktree_add = WorkspaceCompactOutput::worktree_add_result(array( 'success' => true, 'handle' => 'repo@transport-fallback', 'freshness_transport' => array( 'attempted_transports' => array( 'https', 'ssh' ), 'successful_transport' => 'ssh', 'transport_fallback_used' => true ) ));
+compact_output_assert(array( 'attempted_transports' => array( 'https', 'ssh' ), 'successful_transport' => 'ssh', 'transport_fallback_used' => true ) === ( $transport_fallback_worktree_add['freshness_transport'] ?? null ), 'Compact worktree output must retain sanitized freshness transport evidence.');
 
 $hygiene_candidate_rows = $large_rows;
 $hygiene_candidate_rows[0]['dirty']                        = null;
