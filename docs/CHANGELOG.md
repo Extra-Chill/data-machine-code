@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.71.2] - 2026-08-26
+
+### Fixed
+- retry freshness with authorized transport
+
 ## [0.71.1] - 2026-08-25
 
 ### Changed
