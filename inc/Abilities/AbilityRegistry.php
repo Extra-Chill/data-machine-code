@@ -43,6 +43,21 @@ class AbilityRegistry {
 		if ( function_exists('wp_has_ability') && wp_has_ability($slug) ) {
 			return;
 		}
+		if ( function_exists('apply_filters') ) {
+			/**
+			 * Filters a DMC ability declaration before it is registered.
+			 *
+			 * Integrations may replace execution callbacks while retaining DMC's
+			 * canonical schemas, permissions, metadata, and CLI routing.
+			 *
+			 * @param array<string,mixed> $args Ability registration arguments.
+			 * @param string              $slug Canonical ability slug.
+			 */
+			$args = apply_filters('datamachine_code_ability_registration_args', $args, $slug);
+			if ( ! is_array($args) ) {
+				throw new \UnexpectedValueException('The datamachine_code_ability_registration_args filter must return an array.');
+			}
+		}
 		wp_register_ability($slug, $args);
 	}
 
