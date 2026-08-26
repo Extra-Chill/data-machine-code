@@ -29,6 +29,7 @@ use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorktreeDiskBudget;
 use DataMachineCode\Workspace\WorktreeAllocationRequest;
+use DataMachineCode\Workspace\WorktreeAllocationOperation;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 use DataMachineCode\Runtime\RuntimeSourceSkewDiagnostic;
@@ -4604,58 +4605,10 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
-		$request   = WorktreeAllocationRequest::from_input($input);
-		$workspace = new Workspace();
-		if ( $request->require_task_tracker && empty($request->task) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout($workspace, $request->repo) ) {
-			return new \WP_Error( 'worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ) );
+		$result = ( new WorktreeAllocationOperation() )->add(WorktreeAllocationRequest::from_input($input));
+		if ( is_array($result) && 'github_api' === ( $result['backend'] ?? null ) ) {
+			$result = self::decorate_remote_workspace_result('worktree_add', $result);
 		}
-		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout($workspace, $request->repo) ) {
-			return self::worktree_add_response(
-				$workspace->worktree_add_request($request),
-				$input
-			);
-		}
-
-		if ( RemoteWorkspaceBackend::should_handle() ) {
-			if ( $request->allow_percentage_byte_floor_exception ) {
-				return new \WP_Error(
-					'remote_worktree_percentage_byte_floor_exception_unsupported',
-					'Percentage-byte-floor admission requires a local workspace with measured capacity semantics.',
-					array(
-						'status'      => 400,
-						'remediation' => array(
-							'code'    => 'local_workspace_capacity_required',
-							'message' => 'Run the request against a local managed workspace, where byte and inode capacity can be measured and revalidated.',
-						),
-					)
-				);
-			}
-			if ( $request->remediate_capacity || $request->remediate_capacity_dry_run ) {
-				return new \WP_Error(
-					'remote_worktree_capacity_remediation_unsupported',
-					'Capacity remediation requires a local workspace because remote workspace allocation has no filesystem capacity or cleanup lifecycle.',
-					array(
-						'status'                     => 400,
-						'remediate_capacity'         => $request->remediate_capacity,
-						'remediate_capacity_dry_run' => $request->remediate_capacity_dry_run,
-					)
-				);
-			}
-			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
-				$request->repo,
-				$request->branch,
-				$request->from,
-				$request->task,
-				$request->intent,
-				$request->reuse_policy,
-				$request->allow_unverified_freshness
-			);
-			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
-				return self::worktree_add_response( self::decorate_remote_workspace_result( 'worktree_add', $result ), $input );
-			}
-		}
-
-		$result = $workspace->worktree_add_request($request);
 		return self::worktree_add_response( $result, $input );
 	}
 
@@ -4698,7 +4651,7 @@ class WorkspaceAbilities {
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */
 	public static function worktreePlan( array $input ): array|\WP_Error {
-		return ( new Workspace() )->worktree_plan_request(WorktreeAllocationRequest::from_input($input));
+		return ( new WorktreeAllocationOperation() )->plan(WorktreeAllocationRequest::from_input($input));
 	}
 
 	/** Apply a previously returned local worktree plan. */
@@ -4930,19 +4883,6 @@ class WorkspaceAbilities {
 	/** @return array<int,string> */
 	private static function worktreeHandoffAllocationIdentitySchemaRequired(): array {
 		return array( 'version', 'allocation_id', 'handle', 'path', 'branch', 'worktree_sha', 'resolved_base_ref', 'metadata_digest', 'digest' );
-	}
-
-	/**
-	 * Whether a repo argument resolves to an editable local primary checkout.
-	 */
-	private static function hasLocalPrimaryCheckout( Workspace $workspace, string $repo ): bool {
-		$result = self::showLocalWorkspaceHandleIfPresent( $workspace, $repo );
-		if ( null === $result ) {
-			return false;
-		}
-
-		$path = (string) ( $result['path'] ?? '' );
-		return ! str_contains( basename( $path ), '@' );
 	}
 
 	/**
