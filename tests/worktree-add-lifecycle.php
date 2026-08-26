@@ -365,7 +365,7 @@ try {
 	assert_true($plan_inventory === $wpdb->rows, 'worktree plan changed inventory rows');
 	assert_true($plan_filesystem === plan_filesystem_snapshot($workspace_root), 'worktree plan changed the workspace filesystem');
 	$applied_plan = $stable_plan_workspace->worktree_apply_plan($create_plan);
-	assert_true(! is_wp_error($applied_plan) && is_dir($workspace_root . '/homeboy@planned-create'), is_wp_error($applied_plan) ? $applied_plan->get_error_message() : 'unchanged create plan did not apply');
+	assert_true(! is_wp_error($applied_plan) && is_dir($workspace_root . '/homeboy@planned-create'), is_wp_error($applied_plan) ? $applied_plan->get_error_message() . ' ' . wp_json_encode($applied_plan->get_error_data()) : 'unchanged create plan did not apply');
 	$capacity_planner = new class extends Workspace {
 		protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
 			return array( 'status' => 'refused', 'demand_plan' => $demand_plan );

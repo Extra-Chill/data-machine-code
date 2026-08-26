@@ -282,6 +282,7 @@ trait WorkspaceWorktreeLifecycle {
 				'expected_digest' => $expected,
 				'actual_digest'   => $current['digest'] ?? null,
 				'disposition'     => $current['disposition'] ?? null,
+				'changed_sections' => $this->worktree_plan_changed_sections($plan, $current),
 			));
 		}
 		$result = $this->worktree_add_request(WorktreeAllocationRequest::from_input($input + array(
@@ -1051,7 +1052,6 @@ trait WorkspaceWorktreeLifecycle {
 			'filesystem_total_bytes'       => $capacity['filesystem_total_bytes'] ?? null,
 			'filesystem_free_bytes'        => $this->worktree_plan_capacity_measurement($capacity['filesystem_free_bytes'] ?? null, 64 * 1024 * 1024),
 			'projected_free_bytes'         => $this->worktree_plan_capacity_measurement($capacity['projected_free_bytes'] ?? null, 64 * 1024 * 1024),
-			'filesystem_total_inodes'      => $this->worktree_plan_capacity_measurement($capacity['filesystem_total_inodes'] ?? null, 1000000),
 			'filesystem_free_inodes'       => $this->worktree_plan_capacity_measurement($capacity['filesystem_free_inodes'] ?? null, 1000000),
 			'projected_free_inodes'        => $this->worktree_plan_capacity_measurement($capacity['projected_free_inodes'] ?? null, 1000000),
 			'refuse_free_bytes'            => $capacity['refuse_free_bytes'] ?? null,
@@ -1075,6 +1075,25 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$value = (int) $value;
 		return abs($value) < $quantum ? $value : intdiv($value, $quantum);
+	}
+
+	/** Identify normalized evidence sections that invalidated a reviewed plan. */
+	private function worktree_plan_changed_sections( array $expected, array $actual ): array {
+		$sections = array(
+			'apply_intent'     => array( $expected['apply_intent'] ?? null, $actual['apply_intent'] ?? null ),
+			'freshness'        => array(
+				array_intersect_key((array) ( $expected['freshness'] ?? array() ), array_flip(array( 'verified', 'identity', 'target_ref', 'target_head' ))),
+				array_intersect_key((array) ( $actual['freshness'] ?? array() ), array_flip(array( 'verified', 'identity', 'target_ref', 'target_head' ))),
+			),
+			'capacity'         => array( $this->worktree_plan_capacity_identity((array) ( $expected['capacity'] ?? array() )), $this->worktree_plan_capacity_identity((array) ( $actual['capacity'] ?? array() )) ),
+			'bootstrap_demand' => array( $expected['bootstrap_demand'] ?? null, $actual['bootstrap_demand'] ?? null ),
+			'destination'      => array( $expected['destination'] ?? null, $actual['destination'] ?? null ),
+			'ownership'        => array( $expected['ownership'] ?? null, $actual['ownership'] ?? null ),
+			'reuse_candidates' => array( $expected['reuse_candidates'] ?? null, $actual['reuse_candidates'] ?? null ),
+			'legacy_handoff'   => array( $expected['legacy_handoff'] ?? null, $actual['legacy_handoff'] ?? null ),
+		);
+
+		return array_keys(array_filter($sections, static fn( array $pair ): bool => $pair[0] !== $pair[1]));
 	}
 
 	private function worktree_plan_sort( mixed $value ): mixed {
