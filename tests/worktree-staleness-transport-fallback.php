@@ -36,18 +36,29 @@ $fallback = WorktreeStalenessProbe::equivalent_transport_fallback_for_remote(
 transport_fallback_assert_same('https', $fallback['configured_transport'] ?? null, 'HTTPS must remain the configured transport.');
 transport_fallback_assert_same('ssh', $fallback['transport'] ?? null, 'The equivalent retry must use SSH.');
 transport_fallback_assert_same(
-	"-c 'remote.origin.url=git@github.com:Extra-Chill/data-machine-code.git' fetch --quiet origin",
+	"-c 'url.git@github.com:Extra-Chill/data-machine-code.git.insteadOf=https://github.com/Extra-Chill/data-machine-code.git' fetch --quiet origin",
 	$fallback['args'] ?? null,
-	'The SSH retry must override only the command-local origin URL and preserve the origin fetch refspec.'
+	'The SSH retry must rewrite only the command-local origin URL and preserve the origin fetch refspec.'
 );
 
 $unavailable = WorktreeStalenessProbe::equivalent_transport_fallback_for_remote(
 	'https://github.com/Extra-Chill/data-machine-code.git',
 	array( 'ready' => false, 'code' => 'ssh_agent_no_identities' )
 );
-transport_fallback_assert_same('ssh_agent_no_identities', $unavailable['unavailable_code'] ?? null, 'Unavailable SSH must remain structured evidence.');
-transport_fallback_assert_same(false, isset($unavailable['args']), 'Unavailable SSH must not produce a fallback command.');
+transport_fallback_assert_same('ssh_agent_no_identities', $unavailable['preflight_code'] ?? null, 'SSH preflight diagnostics must remain structured evidence.');
+transport_fallback_assert_same(true, isset($unavailable['args']), 'The bounded fetch must remain authoritative when SSH can work without agent identities.');
 transport_fallback_assert_same(null, WorktreeStalenessProbe::equivalent_transport_fallback_for_remote('https://git.example.test/acme/repo.git', array( 'ready' => true )), 'Unauthorized non-GitHub remotes must not receive inferred transport fallbacks.');
+
+$scoped = WorktreeStalenessProbe::equivalent_transport_fallback_for_remote(
+	'https://github.com/Extra-Chill/data-machine-code.git',
+	array( 'ready' => true, 'code' => 'ssh_transport_ready' ),
+	'origin/main'
+);
+transport_fallback_assert_same(
+	"-c 'url.git@github.com:Extra-Chill/data-machine-code.git.insteadOf=https://github.com/Extra-Chill/data-machine-code.git' fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main'",
+	$scoped['args'] ?? null,
+	'Known remote bases must avoid expanding a repository-wide wildcard fetch refspec.'
+);
 
 $calls = array();
 $result = WorktreeStalenessProbe::fetch(
@@ -62,13 +73,13 @@ $result = WorktreeStalenessProbe::fetch(
 	static fn(): array => array(
 		'configured_transport' => 'https',
 		'transport'            => 'ssh',
-		'args'                 => "-c 'remote.origin.url=git@example.test:acme/repo.git' fetch --quiet origin",
+		'args'                 => "-c 'url.git@example.test:acme/repo.git.insteadOf=https://example.test/acme/repo.git' fetch --quiet origin",
 	)
 );
 transport_fallback_assert_same(
 	array(
 		array( '/repo', 'fetch --quiet origin', 5 ),
-		array( '/repo', "-c 'remote.origin.url=git@example.test:acme/repo.git' fetch --quiet origin", 5 ),
+		array( '/repo', "-c 'url.git@example.test:acme/repo.git.insteadOf=https://example.test/acme/repo.git' fetch --quiet origin", 15 ),
 	),
 	$calls,
 	'Freshness verification must retry through the equivalent transport after configured-origin failure.'
@@ -88,11 +99,12 @@ $failed = WorktreeStalenessProbe::fetch(
 	static fn(): array => array(
 		'configured_transport' => 'https',
 		'transport'            => 'ssh',
-		'unavailable_code'     => 'ssh_agent_no_identities',
+		'args'                 => "-c 'url.git@example.test:acme/repo.git.insteadOf=https://example.test/acme/repo.git' fetch --quiet origin",
+		'preflight_code'       => 'ssh_agent_no_identities',
 	)
 );
-transport_fallback_assert_same(array( array( '/repo', 'fetch --quiet origin' ), array( '/repo', 'fetch --quiet origin' ) ), $calls, 'Unavailable fallback must preserve the bounded configured-origin retry.');
-transport_fallback_assert_same('ssh_agent_no_identities', $failed['fallback_unavailable'] ?? null, 'Unavailable fallback evidence must survive final refusal.');
-transport_fallback_assert_same(false, $failed['transport_fallback_used'] ?? null, 'Unavailable fallback must not be reported as used.');
+transport_fallback_assert_same(array( array( '/repo', 'fetch --quiet origin' ), array( '/repo', "-c 'url.git@example.test:acme/repo.git.insteadOf=https://example.test/acme/repo.git' fetch --quiet origin" ) ), $calls, 'A negative preflight must still permit the bounded equivalent-transport verification attempt.');
+transport_fallback_assert_same('ssh_agent_no_identities', $failed['fallback_preflight_code'] ?? null, 'SSH preflight evidence must survive final refusal.');
+transport_fallback_assert_same(true, $failed['transport_fallback_used'] ?? null, 'Attempted fallback must be reported as used.');
 
 fwrite(STDOUT, "worktree-staleness-transport-fallback: ok\n");
