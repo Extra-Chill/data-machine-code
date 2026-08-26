@@ -2007,6 +2007,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional GitHub PR URL or number.',
 							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'One wall-clock budget across lock wait, dirty probe, persistence, inventory upsert, and readback. Defaults to 10s.',
+							),
 						),
 						'required'   => array( 'handle', 'state' ),
 					),
@@ -2019,6 +2023,8 @@ class WorkspaceAbilities {
 							'lifecycle_state' => array( 'type' => 'string' ),
 							'metadata'        => array( 'type' => 'object' ),
 							'message'         => array( 'type' => 'string' ),
+							'phase_timings'     => array( 'type' => 'object' ),
+							'wall_clock_budget' => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeFinalize' ),
@@ -4723,6 +4729,38 @@ class WorkspaceAbilities {
 
 	/** Keep the detailed lifecycle contract internal and opt it into public responses explicitly. */
 	private static function worktree_add_response( array|\WP_Error $result, array $input ): array|\WP_Error {
+		if ( $result instanceof \WP_Error && 'worktree_reuse_refused' === $result->get_error_code() ) {
+			$data  = (array) $result->get_error_data();
+			$reuse = (array) ( $data['reuse'] ?? array() );
+			if ( in_array($reuse['reason_code'] ?? null, array( 'same_task_candidate_requires_explicit_isolation', 'same_task_isolation_intent_required' ), true) ) {
+				$task   = array_filter(array(
+					'task_url' => $input['task_url'] ?? null,
+					'task_ref' => $input['task_ref'] ?? null,
+				), static fn( mixed $value ): bool => is_string($value) && '' !== trim($value));
+				$task   = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
+				$intent = array_intersect_key($input, array_flip(array( 'purpose', 'owner_run_ref', 'cleanup_policy' )));
+				$request = array(
+					'repo'                       => (string) ( $input['repo'] ?? '' ),
+					'branch'                     => (string) ( $input['branch'] ?? '' ),
+					'from'                       => $input['from'] ?? null,
+					'inject_context'             => array_key_exists('inject_context', $input) ? (bool) $input['inject_context'] : true,
+					'bootstrap'                  => array_key_exists('bootstrap', $input) ? (bool) $input['bootstrap'] : true,
+					'allow_stale'                => ! empty($input['allow_stale']),
+					'allow_unverified_freshness' => ! empty($input['allow_unverified_freshness']),
+					'rebase_base'                => ! empty($input['rebase_base']),
+					'force'                      => ! empty($input['force']),
+					'allow_percentage_byte_floor_exception' => ! empty($input['allow_percentage_byte_floor_exception']),
+					'remediate_capacity'         => ! empty($input['remediate_capacity']),
+					'remediate_capacity_dry_run' => ! empty($input['remediate_capacity_dry_run']),
+					'verbose'                    => ! empty($input['verbose']),
+					'require_task_tracker'       => ! empty($input['require_task_tracker']),
+					'task'                       => $task,
+					'intent'                     => $intent,
+				);
+				$data['reuse'] = array_merge($reuse, WorktreeContextInjector::same_task_isolation_refusal($request));
+				$result->add_data($data);
+			}
+		}
 		return ! empty( $input['verbose'] ) || $result instanceof \WP_Error ? $result : \DataMachineCode\Cli\WorkspaceCompactOutput::worktree_add_result( $result );
 	}
 
@@ -5045,7 +5083,9 @@ class WorkspaceAbilities {
 			$input['handle'] ?? '',
 			$input['state'] ?? '',
 			isset( $input['pr'] ) ? (string) $input['pr'] : null,
-			isset( $input['owner_terminal_outcome'] ) ? (string) $input['owner_terminal_outcome'] : null
+			isset( $input['owner_terminal_outcome'] ) ? (string) $input['owner_terminal_outcome'] : null,
+			$input['until_budget'] ?? null,
+			isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null
 		);
 	}
 

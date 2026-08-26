@@ -14,27 +14,33 @@ final class SqliteBusyRetry {
 	private const DEFAULT_MAX_WAIT_MS     = 1000;
 	private const DEFAULT_INITIAL_WAIT_MS = 25;
 	private const DEFAULT_MAX_DELAY_MS    = 250;
+	private const WRITER_POLL_USEC        = 25000;
 
 	/**
 	 * Retry only a database operation which reports a transient SQLite busy/locked failure.
 	 *
 	 * @param callable():mixed $operation DB-only operation callback.
-	 * @param array<string,int> $options   Optional retry bounds.
+	 * @param array<string,mixed> $options Optional retry bounds and serialization policy.
 	 * @return mixed|\WP_Error
 	 */
 	public static function run( string $operation_name, callable $operation, array $options = array() ): mixed {
 		global $wpdb;
 
-		if ( ! self::is_sqlite($wpdb) && ( ! is_object($wpdb) || ! method_exists($wpdb, 'suppress_errors') ) ) {
+		$sqlite = self::is_sqlite($wpdb);
+		if ( ! $sqlite && ( ! is_object($wpdb) || ! method_exists($wpdb, 'suppress_errors') ) ) {
 			return $operation();
 		}
 
 		$default_max_wait_ms = isset($options['max_wait_ms']) ? max(1, (int) $options['max_wait_ms']) : self::DEFAULT_MAX_WAIT_MS;
-		$max_wait_ms     = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', $default_max_wait_ms);
+		$max_wait_ms         = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', $default_max_wait_ms);
+		if ( isset($options['hard_max_wait_ms']) ) {
+			$max_wait_ms = min($max_wait_ms, max(1, (int) $options['hard_max_wait_ms']));
+		}
 		$initial_wait_ms = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_initial_wait_ms', self::DEFAULT_INITIAL_WAIT_MS);
 		$max_delay_ms    = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_delay_ms', self::DEFAULT_MAX_DELAY_MS);
 		$started_at      = hrtime(true);
 		$attempts        = 0;
+		$serialize       = ! array_key_exists('serialize', $options) || (bool) $options['serialize'];
 		$restore_errors  = null;
 		if ( is_object($wpdb) && method_exists($wpdb, 'suppress_errors') ) {
 			$restore_errors = (bool) $wpdb->suppress_errors(true);
@@ -43,6 +49,11 @@ final class SqliteBusyRetry {
 		ob_start();
 
 		try {
+			$writer = $sqlite && $serialize ? self::acquire_writer($operation_name, $started_at, $max_wait_ms, $options) : null;
+			if ( $writer instanceof \WP_Error ) {
+				return $writer;
+			}
+
 			do {
 				++$attempts;
 				$busy_message = '';
@@ -60,12 +71,18 @@ final class SqliteBusyRetry {
 				if ( false !== $result || ! self::is_busy_error($last_error) ) {
 					return $result;
 				}
+				if ( null === $writer && $serialize ) {
+					$writer = self::acquire_writer($operation_name, $started_at, $max_wait_ms, $options);
+					if ( $writer instanceof \WP_Error ) {
+						return $writer;
+					}
+				}
 
 				$elapsed_ms = (int) floor(( hrtime(true) - $started_at ) / 1000000);
 				if ( $elapsed_ms >= $max_wait_ms ) {
 					return new \WP_Error(
 						'workspace_sqlite_lock_contention',
-						'SQLite remained locked while accessing the Data Machine Code workspace registry. Retry this command after concurrent writers finish. MySQL is recommended for concurrent fleet workloads.',
+						'The workspace registry is queued behind a competing SQLite writer.',
 						array(
 							'status'              => 503,
 							'retryable'           => true,
@@ -76,7 +93,8 @@ final class SqliteBusyRetry {
 							'waited_ms'           => $elapsed_ms,
 							'max_wait_ms'         => $max_wait_ms,
 							'retry_after_seconds' => 1,
-							'guidance'            => 'Retry after concurrent registry writers finish. Use MySQL for concurrent fleet cooking; SQLite remains supported for lower-concurrency workloads.',
+							'queue_state'         => 'database_busy',
+							'mutation_committed'  => false,
 						)
 					);
 				}
@@ -87,6 +105,9 @@ final class SqliteBusyRetry {
 				usleep( (int) min($delay_ms + $jitter_ms, max(1, $max_wait_ms - $elapsed_ms)) * 1000);
 			} while ( true );
 		} finally {
+			if ( isset($writer) && is_array($writer) ) {
+				self::release_writer($writer);
+			}
 			while ( ob_get_level() > $output_level ) {
 				ob_end_clean();
 			}
@@ -94,6 +115,104 @@ final class SqliteBusyRetry {
 				$wpdb->suppress_errors($restore_errors);
 			}
 		}
+	}
+
+	/** Acquire the process-shared SQLite writer boundary within the retry budget. */
+	private static function acquire_writer( string $operation, int $started_at, int $max_wait_ms, array $options ): array|\WP_Error {
+		$path = self::writer_lock_path($options);
+		$dir  = dirname($path);
+		if ( ! is_dir($dir) && ! @mkdir($dir, 0755, true) && ! is_dir($dir) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir,WordPress.PHP.NoSilencedErrors.Discouraged -- Atomic local lock setup is rechecked.
+			return new \WP_Error('workspace_registry_writer_unavailable', 'The workspace registry writer lock could not be created.', array( 'status' => 500, 'retryable' => false, 'operation' => $operation, 'mutation_committed' => false ));
+		}
+
+		$handle = @fopen($path, 'c+'); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen,WordPress.PHP.NoSilencedErrors.Discouraged -- Failure is returned as a typed fail-closed result.
+		if ( false === $handle ) {
+			return new \WP_Error('workspace_registry_writer_unavailable', 'The workspace registry writer lock could not be opened.', array( 'status' => 500, 'retryable' => false, 'operation' => $operation, 'mutation_committed' => false ));
+		}
+
+		$request_id = bin2hex(random_bytes(12));
+		$blocker    = array();
+		do {
+			if ( flock($handle, LOCK_EX | LOCK_NB) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+				$owner = array(
+					'request_id'  => $request_id,
+					'operation'   => $operation,
+					'pid'         => getmypid(),
+					'acquired_at' => gmdate('c'),
+				);
+				ftruncate($handle, 0);
+				rewind($handle);
+				fwrite($handle, (string) json_encode($owner, JSON_UNESCAPED_SLASHES));
+				fflush($handle);
+				return array( 'handle' => $handle, 'path' => $path, 'owner' => $owner );
+			}
+
+			$observed = self::read_writer_owner($handle);
+			if ( array() !== $observed ) {
+				$blocker = $observed;
+			}
+			$elapsed_ms = (int) floor(( hrtime(true) - $started_at ) / 1000000);
+			if ( $elapsed_ms >= $max_wait_ms ) {
+				fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				return new \WP_Error(
+					'workspace_sqlite_lock_contention',
+					'The workspace registry write is queued behind a competing SQLite writer.',
+					array(
+						'status'              => 503,
+						'retryable'           => true,
+						'backend'             => 'sqlite',
+						'operation'           => $operation,
+						'blocker_phase'       => 'workspace_registry_writer',
+						'queue_state'         => 'queued',
+						'request_id'          => $request_id,
+						'blocker'             => array_filter(array(
+							'request_id'  => $blocker['request_id'] ?? null,
+							'operation'   => $blocker['operation'] ?? null,
+							'pid'         => isset($blocker['pid']) ? (int) $blocker['pid'] : null,
+							'acquired_at' => $blocker['acquired_at'] ?? null,
+						), static fn( mixed $value ): bool => null !== $value && '' !== $value),
+						'waited_ms'           => $elapsed_ms,
+						'max_wait_ms'         => $max_wait_ms,
+						'retry_after_seconds' => 1,
+						'mutation_committed'  => false,
+					)
+				);
+			}
+			usleep((int) min(self::WRITER_POLL_USEC, max(1000, ( $max_wait_ms - $elapsed_ms ) * 1000)));
+		} while ( true );
+	}
+
+	/** @param array{handle:resource,path:string,owner:array<string,mixed>} $writer */
+	private static function release_writer( array $writer ): void {
+		$handle = $writer['handle'];
+		ftruncate($handle, 0);
+		fflush($handle);
+		flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
+		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+	}
+
+	/** Read only the compact owner record written while the flock is active. */
+	private static function read_writer_owner( $handle ): array {
+		rewind($handle);
+		$payload = stream_get_contents($handle, 2048);
+		$owner   = is_string($payload) ? json_decode($payload, true) : null;
+		return is_array($owner) ? $owner : array();
+	}
+
+	/** Resolve one lock file shared by all registry users for this WordPress runtime. */
+	private static function writer_lock_path( array $options ): string {
+		if ( isset($options['lock_path']) && is_string($options['lock_path']) && '' !== trim($options['lock_path']) ) {
+			return trim($options['lock_path']);
+		}
+		$workspace = defined('DATAMACHINE_WORKSPACE_PATH') ? rtrim((string) DATAMACHINE_WORKSPACE_PATH, '/') : '';
+		if ( '' !== $workspace ) {
+			$path = $workspace . '/.locks/workspace-registry-writer.lock';
+		} else {
+			$identity = ( defined('ABSPATH') ? (string) ABSPATH : __DIR__ ) . '|' . ( defined('DB_NAME') ? (string) DB_NAME : '' ) . '|' . (string) ( $GLOBALS['wpdb']->prefix ?? '' );
+			$path     = rtrim(sys_get_temp_dir(), '/') . '/datamachine-code-registry-' . hash('sha256', $identity) . '.lock';
+		}
+		$path = function_exists('apply_filters') ? (string) apply_filters('datamachine_code_sqlite_registry_lock_path', $path) : $path;
+		return '' !== trim($path) ? trim($path) : rtrim(sys_get_temp_dir(), '/') . '/datamachine-code-registry-fallback.lock';
 	}
 
 	/**

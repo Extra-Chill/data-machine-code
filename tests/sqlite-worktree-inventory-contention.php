@@ -88,7 +88,10 @@ function sqlite_contention_assert( bool $condition, string $message ): void {
 }
 
 function sqlite_contention_worker( string $database, string $handle, int $max_wait_ms ): void {
-	$GLOBALS['sqlite_retry_filters'] = array( 'datamachine_code_sqlite_busy_retry_max_wait_ms' => $max_wait_ms );
+	$GLOBALS['sqlite_retry_filters'] = array(
+		'datamachine_code_sqlite_busy_retry_max_wait_ms' => $max_wait_ms,
+		'datamachine_code_sqlite_registry_lock_path'     => $database . '.writer.lock',
+	);
 	$pdo = new PDO('sqlite:' . $database);
 	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 	$pdo->exec('PRAGMA busy_timeout = 0');
@@ -145,6 +148,7 @@ try {
 	$setup->exec('CREATE TABLE wp_datamachine_code_worktrees (handle TEXT PRIMARY KEY, metadata TEXT NOT NULL)');
 	$GLOBALS['sqlite_schema_pdo'] = $setup;
 	$GLOBALS['wpdb']              = new Sqlite_Contention_Wpdb($setup);
+	$GLOBALS['sqlite_retry_filters']['datamachine_code_sqlite_registry_lock_path'] = $database . '.writer.lock';
 	$repository                   = new WorktreeInventoryRepository();
 	$repository::install_schema();
 	$columns = $setup->query('PRAGMA table_info(wp_datamachine_code_worktrees)')->fetchAll(PDO::FETCH_COLUMN, 1);
@@ -188,4 +192,5 @@ try {
 	fwrite(STDOUT, "sqlite-worktree-inventory-contention ok\n");
 } finally {
 	@unlink($database);
+	@unlink($database . '.writer.lock');
 }

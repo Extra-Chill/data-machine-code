@@ -66,6 +66,7 @@ try {
 	lease_assert(0 === ($renewed_active['heartbeat_age_seconds'] ?? null), 'Heartbeat renewal did not refresh DB-visible liveness.');
 	lease_assert(gmdate('c', 4000) === ($renewed_active['metadata']['expected_release_at'] ?? null), 'Heartbeat renewal did not refresh the DB-visible operation ETA.');
 	lease_assert(2099 === ($renewed_active['expires_in_seconds'] ?? null), 'Renewal must use the declared operation ETA as its exact expiry.');
+	lease_assert(true === WorkspaceLockStore::heartbeat($id, array( 'expected_release_at' => gmdate('c', 4000) )), 'An identical same-second heartbeat falsely reported lost ownership.');
 	$GLOBALS['workspace_lock_test_time'] = 4001;
 	lease_assert(false === WorkspaceLockStore::heartbeat($id, array( 'expected_release_at' => gmdate('c', 5000) )), 'A later heartbeat deadline must not revive an already expired allocation row.');
 	lease_assert(null === WorkspaceLockStore::active_lock('worktree-workspace-capacity-admission', 'workspace-capacity-admission'), 'Expired owner operation deadline must remain bounded for stale recovery.');

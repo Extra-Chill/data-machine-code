@@ -33,7 +33,11 @@ final class Lock_Contention_Wpdb {
 
 	public function __construct(private PDO $pdo, private bool $advertise_sqlite = true) {}
 	public function db_server_info(): string { return $this->advertise_sqlite ? 'SQLite' : 'MySQL'; }
-	public function suppress_errors(bool $suppress = true): bool { $previous = $this->errors_suppressed; $this->errors_suppressed = $suppress; return $previous; }
+	public function suppress_errors(bool $suppress = true): bool {
+		$previous = $this->errors_suppressed;
+		if ($previous !== $suppress) { $this->errors_suppressed = $suppress; }
+		return $previous;
+	}
 	public function prepare(string $query, mixed ...$args): string {
 		foreach ($args as $arg) {
 			if (!preg_match('/%[sdi]/', $query, $match)) { break; }
@@ -90,7 +94,8 @@ function lock_sqlite_wait(string $path): void { $deadline = microtime(true) + 5;
 
 function lock_sqlite_worker(array $args): void {
 	[$mode, $database, $workspace, $repo, $max_wait_ms] = $args;
-	$GLOBALS['filters'] = 'default' === $max_wait_ms ? array() : array('datamachine_code_sqlite_busy_retry_max_wait_ms' => (int) $max_wait_ms);
+	$GLOBALS['filters'] = array('datamachine_code_sqlite_registry_lock_path' => $workspace . '/.locks/workspace-registry-writer.lock');
+	if ('default' !== $max_wait_ms) { $GLOBALS['filters']['datamachine_code_sqlite_busy_retry_max_wait_ms'] = (int) $max_wait_ms; }
 	$pdo = new PDO('sqlite:' . $database);
 	$pdo->exec('PRAGMA busy_timeout = 0');
 	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo, 'decorated-acquire' !== $mode);
@@ -136,9 +141,18 @@ function lock_sqlite_worker(array $args): void {
 		return;
 	}
 
-	if ('finalize' === $mode) {
+	if (in_array($mode, array('finalize', 'finalize-read-coordinated', 'finalize-coordinated'), true)) {
 		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
-		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', WorktreeContextInjector::STATE_PR_OPENED, 'https://example.test/pull/1250', 'success');
+		$ready = (string) ($args[5] ?? '');
+		$go = (string) ($args[6] ?? '');
+		$progress = 'finalize' !== $mode ? static function (array $event) use ($mode, $ready, $go): void {
+			$target_state = 'finalize-read-coordinated' === $mode ? 'preparing' : 'started';
+			if ('metadata_persistence' === ($event['phase'] ?? null) && $target_state === ($event['state'] ?? null) && !is_file($ready)) {
+				file_put_contents($ready, 'ready');
+				lock_sqlite_wait($go);
+			}
+		} : null;
+		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', WorktreeContextInjector::STATE_PR_OPENED, 'https://example.test/pull/1250', 'success', 'finalize' === $mode ? null : '2s', $progress);
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
@@ -152,6 +166,11 @@ function lock_sqlite_worker(array $args): void {
 
 	if ('acquire' === $mode || 'decorated-acquire' === $mode) {
 		fwrite(STDOUT, json_encode(lock_sqlite_result(WorkspaceMutationLock::acquire($workspace, $repo, 1))));
+		return;
+	}
+	if ('multi-acquire' === $mode) {
+		$result = WorkspaceMutationLock::with_repos($workspace, array($repo . '-a', $repo . '-b'), static fn(): string => 'unexpected-callback', 1);
+		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
 
@@ -332,6 +351,46 @@ try {
 	lock_sqlite_assert($elapsed < 2, 'Read-only exact discovery exceeded its bounded registry recovery window.');
 	$replayed = lock_sqlite_finish(lock_sqlite_start(array('finalize', $database, $workspace, 'lifecycle-repo', '100')));
 	lock_sqlite_assert(true === ($replayed['success']['success'] ?? null) && 'cleanup_eligible' === ($replayed['success']['lifecycle_state'] ?? null) && WorktreeContextInjector::STATE_PR_OPENED === ($replayed['success']['metadata']['finalized_state'] ?? null), 'Finalization replay did not recover after SQLite contention cleared: ' . json_encode($replayed));
+	foreach (array('lock_wait', 'dirty_probe', 'metadata_persistence', 'inventory_upsert', 'readback') as $phase) {
+		lock_sqlite_assert(isset($replayed['success']['phase_timings'][$phase]['elapsed_ms']), 'Successful finalization omitted the ' . $phase . ' timing.');
+	}
+	lock_sqlite_assert(($replayed['success']['wall_clock_budget']['elapsed_ms'] ?? 10000) < 2000, 'Uncontended finalization was not a fast local operation.');
+
+	// A contended authoritative read is a typed pre-commit failure, not missing
+	// metadata that can fall through to the option store.
+	[$read_worker, $read_ready, $read_go] = lock_sqlite_signal_worker('finalize-read-coordinated', $database, $workspace, 'lifecycle-repo', 5000);
+	$setup->exec('BEGIN EXCLUSIVE');
+	file_put_contents($read_go, 'go');
+	$read_failure = lock_sqlite_finish($read_worker);
+	$setup->exec('COMMIT');
+	lock_sqlite_assert('worktree_finalize_metadata_persistence_failed' === ($read_failure['error'] ?? null), 'Initial finalizer read contention was not typed as metadata persistence failure: ' . json_encode($read_failure));
+	lock_sqlite_assert('metadata_persistence' === ($read_failure['data']['phase'] ?? null) && false === ($read_failure['data']['metadata_committed'] ?? null), 'Initial finalizer read contention crossed the metadata commit boundary.');
+	lock_sqlite_assert('worktree_inventory_get' === ($read_failure['data']['operation'] ?? null) && ($read_failure['data']['wall_clock_budget']['elapsed_ms'] ?? 3000) < 2500, 'Initial finalizer read lost its bounded SQLite operation receipt.');
+	lock_sqlite_cleanup_signals($read_ready, $read_go);
+
+	// Once admitted, a finalizer still receives only one deadline across metadata,
+	// inventory, readback, and release. Its prompt OS unlock lets an unrelated repo
+	// proceed as soon as the shared SQLite writer clears.
+	[$bounded_worker, $bounded_ready, $bounded_go] = lock_sqlite_signal_worker('finalize-coordinated', $database, $workspace, 'lifecycle-repo', 5000);
+	$setup->exec('BEGIN EXCLUSIVE');
+	file_put_contents($bounded_go, 'go');
+	$unrelated = lock_sqlite_start(array('allocation', $database, $workspace, 'unrelated-repo', '5000'));
+	$started = microtime(true);
+	$bounded = lock_sqlite_finish($bounded_worker);
+	$bounded_elapsed = microtime(true) - $started;
+	lock_sqlite_assert('worktree_finalize_inventory_upsert_failed' === ($bounded['error'] ?? null), 'Admitted finalizer did not identify inventory persistence contention: ' . json_encode($bounded));
+	lock_sqlite_assert('inventory_upsert' === ($bounded['data']['phase'] ?? null) && true === ($bounded['data']['metadata_committed'] ?? null), 'Admitted finalizer omitted its typed commit boundary.');
+	lock_sqlite_assert(true === ($bounded['data']['recovery']['idempotent'] ?? null) && $finalize_retry . " --until-budget='2s'" === ($bounded['data']['recovery']['command'] ?? null), 'Admitted finalizer omitted its exact idempotent recovery.');
+	lock_sqlite_assert(array_key_exists('blocker_owner', $bounded['data'] ?? array()) && 1 === ($bounded['data']['retry_after_seconds'] ?? null), 'Admitted finalizer omitted blocker owner or retry-after evidence.');
+	lock_sqlite_assert($bounded_elapsed < 3, 'Admitted finalizer exceeded its two-second shared wall-clock contract.');
+	lock_sqlite_assert(($bounded['data']['wall_clock_budget']['elapsed_ms'] ?? 3000) < 2500, 'Finalizer receipt exceeded its shared budget envelope.');
+	$bounded_lock = fopen($workspace . '/.locks/worktree-lifecycle-repo.lock', 'c');
+	lock_sqlite_assert(is_resource($bounded_lock) && flock($bounded_lock, LOCK_EX | LOCK_NB), 'Admitted finalizer retained repository ownership after persistence contention.');
+	flock($bounded_lock, LOCK_UN); fclose($bounded_lock);
+	$setup->exec('COMMIT');
+	$unrelated_result = lock_sqlite_finish($unrelated);
+	lock_sqlite_assert('allocated' === ($unrelated_result['success'] ?? null), 'Bounded finalizer starved an unrelated repository allocation: ' . json_encode($unrelated_result));
+	lock_sqlite_cleanup_signals($bounded_ready, $bounded_go);
 
 	// Heartbeat retries through a short lock, then reports both writes if exhausted.
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);
@@ -371,8 +430,45 @@ try {
 	lock_sqlite_assert(true === ($handoff['data']['lock_callback_completed'] ?? null) && true === ($handoff['data']['filesystem_lock_released'] ?? null), 'Terminal release receipt did not distinguish callback completion from OS unlock.');
 	$raw = fopen($workspace . '/.locks/worktree-release-exhausted.lock', 'c');
 	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Terminal DB release failure retained the authoritative OS flock.');
+	$setup->exec('COMMIT');
+	lock_sqlite_cleanup_signals($ready, $go);
+
+	// A later multi-repo acquisition failure remains primary while release
+	// contention for an earlier acquired repo is attached as compact evidence.
+	[$blocker, $blocker_ready, $blocker_go] = lock_sqlite_signal_worker('handoff', $database, $workspace, 'multi-repo-b', 1000);
+	$multi = lock_sqlite_start(array('multi-acquire', $database, $workspace, 'multi-repo', '100'));
+	$poll_deadline = microtime(true) + 2;
+	do {
+		$multi_a_active = 0 < (int) $setup->query("SELECT COUNT(*) FROM wp_datamachine_code_locks WHERE scope = 'multi-repo-a' AND status = 'active'")->fetchColumn();
+		if (!$multi_a_active) { usleep(10000); }
+	} while (!$multi_a_active && microtime(true) < $poll_deadline);
+	lock_sqlite_assert($multi_a_active, 'Multi-repo fixture did not acquire its first repository.');
+	$setup->exec('BEGIN EXCLUSIVE');
+	$multi_result = lock_sqlite_finish($multi);
+	lock_sqlite_assert('workspace_repo_busy' === ($multi_result['error'] ?? null), 'Multi-repo release contention replaced the later acquisition failure.');
+	lock_sqlite_assert('workspace_lock_release' === ($multi_result['data']['lock_release_error']['operation'] ?? null) && true === ($multi_result['data']['lock_release_error']['filesystem_lock_released'] ?? null), 'Multi-repo acquisition failure omitted earlier release evidence.');
+	$setup->exec('COMMIT');
+	file_put_contents($blocker_go, 'go');
+	lock_sqlite_finish($blocker);
+	lock_sqlite_cleanup_signals($blocker_ready, $blocker_go);
 	flock($raw, LOCK_UN); fclose($raw);
-	$setup->exec('COMMIT'); lock_sqlite_cleanup_signals($ready, $go);
+
+	// Post-create registry contention retains identity and gains the same exact
+	// allocation receipt instead of rolling back into a duplicate-prone state.
+	$lifecycle_workspace = (new ReflectionClass(Workspace::class))->newInstanceWithoutConstructor();
+	$post_create_error = new WP_Error('workspace_sqlite_lock_contention', 'contended', array('retryable' => true, 'operation' => 'worktree_inventory_upsert'));
+	$post_create_method = new ReflectionMethod($lifecycle_workspace, 'worktree_post_create_registry_error');
+	$post_create = $post_create_method->invoke($lifecycle_workspace, $post_create_error, 'lifecycle-repo@durable-post-create', $workspace . '/lifecycle-repo@durable-post-create', 'inventory_metadata');
+	$post_create_data = (array) $post_create->get_error_data();
+	lock_sqlite_assert(true === ($post_create_data['creation_identity_persisted'] ?? null) && true === ($post_create_data['mutation_committed'] ?? null) && 'retry_same_allocation' === ($post_create_data['reconciliation'] ?? null), 'Post-create contention did not retain durable reconciliation evidence.');
+	$decorate_method = new ReflectionMethod($lifecycle_workspace, 'decorate_worktree_add_lock_contention');
+	$decorated_post_create = $decorate_method->invoke($lifecycle_workspace, $post_create, array(
+		'repo' => 'lifecycle-repo', 'branch' => 'durable-post-create', 'from' => 'origin/main',
+		'inject_context' => false, 'bootstrap' => false, 'allow_stale' => false, 'allow_unverified_freshness' => false,
+		'rebase_base' => false, 'force' => false, 'remediate_capacity' => false, 'remediate_capacity_dry_run' => false,
+		'allow_percentage_byte_floor_exception' => false, 'task' => array(), 'require_task_tracker' => false, 'intent' => array(), 'reuse_policy' => 'reuse_compatible',
+	));
+	lock_sqlite_assert("wp datamachine-code workspace worktree add 'lifecycle-repo' 'durable-post-create' --from='origin/main' --skip-context-injection --skip-bootstrap" === ($decorated_post_create->get_error_data()['retry_command'] ?? null), 'Post-create contention omitted its exact idempotent allocation receipt.');
 
 	echo "workspace-lock-sqlite-contention ok\n";
 } finally {

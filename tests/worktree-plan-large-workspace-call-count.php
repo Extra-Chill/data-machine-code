@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace DataMachineCode\Workspace {
 	final class WorktreeContextInjector {
 		public const VALID_STATES = array( 'active' );
+		public const SAME_TASK_CANDIDATE_EVIDENCE_LIMIT = 5;
 
 		public static int $metadata_reads = 0;
 
@@ -24,6 +25,14 @@ namespace DataMachineCode\Workspace {
 
 		public static function classify_liveness( ?array $metadata ): array {
 			return array( 'liveness' => 'unknown', 'reason' => 'fixture', 'heartbeat_age_seconds' => null );
+		}
+
+		public static function summarize_owner( ?array $metadata ): array {
+			return array( 'site' => 'unknown', 'agent' => 'unknown', 'user' => 'unknown' );
+		}
+
+		public static function project_lifecycle_state( array $metadata ): string {
+			return (string) ( $metadata['lifecycle_state'] ?? 'active' );
 		}
 	}
 }

@@ -57,6 +57,7 @@ namespace {
 	}
 
 	define('ABSPATH', __DIR__ . '/fixtures/');
+	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
 	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
 	require_once dirname(__DIR__) . '/inc/Cli/WorkspaceCompactOutput.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
@@ -186,6 +187,72 @@ namespace {
 	$unsafe = json_decode($unsafe_output, true, 512, JSON_THROW_ON_ERROR);
 	worktree_add_cli_assert(! isset($unsafe['error']['data']['retry_command']), 'Credential-bearing allocation request retained an executable retry receipt.');
 	worktree_add_cli_assert(! str_contains($unsafe_output, 'must-not-leak'), 'Credential-bearing allocation request leaked into its public error receipt.');
+
+	WP_CLI::$lines = array();
+	$isolation_request = array(
+		'repo'                       => 'studio',
+		'branch'                     => 'fix/1267-replay',
+		'from'                       => 'origin/trunk',
+		'inject_context'             => false,
+		'bootstrap'                  => false,
+		'allow_stale'                => true,
+		'allow_unverified_freshness' => true,
+		'rebase_base'                => true,
+		'force'                      => false,
+		'remediate_capacity'         => true,
+		'remediate_capacity_dry_run' => true,
+		'task'                       => array( 'task_ref' => 'studio#1267' ),
+		'require_task_tracker'       => true,
+		'intent'                     => array(),
+	);
+	$isolation_contract = \DataMachineCode\Workspace\WorktreeContextInjector::same_task_isolation_refusal($isolation_request);
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-add'] = new Worktree_Add_Cli_Ability(
+		new WP_Error('worktree_reuse_refused', 'Canonical same-task isolation flags are required.', array(
+			'status' => 409,
+			'reuse'  => array(
+				'status'                   => 'refused',
+				'reason_code'              => 'same_task_candidate_requires_explicit_isolation',
+				'candidate_evidence_limit' => 5,
+				'candidates'               => array( array( 'handle' => 'studio@existing', 'owner' => array( 'owner_run_ref' => 'run-existing' ), 'state' => 'active', 'cleanup_policy' => 'manual' ) ),
+			) + $isolation_contract,
+		))
+	);
+	try {
+		$command->__worktree_operation('add', array( 'studio', 'fix/1267-replay' ), array( 'format' => 'json', 'from' => 'origin/trunk', 'skip-context-injection' => true, 'skip-bootstrap' => true, 'allow-stale' => true, 'allow-unverified-freshness' => true, 'rebase-base' => true, 'remediate-capacity' => true, 'remediate-capacity-dry-run' => true, 'task-ref' => 'studio#1267', 'require-task-tracker' => true ));
+		throw new \RuntimeException('Same-task isolation refusal did not halt.');
+	} catch (Worktree_Add_Cli_Halt $halt) {
+		worktree_add_cli_assert(1 === $halt->status, 'Same-task isolation refusal returned the wrong exit status.');
+	}
+	$isolation_output = implode("\n", WP_CLI::$lines);
+	$isolation_error  = json_decode($isolation_output, true, 512, JSON_THROW_ON_ERROR);
+	$isolation_reuse  = (array) ( $isolation_error['error']['data']['reuse'] ?? array() );
+	worktree_add_cli_assert(array( '--purpose', '--owner-run-ref', '--cleanup-policy' ) === array_column((array) ( $isolation_reuse['missing_fields'] ?? array() ), 'cli_flag'), 'Public CLI refusal lost canonical structured missing fields.');
+	worktree_add_cli_assert(5 === ( $isolation_reuse['candidate_evidence_limit'] ?? null ) && 1 === count((array) ( $isolation_reuse['candidates'] ?? array() )), 'Public CLI refusal lost bounded candidate evidence.');
+	$template = (string) ( $isolation_reuse['corrected_command_template'] ?? '' );
+	foreach ( array( "'studio'", "'fix/1267-replay'", "--from='origin/trunk'", '--skip-context-injection', '--skip-bootstrap', '--allow-stale', '--allow-unverified-freshness', '--rebase-base', '--remediate-capacity', '--remediate-capacity-dry-run', "--task-ref='studio#1267'", '--require-task-tracker', "--purpose='<purpose>'", "--owner-run-ref='<owner-run-ref>'", "--cleanup-policy='remove_on_success'", "--reuse-policy='isolated'" ) as $fragment ) {
+		worktree_add_cli_assert(str_contains($template, $fragment), 'Public CLI corrected template lost original or canonical fragment ' . $fragment);
+	}
+
+	WP_CLI::$lines = array();
+	WP_CLI::$warnings = array();
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-finalize'] = new Worktree_Add_Cli_Ability(
+		new WP_Error('worktree_finalize_inventory_upsert_failed', 'Inventory projection failed.', array(
+			'phase'             => 'inventory_upsert',
+			'metadata_committed' => true,
+			'wall_clock_budget' => array( 'elapsed_ms' => 1999, 'limit_ms' => 2000 ),
+			'retry_command'     => "wp datamachine-code workspace worktree finalize 'studio@fix-1269' --state='" . \DataMachineCode\Workspace\WorktreeContextInjector::STATE_PR_OPENED . "'",
+		))
+	);
+	try {
+		$command->__worktree_operation('finalize', array( 'finalize', 'studio@fix-1269' ), array( 'format' => 'json', 'state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_PR_OPENED ));
+		throw new \RuntimeException('Contended worktree-finalize JSON did not halt.');
+	} catch (Worktree_Add_Cli_Halt $halt) {
+		worktree_add_cli_assert(1 === $halt->status, 'Contended worktree-finalize JSON returned the wrong exit status.');
+	}
+	$finalize_error = json_decode(implode("\n", WP_CLI::$lines), true, 512, JSON_THROW_ON_ERROR);
+	worktree_add_cli_assert('worktree_finalize_inventory_upsert_failed' === ($finalize_error['error']['code'] ?? null), 'Finalizer JSON lost its typed failure code.');
+	worktree_add_cli_assert('inventory_upsert' === ($finalize_error['error']['data']['phase'] ?? null) && true === ($finalize_error['error']['data']['metadata_committed'] ?? null), 'Finalizer JSON lost its recovery commit boundary.');
+	worktree_add_cli_assert(1999 === ($finalize_error['error']['data']['wall_clock_budget']['elapsed_ms'] ?? null) && isset($finalize_error['error']['data']['retry_command']), 'Finalizer JSON lost its budget or replay receipt.');
 
 	echo "worktree-add-cli-output-budget: ok\n";
 }

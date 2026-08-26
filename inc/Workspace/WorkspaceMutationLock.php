@@ -44,11 +44,14 @@ final class WorkspaceMutationLock {
 	/** @var array<string,mixed> */
 	private array $metadata;
 
-	private function __construct( $handle, int $lock_id = 0, string $request_path = '', array $metadata = array() ) {
-		$this->handle       = $handle;
-		$this->lock_id      = $lock_id;
-		$this->request_path = $request_path;
-		$this->metadata     = $metadata;
+	private ?float $operation_deadline;
+
+	private function __construct( $handle, int $lock_id = 0, string $request_path = '', array $metadata = array(), ?float $operation_deadline = null ) {
+		$this->handle             = $handle;
+		$this->lock_id            = $lock_id;
+		$this->request_path       = $request_path;
+		$this->metadata           = $metadata;
+		$this->operation_deadline = $operation_deadline;
 	}
 
 	/**
@@ -103,12 +106,15 @@ final class WorkspaceMutationLock {
 			foreach ( $repos as $repo ) {
 				$lock = self::acquire($workspace_path, $repo, $timeout);
 				if ( is_wp_error($lock) ) {
-					return $lock;
+					$result = $lock;
+					break;
 				}
 				$locks[] = $lock;
 			}
 
-			$result = $callback();
+			if ( ! is_wp_error($result) ) {
+				$result = $callback();
+			}
 		} finally {
 			foreach ( array_reverse($locks) as $lock ) {
 				$released = $lock->release();
@@ -189,7 +195,9 @@ final class WorkspaceMutationLock {
 		$timeout = max(0, $timeout);
 		$first_attempt        = true;
 		$acquisition_deadline = isset($metadata['_acquisition_deadline']) && is_numeric($metadata['_acquisition_deadline']) ? (float) $metadata['_acquisition_deadline'] : null;
+		$operation_deadline   = isset($metadata['_operation_deadline']) && is_numeric($metadata['_operation_deadline']) ? (float) $metadata['_operation_deadline'] : null;
 		unset($metadata['_acquisition_deadline']);
+		unset($metadata['_operation_deadline']);
 		self::emit_progress($progress_callback, array(
 			'operation'            => 'workspace_mutation_lock',
 			'phase'                => 'lock_request',
@@ -214,6 +222,8 @@ final class WorkspaceMutationLock {
 				$metadata                  = WorkspaceLockStore::activate_lease($metadata);
 				$metadata['owner_context'] = WorkspaceLockStore::default_owner_context();
 				self::update_request($request_path, 'acquiring');
+				$registration_deadline = $acquisition_deadline ?? $operation_deadline;
+				$registration_wait_ms  = null === $registration_deadline ? null : max(1, (int) floor(($registration_deadline - microtime(true)) * 1000));
 				$lock_id = WorkspaceLockStore::register_acquired(
 					array(
 						'lock_key' => 'worktree-' . $repo,
@@ -225,6 +235,7 @@ final class WorkspaceMutationLock {
 							'request_id'     => $request_id,
 							'owner_context'  => $metadata['owner_context'],
 						)),
+						'max_wait_ms' => $registration_wait_ms,
 					)
 				);
 				if ( is_wp_error($lock_id) ) {
@@ -235,7 +246,7 @@ final class WorkspaceMutationLock {
 				}
 
 				self::update_request($request_path, 'acquired');
-				return new self($handle, (int) $lock_id, $request_path, $metadata);
+				return new self($handle, (int) $lock_id, $request_path, $metadata, $operation_deadline);
 			}
 			if ( $acquired ) {
 				flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
@@ -262,13 +273,15 @@ final class WorkspaceMutationLock {
 			return true;
 		}
 
-		$released = WorkspaceLockStore::release($this->lock_id);
+		$lock_id = $this->lock_id;
 		flock($this->handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($this->handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		$this->handle  = null;
 		$this->lock_id = 0;
 		self::remove_request($this->request_path);
 		$this->request_path = '';
+		$release_wait_ms = null === $this->operation_deadline ? null : max(1, (int) floor(($this->operation_deadline - microtime(true)) * 1000));
+		$released        = WorkspaceLockStore::release($lock_id, $release_wait_ms);
 		if ( is_wp_error($released) ) {
 			$data = array_merge( (array) $released->get_error_data(), array( 'filesystem_lock_released' => true ));
 			return new \WP_Error($released->get_error_code(), $released->get_error_message(), $data);

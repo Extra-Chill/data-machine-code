@@ -107,6 +107,7 @@ class WorktreeContextInjector {
 		'owner_run_ref',
 		'cleanup_policy=remove_on_success',
 	);
+	public const SAME_TASK_CANDIDATE_EVIDENCE_LIMIT = 5;
 
 	/**
 	 * Shared policy schema for all worktree-add callers.
@@ -118,11 +119,11 @@ class WorktreeContextInjector {
 			'reuse_policy'   => array(
 				'type'        => 'string',
 				'enum'        => self::VALID_REUSE_POLICIES,
-				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base. claim_expired transfers an exact clean handle only after its unattributed heartbeat expires or an authoritative terminal signal exists.',
+				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires the ability fields purpose, owner_run_ref, and cleanup_policy=remove_on_success (CLI: --purpose, --owner-run-ref, and --cleanup-policy=remove_on_success) for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base. claim_expired transfers an exact clean handle only after its unattributed heartbeat expires or an authoritative terminal signal exists.',
 			),
-			'purpose'        => array( 'type' => 'string', 'description' => 'Purpose required with owner_run_ref and cleanup_policy=remove_on_success for isolated same-task work.' ),
-			'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Owner run reference required with purpose and cleanup_policy=remove_on_success for isolated same-task work.' ),
-			'cleanup_policy' => array( 'type' => 'string', 'enum' => self::VALID_CLEANUP_POLICIES, 'description' => 'Cleanup policy: manual, remove_on_success, or preserve_on_failure. Isolated same-task work requires remove_on_success.' ),
+			'purpose'        => array( 'type' => 'string', 'description' => 'Purpose (--purpose in CLI) required with --owner-run-ref and --cleanup-policy=remove_on_success for isolated same-task work.' ),
+			'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Owner run reference (--owner-run-ref in CLI) required with --purpose and --cleanup-policy=remove_on_success for isolated same-task work.' ),
+			'cleanup_policy' => array( 'type' => 'string', 'enum' => self::VALID_CLEANUP_POLICIES, 'description' => 'Cleanup policy (--cleanup-policy in CLI): manual, remove_on_success, or preserve_on_failure. Isolated same-task work requires --cleanup-policy=remove_on_success.' ),
 		);
 	}
 
@@ -138,6 +139,96 @@ class WorktreeContextInjector {
 			}
 		}
 		return $missing;
+	}
+
+	/** Return canonical CLI fields still required for explicit same-task isolation. */
+	public static function missing_isolation_cli_fields( array $intent ): array {
+		$missing = array();
+		foreach ( self::missing_isolation_intent($intent) as $requirement ) {
+			$ability_field = explode('=', $requirement, 2)[0];
+			$field         = str_replace('_', '-', $ability_field);
+			$missing[] = array(
+				'field'          => $field,
+				'cli_flag'       => '--' . $field,
+				'ability_field'  => $ability_field,
+				'required_value' => 'cleanup_policy' === $ability_field ? self::CLEANUP_POLICY_REMOVE_ON_SUCCESS : 'operator supplied non-empty value',
+			);
+		}
+		return $missing;
+	}
+
+	/** Build the common machine-readable correction for a same-task isolation refusal. */
+	public static function same_task_isolation_refusal( array $request ): array {
+		$intent  = (array) ( $request['intent'] ?? array() );
+		$missing = self::missing_isolation_cli_fields($intent);
+		return array(
+			'required_cli_flags'         => array( '--reuse-policy=isolated', '--purpose=<purpose>', '--owner-run-ref=<owner-run-ref>', '--cleanup-policy=remove_on_success' ),
+			'missing_fields'             => $missing,
+			'corrected_command'          => array() === $missing ? self::worktree_add_isolation_command($request, false) : null,
+			'corrected_command_template' => self::worktree_add_isolation_command($request, true),
+			'template_values_required'   => array_values(array_map(static fn( array $field ): string => (string) $field['cli_flag'], array_filter($missing, static fn( array $field ): bool => 'cleanup_policy' !== $field['ability_field']))),
+		);
+	}
+
+	/** Build a safe CLI replay while forcing only the explicitly requested isolation contract. */
+	private static function worktree_add_isolation_command( array $request, bool $template ): ?string {
+		$task = (array) ( $request['task'] ?? array() );
+		if ( isset($task['task_url']) ) {
+			$task_url = TaskUrl::canonicalize_for_replay($task['task_url']);
+			if ( null === $task_url ) {
+				return null;
+			}
+			$task['task_url'] = $task_url;
+		}
+		$parts = array(
+			'wp datamachine-code workspace worktree add',
+			escapeshellarg((string) ( $request['repo'] ?? '' )),
+			escapeshellarg((string) ( $request['branch'] ?? '' )),
+		);
+		if ( null !== ( $request['from'] ?? null ) && '' !== trim((string) $request['from']) ) {
+			$parts[] = '--from=' . escapeshellarg((string) $request['from']);
+		}
+		if ( array_key_exists('inject_context', $request) && empty($request['inject_context']) ) {
+			$parts[] = '--skip-context-injection';
+		}
+		if ( array_key_exists('bootstrap', $request) && empty($request['bootstrap']) ) {
+			$parts[] = '--skip-bootstrap';
+		}
+		foreach ( array(
+			'allow_stale'                           => '--allow-stale',
+			'allow_unverified_freshness'            => '--allow-unverified-freshness',
+			'rebase_base'                           => '--rebase-base',
+			'force'                                 => '--force',
+			'allow_percentage_byte_floor_exception' => '--allow-percentage-byte-floor',
+			'remediate_capacity'                    => '--remediate-capacity',
+			'remediate_capacity_dry_run'            => '--remediate-capacity-dry-run',
+			'verbose'                               => '--verbose',
+		) as $key => $flag ) {
+			if ( ! empty($request[ $key ]) ) {
+				$parts[] = $flag;
+			}
+		}
+		foreach ( array( 'task_url' => 'task-url', 'task_ref' => 'task-ref' ) as $key => $flag ) {
+			if ( ! empty($task[ $key ]) ) {
+				$parts[] = '--' . $flag . '=' . escapeshellarg((string) $task[ $key ]);
+			}
+		}
+		if ( ! empty($request['require_task_tracker']) ) {
+			$parts[] = '--require-task-tracker';
+		}
+		$intent = (array) ( $request['intent'] ?? array() );
+		foreach ( array( 'purpose' => 'purpose', 'owner_run_ref' => 'owner-run-ref' ) as $key => $flag ) {
+			$value = self::normalize_scalar_metadata_value($intent[ $key ] ?? null);
+			if ( null === $value && $template ) {
+				$value = '<' . $flag . '>';
+			}
+			if ( null !== $value ) {
+				$parts[] = '--' . $flag . '=' . escapeshellarg($value);
+			}
+		}
+		$parts[] = '--cleanup-policy=' . escapeshellarg(self::CLEANUP_POLICY_REMOVE_ON_SUCCESS);
+		$parts[] = '--reuse-policy=' . escapeshellarg('isolated');
+		return implode(' ', $parts);
 	}
 
 	/**
@@ -1735,18 +1826,27 @@ class WorktreeContextInjector {
 	 * @param array  $metadata Metadata fields.
 	 */
 	public static function store_lifecycle_metadata( string $handle, array $metadata ): bool|\WP_Error {
+		$stored = self::store_lifecycle_metadata_record($handle, $metadata);
+		if ( is_wp_error($stored) ) {
+			return $stored;
+		}
+		$result = self::upsert_lifecycle_metadata_inventory($handle, $stored);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
+	}
+
+	/** Persist the legacy metadata record without conflating its inventory projection. */
+	public static function store_lifecycle_metadata_record( string $handle, array $metadata, array $retry_options = array(), ?array $existing_metadata = null ): array|\WP_Error {
 		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
-			$existing = self::get_inventory_metadata($handle) ?? array();
-			$stored = array_merge($existing, $metadata);
-			$result = self::upsert_inventory_metadata($handle, $stored);
-			return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
+			$existing = $existing_metadata ?? self::get_inventory_metadata($handle, $retry_options) ?? array();
+			return array_merge($existing, $metadata);
 		}
 
-		$fresh_metadata  = self::get_metadata_fresh($handle) ?? array();
+		$fresh_metadata  = $existing_metadata ?? self::get_metadata_fresh($handle, $retry_options) ?? array();
 		$stored_metadata = array();
 		$updated         = SqliteBusyRetry::run(
 			'worktree_lifecycle_metadata_option',
 			static function () use ( $handle, $metadata, $fresh_metadata, &$stored_metadata ): bool {
+				global $wpdb;
 				$all = get_option( self::METADATA_OPTION, array() );
 				if ( ! is_array( $all ) ) {
 					$all = array();
@@ -1759,16 +1859,73 @@ class WorktreeContextInjector {
 
 				// A false return also means the value was already identical, which is
 				// idempotent. SQLite busy errors are identified through $wpdb->last_error.
-				update_option( self::METADATA_OPTION, $all, false );
-				return true;
-			}
+				$updated = update_option( self::METADATA_OPTION, $all, false );
+				return false !== $updated || ! is_object($wpdb) || '' === trim((string) ( $wpdb->last_error ?? '' ));
+			},
+			$retry_options
 		);
 		if ( is_wp_error( $updated ) ) {
 			return $updated;
 		}
+		if ( false === $updated ) {
+			return new \WP_Error('worktree_lifecycle_metadata_persist_failed', 'Failed to persist worktree lifecycle metadata.', array( 'status' => 500 ));
+		}
 
-		$result = self::upsert_inventory_metadata($handle, $stored_metadata);
-		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored_metadata);
+		return $stored_metadata;
+	}
+
+	/** Project one prepared lifecycle record into the inventory. */
+	public static function upsert_lifecycle_metadata_inventory( string $handle, array $metadata, array $retry_options = array() ): bool|\WP_Error {
+		return self::upsert_inventory_metadata($handle, $metadata, $retry_options);
+	}
+
+	/** Whether the metadata-record phase writes a durable option before inventory projection. */
+	public static function lifecycle_metadata_record_is_durable(): bool {
+		return function_exists('get_option') && function_exists('update_option');
+	}
+
+	/** Read the committed inventory record without falling back to option metadata. */
+	public static function get_lifecycle_inventory_metadata( string $handle, array $retry_options = array() ): array|null|\WP_Error {
+		$repository = self::inventory_repository();
+		if ( null === $repository ) {
+			return null;
+		}
+		$row = $repository->get($handle, $retry_options);
+		if ( null !== $repository->last_error() ) {
+			return $repository->last_error();
+		}
+		return is_array($row) && is_array($row['metadata'] ?? null) ? (array) $row['metadata'] : null;
+	}
+
+	/** Read finalizer metadata without treating a contended inventory as absent. */
+	public static function get_lifecycle_metadata( string $handle, array $retry_options = array() ): array|null|\WP_Error {
+		$started_at = hrtime(true);
+		$inventory  = self::get_lifecycle_inventory_metadata($handle, $retry_options);
+		if ( is_wp_error($inventory) || ! function_exists('get_option') ) {
+			return $inventory;
+		}
+
+		if ( isset($retry_options['hard_max_wait_ms']) ) {
+			$elapsed_ms                        = (int) floor(( hrtime(true) - $started_at ) / 1000000);
+			$retry_options['hard_max_wait_ms'] = max(1, (int) $retry_options['hard_max_wait_ms'] - $elapsed_ms);
+		}
+		$all = SqliteBusyRetry::run(
+			'worktree_lifecycle_metadata_option_get',
+			static fn() => get_option(self::METADATA_OPTION, array()),
+			$retry_options
+		);
+		if ( is_wp_error($all) ) {
+			return $all;
+		}
+		$option = is_array($all) && is_array($all[ $handle ] ?? null) ? (array) $all[ $handle ] : null;
+		if ( ! is_array($inventory) ) {
+			return $option;
+		}
+		if ( ! is_array($option) ) {
+			return $inventory;
+		}
+
+		return self::merge_lifecycle_metadata_sources($option, $inventory);
 	}
 
 	/** Whether standalone identity already carries the persisted task tracker. */
@@ -1930,10 +2087,11 @@ class WorktreeContextInjector {
 	 *
 	 * @param string $handle  Workspace handle.
 	 * @param array  $payload Payload from {@see self::build_payload()}.
+	 * @param array  $metadata Additional lifecycle metadata committed with the projection.
 	 */
-	public static function store_metadata( string $handle, array $payload ): bool|\WP_Error {
+	public static function store_metadata( string $handle, array $payload, array $metadata = array() ): bool|\WP_Error {
 		return self::store_lifecycle_metadata(
-			$handle, array(
+			$handle, array_merge($metadata, array(
 				'site_url'         => (string) ( $payload['site_url'] ?? '' ),
 				'site_name'        => (string) ( $payload['site_name'] ?? '' ),
 				'agent_slug'       => (string) ( $payload['agent_slug'] ?? '' ),
@@ -1943,7 +2101,7 @@ class WorktreeContextInjector {
 				'origin_agent'     => self::normalize_scalar_metadata_value($payload['agent_slug'] ?? null) ?? '',
 				'abspath'          => (string) ( $payload['abspath'] ?? '' ),
 				'created_at'       => (string) ( $payload['timestamp'] ?? gmdate('c') ),
-			)
+			))
 		);
 	}
 
@@ -2127,8 +2285,8 @@ class WorktreeContextInjector {
 	 * @param  string $handle Workspace handle.
 	 * @return array|null
 	 */
-	public static function get_metadata( string $handle ): ?array {
-		$db_metadata = self::get_inventory_metadata($handle);
+	public static function get_metadata( string $handle, array $retry_options = array() ): ?array {
+		$db_metadata = self::get_inventory_metadata($handle, $retry_options);
 
 		if ( ! function_exists('get_option') ) {
 			return $db_metadata;
@@ -2152,12 +2310,12 @@ class WorktreeContextInjector {
 	 * @param  string $handle Workspace handle.
 	 * @return array|null
 	 */
-	public static function get_metadata_fresh( string $handle ): ?array {
+	public static function get_metadata_fresh( string $handle, array $retry_options = array() ): ?array {
 		if ( function_exists('wp_cache_delete') ) {
 			wp_cache_delete(self::METADATA_OPTION, 'options');
 		}
 
-		$inventory_metadata = self::get_inventory_metadata($handle);
+		$inventory_metadata = self::get_inventory_metadata($handle, $retry_options);
 		$option_metadata    = null;
 		if ( function_exists('get_option') ) {
 			$all = get_option(self::METADATA_OPTION, array());
@@ -2206,7 +2364,7 @@ class WorktreeContextInjector {
 	 * @param string              $handle   Workspace handle.
 	 * @param array<string,mixed> $metadata Lifecycle metadata.
 	 */
-	private static function upsert_inventory_metadata( string $handle, array $metadata ): bool|\WP_Error {
+	private static function upsert_inventory_metadata( string $handle, array $metadata, array $retry_options = array() ): bool|\WP_Error {
 		$repository = self::inventory_repository();
 		if ( null === $repository ) {
 			return true;
@@ -2236,7 +2394,8 @@ class WorktreeContextInjector {
 				'created_at'      => $metadata['created_at'] ?? null,
 				'last_seen_at'    => $metadata['last_seen_at'] ?? null,
 				'metadata'        => $metadata,
-			)
+			),
+			$retry_options
 		);
 
 		return $stored ? true : $repository->last_error() ?? new \WP_Error('worktree_inventory_persist_failed', 'Failed to persist worktree lifecycle metadata.', array( 'status' => 500 ));
@@ -2247,13 +2406,13 @@ class WorktreeContextInjector {
 	 *
 	 * @return array<string,mixed>|null
 	 */
-	private static function get_inventory_metadata( string $handle ): ?array {
+	private static function get_inventory_metadata( string $handle, array $retry_options = array() ): ?array {
 		$repository = self::inventory_repository();
 		if ( null === $repository ) {
 			return null;
 		}
 
-		$row = $repository->get($handle);
+		$row = $repository->get($handle, $retry_options);
 		if ( is_array($row) && is_array($row['metadata'] ?? null) ) {
 			return (array) $row['metadata'];
 		}

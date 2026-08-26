@@ -5180,6 +5180,9 @@ class WorkspaceCommand extends BaseCommand {
 				if ( isset( $assoc_args['owner-terminal-outcome'] ) && '' !== trim( (string) $assoc_args['owner-terminal-outcome'] ) ) {
 					$input['owner_terminal_outcome'] = (string) $assoc_args['owner-terminal-outcome'];
 				}
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
+				}
 				break;
 
 			case 'mark-cleanup-eligible':
@@ -5484,11 +5487,16 @@ class WorkspaceCommand extends BaseCommand {
 				$this->render_worktree_add_progress($event, (string) ( $assoc_args['format'] ?? '' ) === 'json' );
 			};
 		}
+		if ( 'finalize' === $operation ) {
+			$input['progress_callback'] = function ( array $event ) use ( $assoc_args ): void {
+				$this->render_worktree_finalize_progress( $event, 'json' === (string) ( $assoc_args['format'] ?? '' ) );
+			};
+		}
 
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
-			if ( in_array( $operation, array( 'add', 'get', 'list', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( in_array( $operation, array( 'add', 'get', 'list', 'finalize', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json($this->renderer()->error_envelope($result));
 				WP_CLI::halt( 1 );
 			}
@@ -5526,6 +5534,21 @@ class WorkspaceCommand extends BaseCommand {
 			}
 		}
 		$message = sprintf('Worktree add progress: %s%s.', str_replace('_', ' ', $phase), array() === $details ? '' : ' (' . implode('; ', $details) . ')');
+		if ( $json ) {
+			WP_CLI::warning( $message );
+			return;
+		}
+		WP_CLI::log( $message );
+	}
+
+	/** Render finalizer phase timings without contaminating JSON stdout. */
+	private function render_worktree_finalize_progress( array $event, bool $json ): void {
+		$message = sprintf(
+			'Worktree finalize progress: %s %s (%dms).',
+			str_replace('_', ' ', (string) ( $event['phase'] ?? 'working' )),
+			(string) ( $event['state'] ?? 'working' ),
+			(int) ( $event['elapsed_ms'] ?? 0 )
+		);
 		if ( $json ) {
 			WP_CLI::warning($message);
 			return;
