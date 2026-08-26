@@ -60,23 +60,17 @@ namespace {
 		public function __construct(private string $workspace) {}
 
 		public function execute(array $input): array|WP_Error {
-			global $wpdb;
 			$repo   = (string) ($input['repo'] ?? '');
 			$branch = (string) ($input['branch'] ?? '');
 			$handle = $repo . '@' . preg_replace('/[^a-z0-9]+/', '-', strtolower($branch));
 			$path   = $this->workspace . '/' . $handle;
 
-			$journal = SqliteBusyRetry::run('worktree_creation_intent_store', function () use ($wpdb, $handle, $repo, $branch, $path): bool {
-				try {
-					$statement = $wpdb->pdo->prepare('INSERT INTO registry(handle, repo, branch, path, state) VALUES (?, ?, ?, ?, ?) ON CONFLICT(handle) DO NOTHING');
+			$journal = SqliteBusyRetry::run('worktree_creation_intent_store', function () use ($handle, $repo, $branch, $path): bool {
+				return $this->writeRegistry(static function (PDO $pdo) use ($handle, $repo, $branch, $path): bool {
+					$statement = $pdo->prepare('INSERT INTO registry(handle, repo, branch, path, state) VALUES (?, ?, ?, ?, ?) ON CONFLICT(handle) DO NOTHING');
 					$statement->execute(array($handle, $repo, $branch, $path, 'intent'));
-					usleep(75000);
-					$wpdb->last_error = '';
 					return true;
-				} catch (PDOException $error) {
-					$wpdb->last_error = $error->getMessage();
-					return false;
-				}
+				});
 			});
 			if ( is_wp_error($journal) ) {
 				return $journal;
@@ -89,17 +83,12 @@ namespace {
 				}
 			}
 
-			$persisted = SqliteBusyRetry::run('worktree_inventory_upsert', function () use ($wpdb, $handle): bool {
-				try {
-					$statement = $wpdb->pdo->prepare('UPDATE registry SET state = ? WHERE handle = ?');
+			$persisted = SqliteBusyRetry::run('worktree_inventory_upsert', function () use ($handle): bool {
+				return $this->writeRegistry(static function (PDO $pdo) use ($handle): bool {
+					$statement = $pdo->prepare('UPDATE registry SET state = ? WHERE handle = ?');
 					$statement->execute(array('created', $handle));
-					usleep(75000);
-					$wpdb->last_error = '';
 					return 1 === $statement->rowCount();
-				} catch (PDOException $error) {
-					$wpdb->last_error = $error->getMessage();
-					return false;
-				}
+				});
 			});
 			if ( is_wp_error($persisted) ) {
 				$data = array_merge((array) $persisted->get_error_data(), array('handle' => $handle, 'path' => $path, 'creation_intent_persisted' => true));
@@ -107,6 +96,19 @@ namespace {
 			}
 
 			return array('success' => true, 'handle' => $handle, 'path' => $path, 'branch' => $branch, 'created_branch' => true);
+		}
+
+		private function writeRegistry(callable $write): bool {
+			global $wpdb;
+			try {
+				$result = $write($wpdb->pdo);
+				usleep(75000);
+				$wpdb->last_error = '';
+				return $result;
+			} catch (PDOException $error) {
+				$wpdb->last_error = $error->getMessage();
+				return false;
+			}
 		}
 	}
 

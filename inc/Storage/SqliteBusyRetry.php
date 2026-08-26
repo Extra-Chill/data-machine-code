@@ -49,12 +49,9 @@ final class SqliteBusyRetry {
 		ob_start();
 
 		try {
-			$writer = null;
-			if ( $sqlite && $serialize ) {
-				$writer = self::acquire_writer($operation_name, $started_at, $max_wait_ms, $options);
-				if ( $writer instanceof \WP_Error ) {
-					return $writer;
-				}
+			$writer = $sqlite && $serialize ? self::acquire_writer($operation_name, $started_at, $max_wait_ms, $options) : null;
+			if ( $writer instanceof \WP_Error ) {
+				return $writer;
 			}
 
 			do {

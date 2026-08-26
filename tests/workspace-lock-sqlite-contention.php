@@ -33,7 +33,11 @@ final class Lock_Contention_Wpdb {
 
 	public function __construct(private PDO $pdo, private bool $advertise_sqlite = true) {}
 	public function db_server_info(): string { return $this->advertise_sqlite ? 'SQLite' : 'MySQL'; }
-	public function suppress_errors(bool $suppress = true): bool { $previous = $this->errors_suppressed; $this->errors_suppressed = $suppress; return $previous; }
+	public function suppress_errors(bool $suppress = true): bool {
+		$previous = $this->errors_suppressed;
+		if ($previous !== $suppress) { $this->errors_suppressed = $suppress; }
+		return $previous;
+	}
 	public function prepare(string $query, mixed ...$args): string {
 		foreach ($args as $arg) {
 			if (!preg_match('/%[sdi]/', $query, $match)) { break; }

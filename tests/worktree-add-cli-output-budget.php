@@ -240,11 +240,11 @@ namespace {
 			'phase'             => 'inventory_upsert',
 			'metadata_committed' => true,
 			'wall_clock_budget' => array( 'elapsed_ms' => 1999, 'limit_ms' => 2000 ),
-			'retry_command'     => "wp datamachine-code workspace worktree finalize 'studio@fix-1269' --state='pr_opened'",
+			'retry_command'     => "wp datamachine-code workspace worktree finalize 'studio@fix-1269' --state='" . \DataMachineCode\Workspace\WorktreeContextInjector::STATE_PR_OPENED . "'",
 		))
 	);
 	try {
-		$command->__worktree_operation('finalize', array( 'finalize', 'studio@fix-1269' ), array( 'format' => 'json', 'state' => 'pr_opened' ));
+		$command->__worktree_operation('finalize', array( 'finalize', 'studio@fix-1269' ), array( 'format' => 'json', 'state' => \DataMachineCode\Workspace\WorktreeContextInjector::STATE_PR_OPENED ));
 		throw new \RuntimeException('Contended worktree-finalize JSON did not halt.');
 	} catch (Worktree_Add_Cli_Halt $halt) {
 		worktree_add_cli_assert(1 === $halt->status, 'Contended worktree-finalize JSON returned the wrong exit status.');
