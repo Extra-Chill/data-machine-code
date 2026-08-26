@@ -106,12 +106,15 @@ final class WorkspaceMutationLock {
 			foreach ( $repos as $repo ) {
 				$lock = self::acquire($workspace_path, $repo, $timeout);
 				if ( is_wp_error($lock) ) {
-					return $lock;
+					$result = $lock;
+					break;
 				}
 				$locks[] = $lock;
 			}
 
-			$result = $callback();
+			if ( ! is_wp_error($result) ) {
+				$result = $callback();
+			}
 		} finally {
 			foreach ( array_reverse($locks) as $lock ) {
 				$released = $lock->release();

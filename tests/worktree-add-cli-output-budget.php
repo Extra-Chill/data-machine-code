@@ -233,5 +233,26 @@ namespace {
 		worktree_add_cli_assert(str_contains($template, $fragment), 'Public CLI corrected template lost original or canonical fragment ' . $fragment);
 	}
 
+	WP_CLI::$lines = array();
+	WP_CLI::$warnings = array();
+	$GLOBALS['worktree_add_cli_abilities']['datamachine-code/workspace-worktree-finalize'] = new Worktree_Add_Cli_Ability(
+		new WP_Error('worktree_finalize_inventory_upsert_failed', 'Inventory projection failed.', array(
+			'phase'             => 'inventory_upsert',
+			'metadata_committed' => true,
+			'wall_clock_budget' => array( 'elapsed_ms' => 1999, 'limit_ms' => 2000 ),
+			'retry_command'     => "wp datamachine-code workspace worktree finalize 'studio@fix-1269' --state='pr_opened'",
+		))
+	);
+	try {
+		$command->__worktree_operation('finalize', array( 'finalize', 'studio@fix-1269' ), array( 'format' => 'json', 'state' => 'pr_opened' ));
+		throw new \RuntimeException('Contended worktree-finalize JSON did not halt.');
+	} catch (Worktree_Add_Cli_Halt $halt) {
+		worktree_add_cli_assert(1 === $halt->status, 'Contended worktree-finalize JSON returned the wrong exit status.');
+	}
+	$finalize_error = json_decode(implode("\n", WP_CLI::$lines), true, 512, JSON_THROW_ON_ERROR);
+	worktree_add_cli_assert('worktree_finalize_inventory_upsert_failed' === ($finalize_error['error']['code'] ?? null), 'Finalizer JSON lost its typed failure code.');
+	worktree_add_cli_assert('inventory_upsert' === ($finalize_error['error']['data']['phase'] ?? null) && true === ($finalize_error['error']['data']['metadata_committed'] ?? null), 'Finalizer JSON lost its recovery commit boundary.');
+	worktree_add_cli_assert(1999 === ($finalize_error['error']['data']['wall_clock_budget']['elapsed_ms'] ?? null) && isset($finalize_error['error']['data']['retry_command']), 'Finalizer JSON lost its budget or replay receipt.');
+
 	echo "worktree-add-cli-output-budget: ok\n";
 }

@@ -1897,6 +1897,37 @@ class WorktreeContextInjector {
 		return is_array($row) && is_array($row['metadata'] ?? null) ? (array) $row['metadata'] : null;
 	}
 
+	/** Read finalizer metadata without treating a contended inventory as absent. */
+	public static function get_lifecycle_metadata( string $handle, array $retry_options = array() ): array|null|\WP_Error {
+		$started_at = hrtime(true);
+		$inventory  = self::get_lifecycle_inventory_metadata($handle, $retry_options);
+		if ( is_wp_error($inventory) || ! function_exists('get_option') ) {
+			return $inventory;
+		}
+
+		if ( isset($retry_options['hard_max_wait_ms']) ) {
+			$elapsed_ms                        = (int) floor(( hrtime(true) - $started_at ) / 1000000);
+			$retry_options['hard_max_wait_ms'] = max(1, (int) $retry_options['hard_max_wait_ms'] - $elapsed_ms);
+		}
+		$all = SqliteBusyRetry::run(
+			'worktree_lifecycle_metadata_option_get',
+			static fn() => get_option(self::METADATA_OPTION, array()),
+			$retry_options
+		);
+		if ( is_wp_error($all) ) {
+			return $all;
+		}
+		$option = is_array($all) && is_array($all[ $handle ] ?? null) ? (array) $all[ $handle ] : null;
+		if ( ! is_array($inventory) ) {
+			return $option;
+		}
+		if ( ! is_array($option) ) {
+			return $inventory;
+		}
+
+		return self::merge_lifecycle_metadata_sources($option, $inventory);
+	}
+
 	/** Whether standalone identity already carries the persisted task tracker. */
 	public static function standalone_worktree_tracker_is_current( array $metadata ): bool {
 		$target = self::standalone_worktree_tracker_target($metadata);

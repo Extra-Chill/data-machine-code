@@ -5496,7 +5496,7 @@ class WorkspaceCommand extends BaseCommand {
 		$result = $ability->execute( $input );
 
 		if ( is_wp_error( $result ) ) {
-			if ( in_array( $operation, array( 'add', 'get', 'list', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+			if ( in_array( $operation, array( 'add', 'get', 'list', 'finalize', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 				$this->renderer()->json($this->renderer()->error_envelope($result));
 				WP_CLI::halt( 1 );
 			}
