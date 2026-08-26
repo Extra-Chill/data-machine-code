@@ -24,7 +24,7 @@ use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
-use DataMachineCode\Support\SystemTaskDrainability;
+use DataMachineCode\Cleanup\CleanupRunControlOperation;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
@@ -654,6 +654,7 @@ class WorkspaceCommand extends BaseCommand {
 	}
 
 	private ?CleanupRunEvidenceStoreInterface $cleanup_run_evidence_store = null;
+	private ?CleanupRunControlOperation $cleanup_run_control_operation = null;
 
 	/**
 	 * Show the workspace directory path.
@@ -1867,99 +1868,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @return array<string,mixed>
 	 */
 	private function drain_cleanup_run_to_status( array $result, array $assoc_args ): array {
-		$job_id = (int) ( $result['job_id'] ?? 0 );
-		$run_id = (string) ( $result['run_id'] ?? ( $job_id > 0 ? $this->cleanup_run_id( $job_id ) : '' ) );
-		if ( $job_id <= 0 || '' === $run_id ) {
-			$result['drain'] = array(
-				'success' => false,
-				'error'   => 'Cleanup run did not return a job id to drain.',
-			);
-			return $result;
-		}
-
-		$commands             = array();
-		$errors               = array();
-		$drainability_repairs = array();
-		$repaired_child_ids   = array();
-		$max_passes           = 10;
-
-		$parent_command = sprintf( 'datamachine drain --job-id=%d', $job_id );
-		$commands[]     = 'studio wp ' . $parent_command;
-		$error          = $this->run_wp_cli_command( $parent_command );
-		if ( '' !== $error ) {
-			$errors[] = $error;
-		}
-
-		for ( $pass = 0; $pass < $max_passes; ++$pass ) {
-			$status = $this->cleanup_run_evidence_store()->read( $run_id, true, true );
-			if ( $status instanceof \WP_Error ) {
-				$errors[] = $status->get_error_message();
-				break;
-			}
-
-			$children              = (array) ( $status['evidence']['children'] ?? array() );
-			$undrainable_child_ids = array_values(
-				array_unique(
-					array_filter(
-						array_map( 'intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ) )
-					)
-				)
-			);
-			if ( array() !== $undrainable_child_ids ) {
-				$repair                  = SystemTaskDrainability::ensure_jobs_have_execute_step_actions( $undrainable_child_ids );
-				$pass_repaired_child_ids = array_values(
-					array_diff( $undrainable_child_ids, (array) $repair['unrepairable'] )
-				);
-				$repaired_child_ids      = array_values( array_unique( array_merge( $repaired_child_ids, $pass_repaired_child_ids ) ) );
-				$drainability_repairs[]  = array(
-					'pass'                       => $pass + 1,
-					'detected_child_job_ids'     => $undrainable_child_ids,
-					'repaired_child_job_ids'     => $pass_repaired_child_ids,
-					'unrepairable_child_job_ids' => (array) $repair['unrepairable'],
-				);
-			}
-			$active_child_ids = array_values(
-				array_unique(
-					array_filter(
-						array_map(
-							'intval',
-							array_merge(
-								(array) ( $children['pending_job_ids'] ?? array() ),
-								(array) ( $children['processing_job_ids'] ?? array() )
-							)
-						)
-					)
-				)
-			);
-			if ( array() === $active_child_ids ) {
-				break;
-			}
-
-			$child_command = sprintf( 'datamachine drain --job-id=%s', implode( ',', $active_child_ids ) );
-			$commands[]    = 'studio wp ' . $child_command;
-			$error         = $this->run_wp_cli_command( $child_command );
-			if ( '' !== $error ) {
-				$errors[] = $error;
-				break;
-			}
-		}
-
-		$final                 = $this->cleanup_run_evidence_store()->read( $run_id, false, ! empty( $assoc_args['verbose'] ) );
-		$output                = $final instanceof \WP_Error ? $result : $final;
-		$output['initial_run'] = $result;
-		$output['drain']       = array(
-			'success'                => array() === $errors,
-			'commands'               => $commands,
-			'errors'                 => $errors,
-			'verify_command'         => sprintf( 'studio wp datamachine-code workspace cleanup status %s --format=json', $run_id ),
-			'bytes_reclaimed'        => (int) ( $output['cleanup_items']['bytes_reclaimed'] ?? 0 ),
-			'freed_human'            => (string) ( $output['cleanup_items']['freed_human'] ?? $this->format_bytes( 0 ) ),
-			'completion_state'       => (string) ( $output['state'] ?? 'unknown' ),
-			'drainability_repairs'   => $drainability_repairs,
-			'repaired_child_job_ids' => $repaired_child_ids,
-		);
-
-		return $output;
+		return $this->cleanup_run_control_operation()->drain($result, ! empty($assoc_args['verbose']));
 	}
 
 	/**
@@ -2240,72 +2149,25 @@ class WorkspaceCommand extends BaseCommand {
 		return $this->cleanup_run_evidence_store;
 	}
 
-	private function control_cleanup_run_job( string $operation, int $job_id, array $assoc_args ): void {
-		$ability_name = 'resume' === $operation ? 'datamachine-code/retry-job' : 'datamachine-code/fail-job';
-		$ability      = wp_get_ability( $ability_name );
-		if ( ! $ability ) {
-			WP_CLI::error( sprintf( 'Job control ability not registered: %s', $ability_name ) );
-			return;
+	private function cleanup_run_control_operation(): CleanupRunControlOperation {
+		if ( null === $this->cleanup_run_control_operation ) {
+			$this->cleanup_run_control_operation = new CleanupRunControlOperation(
+				$this->cleanup_run_evidence_store(),
+				fn( string $command ): string => $this->run_wp_cli_command($command),
+				static fn( string $ability_name ): mixed => wp_get_ability($ability_name)
+			);
 		}
 
-		$target_job_ids = $this->cleanup_run_control_job_ids( $operation, $job_id );
-		$results        = array();
-		foreach ( $target_job_ids as $target_job_id ) {
-			$input = array( 'job_id' => $target_job_id );
-			if ( 'resume' === $operation ) {
-				$input['force'] = ! empty( $assoc_args['force'] );
-			} else {
-				$input['reason'] = 'cleanup_cancelled';
-			}
-
-			$result = $ability->execute( $input );
-			if ( ! ( $result['success'] ?? false ) ) {
-				WP_CLI::error( (string) ( $result['error'] ?? 'Cleanup run control failed.' ) );
-				return;
-			}
-			$results[] = $result;
-		}
-
-		$output                       = $results[0] ?? array(
-			'success' => true,
-			'job_id'  => $job_id,
-		);
-		$output['run_id']             = $this->cleanup_run_id( $job_id );
-		$output['state']              = 'resume' === $operation ? 'running' : 'cancelled';
-		$output['controlled_job_ids'] = $target_job_ids;
-		$output['results']            = $results;
-		$this->render_cleanup_control_result( $output, $assoc_args );
+		return $this->cleanup_run_control_operation;
 	}
 
-	/**
-	 * Resolve which Data Machine jobs should be controlled for a job-backed cleanup run.
-	 *
-	 * @param  string $operation Cleanup control operation.
-	 * @param  int    $job_id    Cleanup parent job ID.
-	 * @return array<int,int>
-	 */
-	private function cleanup_run_control_job_ids( string $operation, int $job_id ): array {
-		$output = $this->cleanup_run_evidence_store()->read( $this->cleanup_run_id( $job_id ), true, true );
-		if ( $output instanceof \WP_Error ) {
-			return array( $job_id );
+	private function control_cleanup_run_job( string $operation, int $job_id, array $assoc_args ): void {
+		$output = $this->cleanup_run_control_operation()->control($operation, $job_id, ! empty($assoc_args['force']));
+		if ( is_wp_error($output) ) {
+			WP_CLI::error($output->get_error_message());
+			return;
 		}
-
-		$children        = (array) ( $output['evidence']['children'] ?? array() );
-		$processing_ids  = array_map( 'intval', (array) ( $children['processing_job_ids'] ?? array() ) );
-		$failed_ids      = array_map( 'intval', (array) ( $children['failed_job_ids'] ?? array() ) );
-		$pending_ids     = array_map( 'intval', (array) ( $children['pending_job_ids'] ?? array() ) );
-		$undrainable_ids = array_map( 'intval', (array) ( $children['pending_without_drainable_action_job_ids'] ?? array() ) );
-
-		if ( 'resume' === $operation ) {
-			$repair        = \DataMachineCode\Support\SystemTaskDrainability::ensure_jobs_have_execute_step_actions( $undrainable_ids );
-			$child_targets = array_values( array_unique( array_filter( array_merge( $processing_ids, $failed_ids ) ) ) );
-			if ( array() === $child_targets && (int) $repair['repaired'] > 0 ) {
-				return array();
-			}
-			return array() !== $child_targets ? $child_targets : array( $job_id );
-		}
-
-		return array_values( array_unique( array_filter( array_merge( array( $job_id ), $pending_ids, $processing_ids ) ) ) );
+		$this->render_cleanup_control_result( $output, $assoc_args );
 	}
 
 	private function render_cleanup_control_result( array $result, array $assoc_args, bool $full_evidence = false ): void {
