@@ -90,7 +90,8 @@ function lock_sqlite_wait(string $path): void { $deadline = microtime(true) + 5;
 
 function lock_sqlite_worker(array $args): void {
 	[$mode, $database, $workspace, $repo, $max_wait_ms] = $args;
-	$GLOBALS['filters'] = 'default' === $max_wait_ms ? array() : array('datamachine_code_sqlite_busy_retry_max_wait_ms' => (int) $max_wait_ms);
+	$GLOBALS['filters'] = array('datamachine_code_sqlite_registry_lock_path' => $workspace . '/.locks/workspace-registry-writer.lock');
+	if ('default' !== $max_wait_ms) { $GLOBALS['filters']['datamachine_code_sqlite_busy_retry_max_wait_ms'] = (int) $max_wait_ms; }
 	$pdo = new PDO('sqlite:' . $database);
 	$pdo->exec('PRAGMA busy_timeout = 0');
 	$GLOBALS['wpdb'] = new Lock_Contention_Wpdb($pdo, 'decorated-acquire' !== $mode);
@@ -373,6 +374,23 @@ try {
 	lock_sqlite_assert(is_resource($raw) && flock($raw, LOCK_EX | LOCK_NB), 'Terminal DB release failure retained the authoritative OS flock.');
 	flock($raw, LOCK_UN); fclose($raw);
 	$setup->exec('COMMIT'); lock_sqlite_cleanup_signals($ready, $go);
+
+	// Post-create registry contention retains identity and gains the same exact
+	// allocation receipt instead of rolling back into a duplicate-prone state.
+	$lifecycle_workspace = (new ReflectionClass(Workspace::class))->newInstanceWithoutConstructor();
+	$post_create_error = new WP_Error('workspace_sqlite_lock_contention', 'contended', array('retryable' => true, 'operation' => 'worktree_inventory_upsert'));
+	$post_create_method = new ReflectionMethod($lifecycle_workspace, 'worktree_post_create_registry_error');
+	$post_create = $post_create_method->invoke($lifecycle_workspace, $post_create_error, 'lifecycle-repo@durable-post-create', $workspace . '/lifecycle-repo@durable-post-create', 'inventory_metadata');
+	$post_create_data = (array) $post_create->get_error_data();
+	lock_sqlite_assert(true === ($post_create_data['creation_identity_persisted'] ?? null) && true === ($post_create_data['mutation_committed'] ?? null) && 'retry_same_allocation' === ($post_create_data['reconciliation'] ?? null), 'Post-create contention did not retain durable reconciliation evidence.');
+	$decorate_method = new ReflectionMethod($lifecycle_workspace, 'decorate_worktree_add_lock_contention');
+	$decorated_post_create = $decorate_method->invoke($lifecycle_workspace, $post_create, array(
+		'repo' => 'lifecycle-repo', 'branch' => 'durable-post-create', 'from' => 'origin/main',
+		'inject_context' => false, 'bootstrap' => false, 'allow_stale' => false, 'allow_unverified_freshness' => false,
+		'rebase_base' => false, 'force' => false, 'remediate_capacity' => false, 'remediate_capacity_dry_run' => false,
+		'allow_percentage_byte_floor_exception' => false, 'task' => array(), 'require_task_tracker' => false, 'intent' => array(), 'reuse_policy' => 'reuse_compatible',
+	));
+	lock_sqlite_assert("wp datamachine-code workspace worktree add 'lifecycle-repo' 'durable-post-create' --from='origin/main' --skip-context-injection --skip-bootstrap" === ($decorated_post_create->get_error_data()['retry_command'] ?? null), 'Post-create contention omitted its exact idempotent allocation receipt.');
 
 	echo "workspace-lock-sqlite-contention ok\n";
 } finally {

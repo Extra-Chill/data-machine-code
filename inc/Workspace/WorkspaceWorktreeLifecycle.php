@@ -1986,13 +1986,17 @@ trait WorkspaceWorktreeLifecycle {
 		$inventory = $this->worktree_inventory();
 		$persisted = $inventory->upsert($this->build_worktree_inventory_row_from_handle($wt_handle));
 		if ( ! $persisted ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
-			WorktreeContextInjector::forget_metadata($wt_handle);
-
 			$inventory_error = $inventory->last_error();
 			if ( $inventory_error instanceof \WP_Error ) {
+				if ( 'workspace_sqlite_lock_contention' === $inventory_error->get_error_code() ) {
+					return $this->worktree_post_create_registry_error($inventory_error, $wt_handle, $wt_path, 'inventory_metadata');
+				}
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				WorktreeContextInjector::forget_metadata($wt_handle);
 				return $inventory_error;
 			}
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+			WorktreeContextInjector::forget_metadata($wt_handle);
 
 			return new \WP_Error(
 				'worktree_inventory_persist_failed',
@@ -2051,13 +2055,19 @@ trait WorkspaceWorktreeLifecycle {
 		return null;
 	}
 
-	/** Add an exact allocation receipt only to contention before a lock callback starts. */
+	/** Add an exact allocation receipt to fail-closed admission or durable post-create contention. */
 	private function decorate_worktree_add_lock_contention( mixed $result, array $request ): mixed {
 		if ( ! is_wp_error($result) ) {
 			return $result;
 		}
 		$data = (array) $result->get_error_data();
-		if ( empty($data['retryable']) || 'workspace_lock_register' !== ( $data['operation'] ?? null ) || false !== ( $data['lock_callback_started'] ?? null ) || ! empty($data['lock_callback_completed']) ) {
+		$admission_blocked = 'workspace_lock_register' === ( $data['operation'] ?? null )
+			&& false === ( $data['lock_callback_started'] ?? null )
+			&& empty($data['lock_callback_completed']);
+		$post_create      = 'workspace_sqlite_lock_contention' === $result->get_error_code()
+			&& ! empty($data['creation_identity_persisted'])
+			&& ! empty($data['mutation_committed']);
+		if ( empty($data['retryable']) || ( ! $admission_blocked && ! $post_create ) ) {
 			return $result;
 		}
 
@@ -2069,6 +2079,22 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$result->add_data($data);
 		return $result;
+	}
+
+	/** Preserve replay identity when SQLite blocks metadata after Git creation. */
+	private function worktree_post_create_registry_error( \WP_Error $error, string $handle, string $path, string $phase ): \WP_Error {
+		$data = array_merge(
+			(array) $error->get_error_data(),
+			array(
+				'handle'                      => $handle,
+				'path'                        => $path,
+				'blocker_phase'               => $phase,
+				'creation_identity_persisted' => true,
+				'mutation_committed'          => true,
+				'reconciliation'              => 'retry_same_allocation',
+			)
+		);
+		return new \WP_Error($error->get_error_code(), 'Worktree creation completed and its durable identity is awaiting SQLite registry reconciliation.', $data);
 	}
 
 	/** Build a safe command from a normalized worktree allocation request. */
@@ -2537,10 +2563,17 @@ trait WorkspaceWorktreeLifecycle {
 				'outcome'        => $bootstrap ? 'pending' : 'not_requested',
 				'resume_command' => $bootstrap ? $this->worktree_freshness_retry_command($repo, $branch, $from, $inject_context, $bootstrap, false, false, false, $task, $intent) : null,
 			),
+			'context'   => array(
+				'requested' => $inject_context,
+				'outcome'   => $inject_context ? 'pending' : 'not_requested',
+			),
 		);
 		$this->worktree_add_progress($progress_callback, 'lifecycle_metadata');
 		$metadata_stored = WorktreeContextInjector::promote_creation_intent( $wt_handle, $creation_intent, $lifecycle_metadata );
 		if ( is_wp_error( $metadata_stored ) ) {
+			if ( 'workspace_sqlite_lock_contention' === $metadata_stored->get_error_code() ) {
+				return $this->worktree_post_create_registry_error($metadata_stored, $wt_handle, $wt_path, 'lifecycle_metadata');
+			}
 			if ( null !== WorktreeContextInjector::get_creation_intent($wt_handle) ) {
 				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent );
 			} else {
@@ -2567,8 +2600,13 @@ trait WorkspaceWorktreeLifecycle {
 					$response['context_injected']    = false;
 					$response['context_skip_reason'] = 'inject failed: ' . $injection->get_error_message();
 				} else {
-					$metadata_stored = WorktreeContextInjector::store_metadata($wt_handle, $payload);
+					$provisioning = (array) ( $lifecycle_metadata['provisioning'] ?? array() );
+					$provisioning['context'] = array( 'requested' => true, 'outcome' => 'completed', 'completed_at' => gmdate('c') );
+					$metadata_stored = WorktreeContextInjector::store_metadata($wt_handle, $payload, array( 'provisioning' => $provisioning ));
 					if ( is_wp_error($metadata_stored) ) {
+						if ( 'workspace_sqlite_lock_contention' === $metadata_stored->get_error_code() ) {
+							return $this->worktree_post_create_registry_error($metadata_stored, $wt_handle, $wt_path, 'context_metadata');
+						}
 						$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
 						return $metadata_stored;
 					}
@@ -2683,11 +2721,19 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_reuse_refused($handle, 'live_worktree', $evidence);
 		}
 		$readiness = WorktreeContextInjector::bootstrap_readiness($metadata);
+		$context   = (array) ( $metadata['provisioning']['context'] ?? array() );
+		if ( $inject_context && 'pending' === ( $context['outcome'] ?? null ) ) {
+			$resumed_context = $this->resume_incomplete_context($handle, $existing, $metadata);
+			if ( is_wp_error($resumed_context) ) {
+				return $resumed_context;
+			}
+			$metadata = (array) ( $resumed_context['metadata'] ?? $metadata );
+		}
 		if ( ! $readiness['ready'] && $bootstrap ) {
 			return $this->resume_incomplete_bootstrap($handle, $existing, $metadata, $branch);
 		}
 
-		return array(
+		$response = array(
 			'success'        => true,
 			'handle'         => $handle,
 			'path'           => $existing['path'],
@@ -2701,6 +2747,36 @@ trait WorkspaceWorktreeLifecycle {
 			) + $evidence,
 			'metadata'       => $metadata,
 			'message'        => sprintf('Reused clean compatible worktree "%s" at %s.', $handle, $existing['path']),
+		);
+		if ( isset($resumed_context) ) {
+			$response['context_injected'] = ! empty($resumed_context['context_injected']);
+			$response['context_files']    = (array) ( $resumed_context['context_files'] ?? array() );
+		}
+		return $response;
+	}
+
+	/** Complete context injection left pending by post-create registry contention. */
+	private function resume_incomplete_context( string $handle, array $existing, array $metadata ): array|\WP_Error {
+		$payload = WorktreeContextInjector::build_payload();
+		if ( null === $payload ) {
+			return array( 'metadata' => $metadata, 'context_injected' => false );
+		}
+		$injection = WorktreeContextInjector::inject((string) $existing['path'], $payload);
+		if ( is_wp_error($injection) ) {
+			return $injection;
+		}
+		$provisioning = (array) ( $metadata['provisioning'] ?? array() );
+		$provisioning['context'] = array( 'requested' => true, 'outcome' => 'completed', 'completed_at' => gmdate('c') );
+		$stored = WorktreeContextInjector::store_metadata($handle, $payload, array( 'provisioning' => $provisioning ));
+		if ( is_wp_error($stored) ) {
+			return 'workspace_sqlite_lock_contention' === $stored->get_error_code()
+				? $this->worktree_post_create_registry_error($stored, $handle, (string) $existing['path'], 'context_metadata')
+				: $stored;
+		}
+		return array(
+			'metadata'         => WorktreeContextInjector::get_metadata($handle) ?? $metadata,
+			'context_injected' => true,
+			'context_files'    => (array) ( $injection['written'] ?? array() ),
 		);
 	}
 
@@ -2944,19 +3020,21 @@ trait WorkspaceWorktreeLifecycle {
 			return $this->worktree_reuse_refused($handle, 'primary_unavailable', $evidence);
 		}
 
-		$base = null !== $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
-		if ( '' === $base ) {
+		if ( null === $creation_intent ) {
+			return $this->worktree_reuse_refused($handle, 'interrupted_recovery_intent_missing', $evidence);
+		}
+		$base      = (string) ( $creation_intent['base_ref'] ?? '' );
+		$base_head = (string) ( $creation_intent['base_head'] ?? '' );
+		if ( '' === $base || '' === $base_head ) {
 			return $this->worktree_reuse_refused($handle, 'base_unresolved', $evidence);
 		}
-		$base_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($base . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
-		if ( is_wp_error($base_head) ) {
-			return $this->worktree_reuse_refused($handle, 'base_unresolved', $evidence + array( 'requested_base_ref' => $base ));
+		if ( 'existing_local_branch' !== $base ) {
+			$requested_base = null !== $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path);
+			if ( $requested_base !== $base ) {
+				return $this->worktree_reuse_refused($handle, 'interrupted_recovery_intent_mismatch', $evidence + array( 'requested_base_ref' => $requested_base, 'stored_base_ref' => $base ));
+			}
 		}
-		$base_head        = trim( (string) ( $base_head['output'] ?? '' ));
 		$requested_intent = $this->worktree_creation_intent(explode('@', $handle, 2)[0], $branch, $base, $base_head, $task, $inject_context, $bootstrap, $intent);
-		if ( null === $creation_intent ) {
-			return $this->worktree_reuse_refused($handle, 'interrupted_recovery_intent_missing', $evidence + array( 'requested_creation_intent' => $requested_intent ));
-		}
 		if ( $creation_intent !== $requested_intent ) {
 			return $this->worktree_reuse_refused($handle, 'interrupted_recovery_intent_mismatch', $evidence + array( 'requested_creation_intent' => $requested_intent ));
 		}
@@ -2974,7 +3052,7 @@ trait WorkspaceWorktreeLifecycle {
 			'repo'           => explode('@', $handle, 2)[0],
 			'branch'         => $branch,
 			'base_ref'       => $base,
-			'base_source'    => 'requested_ref',
+			'base_source'    => 'existing_local_branch' === $base ? 'existing_local_branch' : 'requested_ref',
 			'task_url'       => (string) ( $task['task_url'] ?? '' ),
 			'task_ref'       => (string) ( $task['task_ref'] ?? '' ),
 			'purpose'        => $intent['purpose'] ?? null,
@@ -2990,9 +3068,24 @@ trait WorkspaceWorktreeLifecycle {
 			'owner_run_ref'  => $intent['owner_run_ref'] ?? null,
 			'cleanup_policy' => $intent['cleanup_policy'] ?? null,
 		);
+		$metadata['provisioning'] = array(
+			'create'    => array( 'outcome' => 'succeeded', 'completed_at' => gmdate('c') ),
+			'bootstrap' => array( 'requested' => $bootstrap, 'outcome' => $bootstrap ? 'pending' : 'not_requested' ),
+			'context'   => array( 'requested' => $inject_context, 'outcome' => $inject_context ? 'pending' : 'not_requested' ),
+		);
 		$stored                     = WorktreeContextInjector::promote_creation_intent($handle, $creation_intent, $metadata);
 		if ( is_wp_error($stored) ) {
 			return $stored;
+		}
+		if ( $inject_context ) {
+			$resumed_context = $this->resume_incomplete_context($handle, $existing, $metadata);
+			if ( is_wp_error($resumed_context) ) {
+				return $resumed_context;
+			}
+			$metadata = (array) ( $resumed_context['metadata'] ?? $metadata );
+		}
+		if ( $bootstrap ) {
+			return $this->resume_incomplete_bootstrap($handle, $existing, $metadata, $branch);
 		}
 		$this->emit_workspace_changed('worktree_adopt_interrupted', explode('@', $handle, 2)[0], $handle, (string) $existing['path']);
 
@@ -3011,8 +3104,10 @@ trait WorkspaceWorktreeLifecycle {
 				'requested_base_head' => $base_head,
 				'task_identity'       => $this->worktree_reuse_task_identity($task),
 			),
-			'metadata'       => WorktreeContextInjector::get_metadata($handle),
-			'message'        => sprintf('Adopted interrupted worktree "%s" at %s after exact journal, branch, base, HEAD, and task verification.', $handle, $existing['path']),
+			'metadata'         => WorktreeContextInjector::get_metadata($handle),
+			'context_injected' => ! empty($resumed_context['context_injected']),
+			'context_files'    => (array) ( $resumed_context['context_files'] ?? array() ),
+			'message'          => sprintf('Adopted interrupted worktree "%s" at %s after exact journal, branch, base, HEAD, and task verification.', $handle, $existing['path']),
 		);
 	}
 

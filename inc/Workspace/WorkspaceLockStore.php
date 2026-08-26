@@ -383,20 +383,17 @@ final class WorkspaceLockStore {
 		global $wpdb;
 		$table = self::table_name();
 
-		$exists = self::with_sqlite_lock_retry(
-			'workspace_lock_table_check',
-			static fn() => $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table))
-		);
-		if ( is_wp_error($exists) ) {
-			return $exists;
-		}
-		if ( $exists === $table ) {
-			return true;
-		}
+		$ensured = self::with_sqlite_lock_retry(
+			'workspace_lock_table_ensure',
+			static function () use ( $wpdb, $table ): bool {
+				$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+				if ( $exists === $table ) {
+					return true;
+				}
 
-		include_once ABSPATH . 'wp-admin/includes/upgrade.php';
-		$charset_collate = method_exists($wpdb, 'get_charset_collate') ? $wpdb->get_charset_collate() : '';
-		$sql             = "CREATE TABLE {$table} (
+				include_once ABSPATH . 'wp-admin/includes/upgrade.php';
+				$charset_collate = method_exists($wpdb, 'get_charset_collate') ? $wpdb->get_charset_collate() : '';
+				$sql             = "CREATE TABLE {$table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			lock_key varchar(190) NOT NULL,
 			purpose varchar(100) NOT NULL,
@@ -418,15 +415,14 @@ final class WorkspaceLockStore {
 			KEY job_id (job_id)
 		) {$charset_collate};";
 
-		dbDelta($sql);
-		$exists = self::with_sqlite_lock_retry(
-			'workspace_lock_table_verify',
-			static fn() => $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table))
+				dbDelta($sql);
+				return $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) === $table;
+			}
 		);
-		if ( is_wp_error($exists) ) {
-			return $exists;
+		if ( is_wp_error($ensured) ) {
+			return $ensured;
 		}
-		if ( $exists !== $table ) {
+		if ( ! $ensured ) {
 			return new \WP_Error('workspace_lock_table_missing', sprintf('Failed to create workspace locks table: %s.', $table), array( 'status' => 500 ));
 		}
 

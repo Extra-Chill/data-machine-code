@@ -2021,10 +2021,11 @@ class WorktreeContextInjector {
 	 *
 	 * @param string $handle  Workspace handle.
 	 * @param array  $payload Payload from {@see self::build_payload()}.
+	 * @param array  $metadata Additional lifecycle metadata committed with the projection.
 	 */
-	public static function store_metadata( string $handle, array $payload ): bool|\WP_Error {
+	public static function store_metadata( string $handle, array $payload, array $metadata = array() ): bool|\WP_Error {
 		return self::store_lifecycle_metadata(
-			$handle, array(
+			$handle, array_merge($metadata, array(
 				'site_url'         => (string) ( $payload['site_url'] ?? '' ),
 				'site_name'        => (string) ( $payload['site_name'] ?? '' ),
 				'agent_slug'       => (string) ( $payload['agent_slug'] ?? '' ),
@@ -2034,7 +2035,7 @@ class WorktreeContextInjector {
 				'origin_agent'     => self::normalize_scalar_metadata_value($payload['agent_slug'] ?? null) ?? '',
 				'abspath'          => (string) ( $payload['abspath'] ?? '' ),
 				'created_at'       => (string) ( $payload['timestamp'] ?? gmdate('c') ),
-			)
+			))
 		);
 	}
 

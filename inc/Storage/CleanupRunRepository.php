@@ -77,59 +77,60 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	public function add_items( string $run_id, array $items ): int|\WP_Error {
 		global $wpdb;
 
-		$count               = 0;
-		$now                 = gmdate( 'Y-m-d H:i:s' );
-		$transaction_started = false !== $wpdb->query( 'START TRANSACTION' );
-		foreach ( $items as $item ) {
-			if ( ! is_array( $item ) ) {
-				continue;
-			}
+		$result = SqliteBusyRetry::run(
+			'cleanup_items_create',
+			function () use ( $wpdb, $run_id, $items ): int|false {
+				$count               = 0;
+				$now                 = gmdate( 'Y-m-d H:i:s' );
+				$transaction_started = false !== $wpdb->query( 'START TRANSACTION' );
+				foreach ( $items as $item ) {
+					if ( ! is_array( $item ) ) {
+						continue;
+					}
 
-			$ok = SqliteBusyRetry::run(
-				'cleanup_item_create',
-				fn() => $wpdb->insert(
-					CleanupSchema::items_table(),
-					array(
-					'run_id'          => $run_id,
-					'handle'          => (string) ( $item['handle'] ?? '' ),
-					'worktree_id'     => isset( $item['worktree_id'] ) ? (int) $item['worktree_id'] : null,
-					'item_type'       => (string) ( $item['item_type'] ?? $item['row_type'] ?? 'unknown' ),
-					'planned_action'  => (string) ( $item['planned_action'] ?? $this->planned_action_for_type( (string) ( $item['item_type'] ?? $item['row_type'] ?? '' ) ) ),
-					'status'          => (string) ( $item['status'] ?? 'pending' ),
-					'reason_code'     => (string) ( $item['reason_code'] ?? '' ),
-					'reason'          => isset( $item['reason'] ) ? (string) $item['reason'] : null,
-					'bytes_reclaimed' => max( 0, (int) ( $item['bytes_reclaimed'] ?? 0 ) ),
-					'job_id'          => isset( $item['job_id'] ) ? (int) $item['job_id'] : null,
-					'chunk_index'     => isset( $item['chunk_index'] ) ? (int) $item['chunk_index'] : null,
-					'planned_at'      => (string) ( $item['planned_at'] ?? $now ),
-					'applied_at'      => $item['applied_at'] ?? null,
-					'evidence'        => $this->encode( $item['evidence'] ?? $item ),
-					),
-					array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
-				)
-			);
-
-			if ( is_wp_error( $ok ) || false === $ok ) {
-				if ( $transaction_started ) {
+					$ok = $wpdb->insert(
+						CleanupSchema::items_table(),
+						array(
+							'run_id'          => $run_id,
+							'handle'          => (string) ( $item['handle'] ?? '' ),
+							'worktree_id'     => isset( $item['worktree_id'] ) ? (int) $item['worktree_id'] : null,
+							'item_type'       => (string) ( $item['item_type'] ?? $item['row_type'] ?? 'unknown' ),
+							'planned_action'  => (string) ( $item['planned_action'] ?? $this->planned_action_for_type( (string) ( $item['item_type'] ?? $item['row_type'] ?? '' ) ) ),
+							'status'          => (string) ( $item['status'] ?? 'pending' ),
+							'reason_code'     => (string) ( $item['reason_code'] ?? '' ),
+							'reason'          => isset( $item['reason'] ) ? (string) $item['reason'] : null,
+							'bytes_reclaimed' => max( 0, (int) ( $item['bytes_reclaimed'] ?? 0 ) ),
+							'job_id'          => isset( $item['job_id'] ) ? (int) $item['job_id'] : null,
+							'chunk_index'     => isset( $item['chunk_index'] ) ? (int) $item['chunk_index'] : null,
+							'planned_at'      => (string) ( $item['planned_at'] ?? $now ),
+							'applied_at'      => $item['applied_at'] ?? null,
+							'evidence'        => $this->encode( $item['evidence'] ?? $item ),
+						),
+						array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+					);
+					if ( false === $ok ) {
+						if ( $transaction_started ) {
+							$wpdb->query( 'ROLLBACK' );
+						}
+						return false;
+					}
+					++$count;
+				}
+				if ( $transaction_started && false === $wpdb->query( 'COMMIT' ) ) {
 					$wpdb->query( 'ROLLBACK' );
+					return false;
 				}
-				if ( is_wp_error( $ok ) ) {
-					return $ok;
-				}
-				return new \WP_Error( 'cleanup_item_insert_failed', 'Failed to create cleanup item.' );
+				return $count;
 			}
-			++$count;
+		);
+		if ( is_wp_error( $result ) ) {
+			return $result;
 		}
-		$committed = $transaction_started ? SqliteBusyRetry::run('cleanup_item_commit', static fn() => $wpdb->query( 'COMMIT' )) : true;
-		if ( is_wp_error( $committed ) || false === $committed ) {
-			$wpdb->query( 'ROLLBACK' );
-			if ( is_wp_error( $committed ) ) {
-				return $committed;
-			}
-			return new \WP_Error( 'cleanup_item_commit_failed', 'Failed to commit cleanup items.' );
+		if ( false === $result ) {
+			return new \WP_Error( 'cleanup_item_insert_failed', 'Failed to persist cleanup items.' );
 		}
 
-		return $count;
+		return (int) $result;
 	}
 
 	/**
