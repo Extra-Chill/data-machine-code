@@ -1589,6 +1589,12 @@ trait WorkspaceWorktreeLifecycle {
 		$fetch_attempts        = (int) ( $fetch['attempts'] ?? 1 );
 		$fetch_timed_out       = ! empty($fetch['timed_out']);
 		$fetch_timeout_seconds = $fetch['timeout_seconds'] ?? null;
+		$fetch_transport       = array(
+			'attempted_transports'    => array_values((array) ( $fetch['attempted_transports'] ?? array( 'configured' ) )),
+			'successful_transport'    => $fetch['successful_transport'] ?? null,
+			'transport_fallback_used' => ! empty($fetch['transport_fallback_used']),
+			'fallback_unavailable'    => $fetch['fallback_unavailable'] ?? null,
+		);
 		if ( $fetch_timed_out && $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
 			return $this->worktree_operation_timeout('freshness', $operation_timeout, $operation_started, array( 'fetch' => $fetch ));
 		}
@@ -1603,6 +1609,7 @@ trait WorkspaceWorktreeLifecycle {
 					'fetch_attempts'             => $fetch_attempts,
 					'fetch_timed_out'            => $fetch_timed_out,
 					'fetch_timeout_seconds'      => $fetch_timeout_seconds,
+					'freshness_transport'        => array_filter($fetch_transport, static fn( mixed $value ): bool => null !== $value),
 					'allow_unverified_freshness' => false,
 					'next_commands'              => array_values(array_filter(array(
 						$this->primary_refresh_command($repo),
@@ -1825,6 +1832,7 @@ trait WorkspaceWorktreeLifecycle {
 					'fetch_attempts'        => $fetch_attempts,
 					'fetch_timed_out'       => $fetch_timed_out,
 					'fetch_timeout_seconds' => $fetch_timeout_seconds,
+					'freshness_transport'   => array_filter($fetch_transport, static fn( mixed $value ): bool => null !== $value),
 					'exists_local'          => $exists_local,
 					'target_ref'            => $target_ref,
 					'operation_deadline'    => $operation_deadline,
@@ -2247,6 +2255,7 @@ trait WorkspaceWorktreeLifecycle {
 		$fetch_error           = $preflight['fetch_error'] ?? null;
 		$fetch_timed_out       = ! empty($preflight['fetch_timed_out']);
 		$fetch_timeout_seconds = $preflight['fetch_timeout_seconds'] ?? null;
+		$freshness_transport   = (array) ( $preflight['freshness_transport'] ?? array() );
 
 		// Does the branch already exist locally?
 		$exists_local   = ! empty($preflight['exists_local']);
@@ -2335,6 +2344,7 @@ trait WorkspaceWorktreeLifecycle {
 			'slug'           => $slug,
 			'created_branch' => $created_branch,
 			'message'        => sprintf('Worktree "%s" added at %s (branch %s).', $wt_handle, $wt_path, $branch),
+			'freshness_transport' => $freshness_transport,
 		);
 
 		if ( $fetch_failed ) {

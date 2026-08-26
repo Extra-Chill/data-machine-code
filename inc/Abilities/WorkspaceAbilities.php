@@ -1711,6 +1711,10 @@ class WorkspaceAbilities {
 								'type'        => 'integer',
 								'description' => 'Present only when fetch_timed_out=true. The bounded freshness-fetch budget in seconds.',
 							),
+							'freshness_transport'       => array(
+								'type'        => 'object',
+								'description' => 'Sanitized transport evidence for remote freshness verification, including attempted transport kinds and equivalent-transport fallback use.',
+							),
 							'handoff_freshness'         => array(
 								'type'        => 'object',
 								'properties'  => self::worktreeHandoffFreshnessSchemaProperties(),
