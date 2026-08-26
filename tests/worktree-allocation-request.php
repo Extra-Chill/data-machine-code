@@ -77,6 +77,23 @@ try {
 	allocation_request_assert('isolated' === $request->reuse_policy, 'Explicit reuse policy should be preserved.');
 	allocation_request_assert($progress === $request->progress_callback, 'Progress callbacks should be preserved.');
 	allocation_request_assert(array( 'target_head' => 'abc123' ) === $request->expected_freshness_identity, 'Freshness identity should be preserved.');
+
+	$apply_request = WorktreeAllocationRequest::from_input(array(
+		'repo'   => 'data-machine-code',
+		'branch' => 'refactor/1243',
+		'task'   => array(
+			'task_url' => 'https://github.com/Extra-Chill/data-machine-code/issues/1243',
+			'task_ref' => 'Extra-Chill/data-machine-code#1243',
+		),
+		'intent' => array(
+			'purpose'        => 'plan-apply',
+			'owner_run_ref'  => 'test-run',
+			'cleanup_policy' => 'remove_on_success',
+		),
+	));
+
+	allocation_request_assert('Extra-Chill/data-machine-code#1243' === $apply_request->task['task_ref'], 'Nested plan task metadata should be preserved.');
+	allocation_request_assert('plan-apply' === $apply_request->intent['purpose'], 'Nested plan intent should be preserved.');
 } finally {
 	false === $previous_task_url ? putenv('DATAMACHINE_TASK_URL') : putenv('DATAMACHINE_TASK_URL=' . $previous_task_url);
 	false === $previous_task_ref ? putenv('DATAMACHINE_TASK_REF') : putenv('DATAMACHINE_TASK_REF=' . $previous_task_ref);

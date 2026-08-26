@@ -40,19 +40,21 @@ final readonly class WorktreeAllocationRequest {
 
 	/** Build the canonical request accepted by ability and operation adapters. */
 	public static function from_input( array $input, bool $require_task_tracker_default = true ): self {
+		$task_input = is_array($input['task'] ?? null) ? $input['task'] : $input;
 		$task = array_filter(
 			array(
-				'task_url' => $input['task_url'] ?? null,
-				'task_ref' => $input['task_ref'] ?? null,
+				'task_url' => $task_input['task_url'] ?? null,
+				'task_ref' => $task_input['task_ref'] ?? null,
 			),
 			static fn( mixed $value ): bool => is_string($value) && '' !== trim($value)
 		);
 		$task = WorktreeContextInjector::resolve_task_metadata($task) ?? array();
 
-		$intent = array();
+		$intent_input = is_array($input['intent'] ?? null) ? $input['intent'] : $input;
+		$intent       = array();
 		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
-			if ( array_key_exists($key, $input) ) {
-				$intent[ $key ] = $input[ $key ];
+			if ( array_key_exists($key, $intent_input) ) {
+				$intent[ $key ] = $intent_input[ $key ];
 			}
 		}
 

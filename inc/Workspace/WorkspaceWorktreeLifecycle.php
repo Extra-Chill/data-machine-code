@@ -272,7 +272,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( '' === $expected || array() === $input ) {
 			return new \WP_Error('invalid_worktree_plan', 'A digest-addressed worktree plan with apply_intent is required.', array( 'status' => 400 ));
 		}
-		$current = $this->worktree_plan( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), ! empty($input['allow_percentage_byte_floor_exception']) );
+		$current = $this->worktree_plan_request(WorktreeAllocationRequest::from_input($input));
 		if ( is_wp_error($current) ) {
 			return $current;
 		}
@@ -284,7 +284,9 @@ trait WorkspaceWorktreeLifecycle {
 				'disposition'     => $current['disposition'] ?? null,
 			));
 		}
-		$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), false, false, null, (array) ( $plan['freshness']['identity'] ?? array() ), ! empty($input['allow_percentage_byte_floor_exception']) );
+		$result = $this->worktree_add_request(WorktreeAllocationRequest::from_input($input + array(
+			'expected_freshness_identity' => (array) ( $plan['freshness']['identity'] ?? array() ),
+		)));
 		if ( is_wp_error($result) && 'stale_worktree_freshness' === $result->get_error_code() ) {
 			$error_data = (array) $result->get_error_data();
 			return new \WP_Error(
@@ -919,7 +921,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( 'replace_isolated' === $mode && array() !== WorktreeContextInjector::missing_isolation_intent( (array) ( $input['intent'] ?? array() )) ) {
 			return new \WP_Error('legacy_handoff_isolation_intent_required', 'An isolated replacement requires purpose, owner_run_ref, and cleanup_policy=remove_on_success before the old candidate can be superseded.', array( 'status' => 400 ));
 		}
-		$current = $this->worktree_plan( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), ! empty($input['allow_percentage_byte_floor_exception']) );
+		$current = $this->worktree_plan_request(WorktreeAllocationRequest::from_input($input));
 		if ( is_wp_error($current) || ! hash_equals($expected, (string) ( $current['digest'] ?? '' )) || 'legacy_handoff_required' !== ( $current['disposition'] ?? null ) ) {
 			return new \WP_Error('stale_legacy_handoff_plan', 'The legacy handoff plan no longer has complete safety proof.', array(
 				'status'  => 409,
@@ -971,7 +973,9 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($stored) ) {
 				return $stored;
 			}
-			$result = $this->worktree_add( (string) $input['repo'], (string) $input['branch'], $input['from'] ?? null, ! empty($input['inject_context']), ! empty($input['bootstrap']), ! empty($input['allow_stale']), ! empty($input['rebase_base']), ! empty($input['force']), (array) ( $input['task'] ?? array() ), ! empty($input['allow_unverified_freshness']), ! empty($input['require_task_tracker']), (array) ( $input['intent'] ?? array() ), 'isolated', false, false, null, array(), ! empty($input['allow_percentage_byte_floor_exception']) );
+			$result = $this->worktree_add_request(WorktreeAllocationRequest::from_input(array_merge($input, array(
+				'reuse_policy' => 'isolated',
+			))));
 			if ( is_wp_error($result) ) {
 				return $result;
 			}
