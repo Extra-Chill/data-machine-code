@@ -2,9 +2,7 @@
 
 declare(strict_types=1);
 
-if ( ! defined('ABSPATH') ) {
-	define('ABSPATH', __DIR__ . '/fixtures/');
-}
+require_once __DIR__ . '/support/bootstrap.php';
 
 require_once dirname(__DIR__) . '/inc/Workspace/TaskUrl.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';

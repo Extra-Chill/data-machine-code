@@ -1,0 +1,40 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$root      = dirname(__DIR__);
+$requested = array_slice($argv, 1);
+$tests     = array();
+
+if ( array() === $requested ) {
+	$tests = glob($root . '/tests/*.php') ?: array();
+} else {
+	foreach ( $requested as $test ) {
+		$path = str_starts_with($test, '/') ? $test : $root . '/' . ltrim($test, '/');
+		if ( is_file($path) ) {
+			$tests[] = $path;
+			continue;
+		}
+		fwrite(STDERR, sprintf("Unknown test: %s\n", $test));
+		exit(2);
+	}
+}
+
+sort($tests, SORT_STRING);
+$failures = array();
+foreach ( $tests as $test ) {
+	$relative = ltrim(str_replace($root, '', $test), '/');
+	fwrite(STDOUT, sprintf("\n[%s]\n", $relative));
+	passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($test), $exit_code);
+	if ( 0 !== $exit_code ) {
+		$failures[] = $relative;
+	}
+}
+
+if ( array() !== $failures ) {
+	fwrite(STDERR, sprintf("\n%d/%d tests failed:\n%s\n", count($failures), count($tests), implode("\n", $failures)));
+	exit(1);
+}
+
+fwrite(STDOUT, sprintf("\n%d tests passed.\n", count($tests)));

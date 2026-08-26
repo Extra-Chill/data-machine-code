@@ -18,9 +18,7 @@ namespace DataMachine\Engine\AI\Tools {
 }
 
 namespace {
-	if ( ! defined('ABSPATH') ) {
-		define('ABSPATH', __DIR__ . '/fixtures/');
-	}
+	require_once __DIR__ . '/support/bootstrap.php';
 
 	$GLOBALS['dmc_projected_tools'] = array();
 	$GLOBALS['dmc_bespoke_tools']   = array();
