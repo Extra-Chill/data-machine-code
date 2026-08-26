@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.3] - 2026-08-26
+
+### Changed
+- Make workspace isolation and finalization recoverable
+
 ## [0.72.2] - 2026-08-26
 
 ### Changed
