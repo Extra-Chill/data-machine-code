@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.0] - 2026-08-26
+
+### Added
+- resolve tasks without WordPress
+
 ## [0.71.3] - 2026-08-26
 
 ### Fixed
