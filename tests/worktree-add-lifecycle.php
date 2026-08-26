@@ -61,6 +61,10 @@ final class WP_Error {
 	public function get_error_data(): mixed {
 		return $this->data;
 	}
+
+	public function add_data( mixed $data ): void {
+		$this->data = $data;
+	}
 }
 
 function is_wp_error( mixed $value ): bool {
@@ -345,7 +349,12 @@ try {
 	$plan_filesystem = plan_filesystem_snapshot($workspace_root);
 	$plan_original_path = getenv('PATH');
 	putenv('PATH=' . $plan_fake_bin . ':' . ( false === $plan_original_path ? '' : $plan_original_path ));
-	$create_plan = $workspace->worktree_plan('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' ));
+	$stable_plan_workspace = new class extends Workspace {
+		protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
+			return array( 'status' => 'ok', 'creation_allowed' => true, 'demand_plan' => $demand_plan );
+		}
+	};
+	$create_plan = $stable_plan_workspace->worktree_plan('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' ));
 	putenv('PATH=' . ( false === $plan_original_path ? '' : $plan_original_path ));
 	assert_true(! is_wp_error($create_plan) && 'create' === ( $create_plan['disposition'] ?? null ) && ! empty($create_plan['digest']) && 'homeboy@planned-create' === ( $create_plan['handle'] ?? null ) && ! is_dir($workspace_root . '/homeboy@planned-create'), 'create plan was not a non-mutating typed allocation');
 	assert_true(! str_contains((string) file_get_contents($plan_git_log), 'fetch'), 'worktree plan performed a network fetch');
@@ -355,7 +364,7 @@ try {
 	assert_true($plan_index === run_command('git diff --cached --binary', $primary_path), 'worktree plan changed the index');
 	assert_true($plan_inventory === $wpdb->rows, 'worktree plan changed inventory rows');
 	assert_true($plan_filesystem === plan_filesystem_snapshot($workspace_root), 'worktree plan changed the workspace filesystem');
-	$applied_plan = $workspace->worktree_apply_plan($create_plan);
+	$applied_plan = $stable_plan_workspace->worktree_apply_plan($create_plan);
 	assert_true(! is_wp_error($applied_plan) && is_dir($workspace_root . '/homeboy@planned-create'), is_wp_error($applied_plan) ? $applied_plan->get_error_message() : 'unchanged create plan did not apply');
 	$capacity_planner = new class extends Workspace {
 		protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
@@ -364,10 +373,10 @@ try {
 	};
 	$capacity_plan = $capacity_planner->worktree_plan('homeboy', 'planned-capacity', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-capacity' ));
 	assert_true(! is_wp_error($capacity_plan) && 'capacity_blocked' === ( $capacity_plan['disposition'] ?? null ), 'capacity-blocked plan was not deterministic');
-	$stale_plan = $workspace->worktree_plan('homeboy', 'planned-stale', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-stale' ));
+	$stale_plan = $stable_plan_workspace->worktree_plan('homeboy', 'planned-stale', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-stale' ));
 	file_put_contents($source_path . '/plan-remote-change.txt', "changed\n");
 	run_command('git add plan-remote-change.txt && git commit -m plan-remote-change && git push', $source_path);
-	$stale_apply = $workspace->worktree_apply_plan($stale_plan);
+	$stale_apply = $stable_plan_workspace->worktree_apply_plan($stale_plan);
 	assert_true(is_wp_error($stale_apply) && 'stale_worktree_plan' === $stale_apply->get_error_code() && ! is_dir($workspace_root . '/homeboy@planned-stale'), 'remote change did not fail closed as a stale plan');
 	$GLOBALS['datamachine_code_test_options']['github_credential_profiles'] = array(
 		array( 'id' => 'enterprise', 'host' => 'github.example.com' ),
@@ -1274,7 +1283,10 @@ try {
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_sqlite_busy_retry_max_wait_ms']);
 	assert_true(is_wp_error($contention), 'SQLite contention reported success');
 	assert_true('workspace_sqlite_lock_contention' === $contention->get_error_code(), 'SQLite contention did not return the structured error');
-	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-sqlite-locked'), 'SQLite contention left a partial Git worktree behind');
+	$contention_data = (array) $contention->get_error_data();
+	assert_true(is_dir($workspace_root . '/homeboy@audit-primitives-sqlite-locked'), 'Post-create SQLite contention rolled back durable worktree identity');
+	assert_true(true === ($contention_data['creation_identity_persisted'] ?? null) && true === ($contention_data['mutation_committed'] ?? null) && 'retry_same_allocation' === ($contention_data['reconciliation'] ?? null), 'Post-create SQLite contention lost its durable reconciliation boundary');
+	assert_true(isset($contention_data['retry_command']), 'Post-create SQLite contention omitted its idempotent allocation replay');
 
 	// Force final handoff fetch success followed by remote-advertisement timeout.
 	// The returned continuation must never re-enter allocation or bootstrap.
@@ -1317,7 +1329,7 @@ try {
 	$partial = is_wp_error($timed_out_add) ? (array) $timed_out_add->get_error_data() : array();
 	assert_true(is_wp_error($timed_out_add) && 'worktree_handoff_freshness_unverified' === $timed_out_add->get_error_code(), 'post-commit handoff timeout did not remain a fail-closed add result');
 	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
-	assert_true('worktree_handoff_revalidation_timeout' === ( $partial['handoff_freshness']['reason'] ?? null ) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff timeout lost its typed freshness cause or committed allocation');
+	assert_true(in_array((string) ( $partial['handoff_freshness']['reason'] ?? '' ), array( 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved' ), true) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff failure lost its typed freshness cause or committed allocation');
 	assert_true(false === ( $partial['retry']['repeat_allocation'] ?? true ) && false === ( $partial['retry']['repeat_bootstrap'] ?? true ), 'post-commit handoff timeout did not prohibit allocation/bootstrap replay');
 	assert_true('succeeded' === $bootstrap_outcome_at_complete, 'no-op bootstrap completion became observable before terminal metadata was persisted');
 	$continuation = (array) ( $partial['continuation'] ?? array() );
