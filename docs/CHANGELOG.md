@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.71.3] - 2026-08-26
+
+### Fixed
+- verify fallback transport end to end
+
 ## [0.71.2] - 2026-08-26
 
 ### Fixed
