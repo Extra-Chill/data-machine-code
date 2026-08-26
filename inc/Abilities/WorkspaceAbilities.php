@@ -28,6 +28,7 @@ use DataMachineCode\Workspace\WorkspaceReader;
 use DataMachineCode\Workspace\WorkspaceWriter;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorktreeDiskBudget;
+use DataMachineCode\Workspace\WorktreeAllocationRequest;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\RuntimeCapabilities;
 use DataMachineCode\Runtime\RuntimeSourceSkewDiagnostic;
@@ -4603,70 +4604,20 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
-		// Default inject_context=true; only false when explicitly provided.
-		$inject_context = array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true;
-		// Default bootstrap=true; only false when explicitly provided.
-		$bootstrap = array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true;
-		// Default allow_stale=false (gate enforced); only true when explicitly opted in.
-		$allow_stale = array_key_exists( 'allow_stale', $input ) ? (bool) $input['allow_stale'] : false;
-		// Default allow_unverified_freshness=false (fetch-failure gate enforced).
-		$allow_unverified_freshness = array_key_exists( 'allow_unverified_freshness', $input ) ? (bool) $input['allow_unverified_freshness'] : false;
-		// Default rebase_base=false; only true when explicitly requested.
-		$rebase_base                = array_key_exists( 'rebase_base', $input ) ? (bool) $input['rebase_base'] : false;
-		$force                      = ! empty( $input['force'] );
-		$remediate_capacity         = ! empty( $input['remediate_capacity'] );
-		$remediate_capacity_dry_run = ! empty( $input['remediate_capacity_dry_run'] );
-		$allow_percentage_byte_floor_exception = ! empty( $input['allow_percentage_byte_floor_exception'] );
-		$progress_callback          = isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null;
-		$require_task_tracker       = array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true;
-		$task                       = array();
-		$intent                     = array();
-		$reuse_policy               = isset( $input['reuse_policy'] ) ? (string) $input['reuse_policy'] : 'reuse_compatible';
-		if ( isset( $input['task_url'] ) && '' !== trim( (string) $input['task_url'] ) ) {
-			$task['task_url'] = (string) $input['task_url'];
-		}
-		if ( isset( $input['task_ref'] ) && '' !== trim( (string) $input['task_ref'] ) ) {
-			$task['task_ref'] = (string) $input['task_ref'];
-		}
-		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
-			if ( array_key_exists( $key, $input ) ) {
-				$intent[ $key ] = $input[ $key ];
-			}
-		}
-
+		$request   = WorktreeAllocationRequest::from_input($input);
 		$workspace = new Workspace();
-		$task      = WorktreeContextInjector::resolve_task_metadata( $task ) ?? array();
-		if ( $require_task_tracker && empty( $task ) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
+		if ( $request->require_task_tracker && empty($request->task) && RemoteWorkspaceBackend::should_handle() && ! self::hasLocalPrimaryCheckout($workspace, $request->repo) ) {
 			return new \WP_Error( 'worktree_task_tracker_required', 'Refusing to create a managed worktree without a valid task URL or task reference.', array( 'status' => 400 ) );
 		}
-		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout( $workspace, (string) ( $input['repo'] ?? '' ) ) ) {
+		if ( RemoteWorkspaceBackend::should_handle() && self::hasLocalPrimaryCheckout($workspace, $request->repo) ) {
 			return self::worktree_add_response(
-				$workspace->worktree_add(
-					$input['repo'] ?? '',
-					$input['branch'] ?? '',
-					$input['from'] ?? null,
-					$inject_context,
-					$bootstrap,
-					$allow_stale,
-					$rebase_base,
-					$force,
-					$task,
-					$allow_unverified_freshness,
-					$require_task_tracker,
-					$intent,
-					$reuse_policy,
-					$remediate_capacity,
-					$remediate_capacity_dry_run,
-					$progress_callback,
-					array(),
-					$allow_percentage_byte_floor_exception
-				),
+				$workspace->worktree_add_request($request),
 				$input
 			);
 		}
 
 		if ( RemoteWorkspaceBackend::should_handle() ) {
-			if ( $allow_percentage_byte_floor_exception ) {
+			if ( $request->allow_percentage_byte_floor_exception ) {
 				return new \WP_Error(
 					'remote_worktree_percentage_byte_floor_exception_unsupported',
 					'Percentage-byte-floor admission requires a local workspace with measured capacity semantics.',
@@ -4679,51 +4630,32 @@ class WorkspaceAbilities {
 					)
 				);
 			}
-			if ( $remediate_capacity || $remediate_capacity_dry_run ) {
+			if ( $request->remediate_capacity || $request->remediate_capacity_dry_run ) {
 				return new \WP_Error(
 					'remote_worktree_capacity_remediation_unsupported',
 					'Capacity remediation requires a local workspace because remote workspace allocation has no filesystem capacity or cleanup lifecycle.',
 					array(
 						'status'                     => 400,
-						'remediate_capacity'         => $remediate_capacity,
-						'remediate_capacity_dry_run' => $remediate_capacity_dry_run,
+						'remediate_capacity'         => $request->remediate_capacity,
+						'remediate_capacity_dry_run' => $request->remediate_capacity_dry_run,
 					)
 				);
 			}
 			$result = ( new RemoteWorkspaceBackend() )->worktree_add(
-				$input['repo'] ?? '',
-				$input['branch'] ?? '',
-				$input['from'] ?? null,
-				$task,
-				$intent,
-				$reuse_policy,
-				$allow_unverified_freshness
+				$request->repo,
+				$request->branch,
+				$request->from,
+				$request->task,
+				$request->intent,
+				$request->reuse_policy,
+				$request->allow_unverified_freshness
 			);
 			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				return self::worktree_add_response( self::decorate_remote_workspace_result( 'worktree_add', $result ), $input );
 			}
 		}
 
-		$result = $workspace->worktree_add(
-			$input['repo'] ?? '',
-			$input['branch'] ?? '',
-			$input['from'] ?? null,
-			$inject_context,
-			$bootstrap,
-			$allow_stale,
-			$rebase_base,
-			$force,
-			$task,
-			$allow_unverified_freshness,
-			$require_task_tracker,
-			$intent,
-			$reuse_policy,
-			$remediate_capacity,
-			$remediate_capacity_dry_run,
-			$progress_callback,
-			array(),
-			$allow_percentage_byte_floor_exception
-		);
+		$result = $workspace->worktree_add_request($request);
 		return self::worktree_add_response( $result, $input );
 	}
 
@@ -4766,8 +4698,7 @@ class WorkspaceAbilities {
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */
 	public static function worktreePlan( array $input ): array|\WP_Error {
-		$request = self::worktreeIntentRequest( $input );
-		return ( new Workspace() )->worktree_plan( ...$request );
+		return ( new Workspace() )->worktree_plan_request(WorktreeAllocationRequest::from_input($input));
 	}
 
 	/** Apply a previously returned local worktree plan. */
@@ -4785,7 +4716,7 @@ class WorkspaceAbilities {
 	}
 
 	public static function worktreeAttachTracker( array $input ): array|\WP_Error {
-		return ( new Workspace() )->worktree_attach_tracker((string) ( $input['handle'] ?? '' ), array_filter(array(
+		return ( new Workspace() )->worktree_attach_tracker( (string) ( $input['handle'] ?? '' ), array_filter(array(
 			'task_url' => $input['task_url'] ?? null,
 			'task_ref' => $input['task_ref'] ?? null,
 		), static fn( mixed $value ): bool => is_string($value) && '' !== trim($value)), ! empty($input['dry_run']));
@@ -4804,41 +4735,23 @@ class WorkspaceAbilities {
 		return ( new Workspace() )->worktree_apply_legacy_handoff( (array) ( $input['plan'] ?? array() ), (string) ( $input['mode'] ?? '' ) );
 	}
 
-	/** @return array<int,mixed> */
-	private static function worktreeIntentRequest( array $input ): array {
-		$task   = array_filter(
-			array(
-				'task_url' => $input['task_url'] ?? null,
-				'task_ref' => $input['task_ref'] ?? null,
-			),
-			static fn( $value ): bool => is_string( $value ) && '' !== trim( $value )
-		);
-		$intent = array();
-		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
-			if ( array_key_exists( $key, $input ) ) {
-				$intent[ $key ] = $input[ $key ];
-			}
-		}
-		return array( (string) ( $input['repo'] ?? '' ), (string) ( $input['branch'] ?? '' ), $input['from'] ?? null, array_key_exists( 'inject_context', $input ) ? (bool) $input['inject_context'] : true, array_key_exists( 'bootstrap', $input ) ? (bool) $input['bootstrap'] : true, ! empty( $input['allow_stale'] ), ! empty( $input['rebase_base'] ), ! empty( $input['force'] ), $task, ! empty( $input['allow_unverified_freshness'] ), array_key_exists( 'require_task_tracker', $input ) ? (bool) $input['require_task_tracker'] : true, $intent, (string) ( $input['reuse_policy'] ?? 'reuse_compatible' ), ! empty( $input['allow_percentage_byte_floor_exception'] ) );
-	}
-
 	/** @return array<string,array<string,mixed>> */
 	private static function worktreeIntentSchemaProperties(): array {
 		$policy = WorktreeContextInjector::worktree_add_policy_schema_properties();
 		return array(
-			'repo'                       => array( 'type' => 'string' ),
-			'branch'                     => array( 'type' => 'string' ),
-			'from'                       => array( 'type' => 'string' ),
-			'inject_context'             => array( 'type' => 'boolean' ),
-			'bootstrap'                  => array( 'type' => 'boolean' ),
-			'allow_stale'                => array( 'type' => 'boolean' ),
-			'allow_unverified_freshness' => array( 'type' => 'boolean' ),
-			'rebase_base'                => array( 'type' => 'boolean' ),
-			'force'                      => array( 'type' => 'boolean' ),
+			'repo'                                  => array( 'type' => 'string' ),
+			'branch'                                => array( 'type' => 'string' ),
+			'from'                                  => array( 'type' => 'string' ),
+			'inject_context'                        => array( 'type' => 'boolean' ),
+			'bootstrap'                             => array( 'type' => 'boolean' ),
+			'allow_stale'                           => array( 'type' => 'boolean' ),
+			'allow_unverified_freshness'            => array( 'type' => 'boolean' ),
+			'rebase_base'                           => array( 'type' => 'boolean' ),
+			'force'                                 => array( 'type' => 'boolean' ),
 			'allow_percentage_byte_floor_exception' => array( 'type' => 'boolean' ),
-			'task_url'                   => array( 'type' => 'string' ),
-			'task_ref'                   => array( 'type' => 'string' ),
-			'require_task_tracker'       => array( 'type' => 'boolean' ),
+			'task_url'                              => array( 'type' => 'string' ),
+			'task_ref'                              => array( 'type' => 'string' ),
+			'require_task_tracker'                  => array( 'type' => 'boolean' ),
 			...$policy,
 		);
 	}

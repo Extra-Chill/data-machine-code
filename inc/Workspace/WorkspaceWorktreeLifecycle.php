@@ -39,7 +39,43 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array<string,mixed>|\WP_Error
 	 */
 	public function worktree_plan( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $allow_percentage_byte_floor_exception = false ): array|\WP_Error {
-		$visible = $this->require_workspace_visible();
+		return $this->worktree_plan_request(
+			new WorktreeAllocationRequest(
+				repo: $repo,
+				branch: $branch,
+				from: $from,
+				inject_context: $inject_context,
+				bootstrap: $bootstrap,
+				allow_stale: $allow_stale,
+				rebase_base: $rebase_base,
+				force: $force,
+				task: $task,
+				allow_unverified_freshness: $allow_unverified_freshness,
+				require_task_tracker: $require_task_tracker,
+				intent: $intent,
+				reuse_policy: $reuse_policy,
+				allow_percentage_byte_floor_exception: $allow_percentage_byte_floor_exception
+			)
+		);
+	}
+
+	/** Execute worktree planning from one explicit allocation contract. */
+	public function worktree_plan_request( WorktreeAllocationRequest $request ): array|\WP_Error {
+		$repo                                  = $request->repo;
+		$branch                                = $request->branch;
+		$from                                  = $request->from;
+		$inject_context                        = $request->inject_context;
+		$bootstrap                             = $request->bootstrap;
+		$allow_stale                           = $request->allow_stale;
+		$rebase_base                           = $request->rebase_base;
+		$force                                 = $request->force;
+		$task                                  = $request->task;
+		$allow_unverified_freshness            = $request->allow_unverified_freshness;
+		$require_task_tracker                  = $request->require_task_tracker;
+		$intent                                = $request->intent;
+		$reuse_policy                          = $request->reuse_policy;
+		$allow_percentage_byte_floor_exception = $request->allow_percentage_byte_floor_exception;
+		$visible                               = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
 		}
@@ -1114,7 +1150,51 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
 	 */
 	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null, array $expected_freshness_identity = array(), bool $allow_percentage_byte_floor_exception = false ): array|\WP_Error {
-		$visible = $this->require_workspace_visible();
+		return $this->worktree_add_request(
+			new WorktreeAllocationRequest(
+				repo: $repo,
+				branch: $branch,
+				from: $from,
+				inject_context: $inject_context,
+				bootstrap: $bootstrap,
+				allow_stale: $allow_stale,
+				rebase_base: $rebase_base,
+				force: $force,
+				task: $task,
+				allow_unverified_freshness: $allow_unverified_freshness,
+				require_task_tracker: $require_task_tracker,
+				intent: $intent,
+				reuse_policy: $reuse_policy,
+				remediate_capacity: $remediate_capacity,
+				remediate_capacity_dry_run: $remediate_capacity_dry_run,
+				progress_callback: $progress_callback,
+				expected_freshness_identity: $expected_freshness_identity,
+				allow_percentage_byte_floor_exception: $allow_percentage_byte_floor_exception
+			)
+		);
+	}
+
+	/** Execute worktree allocation from one explicit allocation contract. */
+	public function worktree_add_request( WorktreeAllocationRequest $request ): array|\WP_Error {
+		$repo                                  = $request->repo;
+		$branch                                = $request->branch;
+		$from                                  = $request->from;
+		$inject_context                        = $request->inject_context;
+		$bootstrap                             = $request->bootstrap;
+		$allow_stale                           = $request->allow_stale;
+		$rebase_base                           = $request->rebase_base;
+		$force                                 = $request->force;
+		$task                                  = $request->task;
+		$allow_unverified_freshness            = $request->allow_unverified_freshness;
+		$require_task_tracker                  = $request->require_task_tracker;
+		$intent                                = $request->intent;
+		$reuse_policy                          = $request->reuse_policy;
+		$remediate_capacity                    = $request->remediate_capacity;
+		$remediate_capacity_dry_run            = $request->remediate_capacity_dry_run;
+		$progress_callback                     = is_callable($request->progress_callback) ? $request->progress_callback : null;
+		$expected_freshness_identity           = $request->expected_freshness_identity;
+		$allow_percentage_byte_floor_exception = $request->allow_percentage_byte_floor_exception;
+		$visible                               = $this->require_workspace_visible();
 		if ( null !== $visible ) {
 			return $visible;
 		}
