@@ -1563,6 +1563,12 @@ trait WorkspaceWorktreeLifecycle {
 			}
 			$candidate_actions = WorktreeCandidateActions::project($reuse_candidates, $repo, $branch, $from, $task, $intent);
 		}
+		if ( null !== $from && '' !== trim($from) && ! GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch) && ! GitRunner::ref_exists($primary_path, trim($from)) ) {
+			$invalid_demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, trim($from), $bootstrap);
+			if ( $invalid_demand_plan instanceof \WP_Error && 'worktree_target_ref_invalid' === $invalid_demand_plan->get_error_code() ) {
+				return $this->worktree_missing_explicit_base_error($invalid_demand_plan, $primary_path, $repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent);
+			}
+		}
 		if ( array() !== $reuse_candidates && 'isolated' !== $reuse_policy ) {
 			return $this->worktree_reuse_refused(
 				$wt_handle,
@@ -1592,7 +1598,6 @@ trait WorkspaceWorktreeLifecycle {
 				);
 			}
 		}
-
 		$fetch                 = (array) ( $preflight['fetch'] ?? WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline) );
 		$fetch_failed          = ! $fetch['ok'];
 		$fetch_error           = $fetch['error'] ?? null;
@@ -3808,7 +3813,12 @@ trait WorkspaceWorktreeLifecycle {
 			$this->worktree_finalize_phase_complete('metadata_persistence', $metadata_started, $timings, $progress_callback, $budget, 'budget_exhausted');
 			return $this->worktree_finalize_budget_error('metadata_persistence', $parsed['dir_name'], $wt_path, false, $budget);
 		}
-		$existing_metadata = WorktreeContextInjector::get_metadata($parsed['dir_name'], $retry_options) ?? array();
+		$existing_metadata = WorktreeContextInjector::get_lifecycle_metadata($parsed['dir_name'], $retry_options);
+		if ( is_wp_error($existing_metadata) ) {
+			$this->worktree_finalize_phase_complete('metadata_persistence', $metadata_started, $timings, $progress_callback, $budget, 'failed');
+			return $this->worktree_finalize_phase_error('metadata_persistence', $parsed['dir_name'], $wt_path, $existing_metadata);
+		}
+		$existing_metadata = is_array($existing_metadata) ? $existing_metadata : array();
 		if ( $budget->expired() ) {
 			$this->worktree_finalize_phase_complete('metadata_persistence', $metadata_started, $timings, $progress_callback, $budget, 'budget_exhausted');
 			return $this->worktree_finalize_budget_error('metadata_persistence', $parsed['dir_name'], $wt_path, false, $budget);
