@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 if ( 'worker' === ( $argv[1] ?? '' ) ) {
+	$worker_mode = $argv[2] ?? '';
 	define('ABSPATH', __DIR__ . '/fixtures/');
 	define('WPINC', 'wp-includes');
 	define('WP_CLI', true);
@@ -12,12 +13,24 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 	$GLOBALS['dmc_ability_did']        = array();
 	$GLOBALS['dmc_ability_registry']   = array();
 	$GLOBALS['dmc_ability_categories'] = array();
+	$GLOBALS['dmc_ability_filters']    = array();
 	$GLOBALS['argv'] = array( 'wp', 'datamachine-code', 'workspace', 'worktree', 'add', 'fixture', 'fix/1085' );
 
 	function add_action( string $hook, callable|string|array $callback, int $priority = 10 ): void {
 		$GLOBALS['dmc_ability_actions'][ $hook ][] = array( 'callback' => $callback, 'priority' => $priority );
 	}
-	function add_filter( string $hook, callable|string|array $callback, int $priority = 10 ): void {}
+	function add_filter( string $hook, callable|string|array $callback, int $priority = 10, int $accepted_args = 1 ): void {
+		$GLOBALS['dmc_ability_filters'][ $hook ][] = array( 'callback' => $callback, 'priority' => $priority, 'accepted_args' => $accepted_args );
+	}
+	function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+		$callbacks = $GLOBALS['dmc_ability_filters'][ $hook ] ?? array();
+		usort($callbacks, static fn ( array $left, array $right ): int => $left['priority'] <=> $right['priority']);
+		foreach ( $callbacks as $callback ) {
+			$call_args = array_slice(array_merge(array( $value ), $args), 0, $callback['accepted_args']);
+			$value = call_user_func_array($callback['callback'], $call_args);
+		}
+		return $value;
+	}
 	function doing_action( string $hook ): bool { return ! empty($GLOBALS['dmc_ability_doing'][ $hook ]); }
 	function did_action( string $hook ): int { return (int) ( $GLOBALS['dmc_ability_did'][ $hook ] ?? 0 ); }
 	function dmc_ability_do_action( string $hook ): void {
@@ -55,13 +68,26 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 		return $GLOBALS['dmc_ability_registry'][ $slug ] ?? null;
 	}
 
-	if ( 'closed' === ( $argv[2] ?? '' ) ) {
+	if ( 'closed' === $worker_mode ) {
 		dmc_ability_do_action('wp_abilities_api_categories_init');
 		dmc_ability_do_action('wp_abilities_api_init');
 	}
+	if ( 'override' === $worker_mode ) {
+		add_filter(
+			'datamachine_code_ability_registration_args',
+			static function ( array $args, string $slug ): array {
+				if ( str_starts_with($slug, 'datamachine-code/workspace-worktree-') ) {
+					$args['execute_callback'] = 'dmc_fixture_worktree_backend';
+				}
+				return $args;
+			},
+			10,
+			2
+		);
+	}
 
 	require_once dirname(__DIR__) . '/data-machine-code.php';
-	if ( 'closed' === ( $argv[2] ?? '' ) ) {
+	if ( 'closed' === $worker_mode ) {
 		$diagnostic = \DataMachineCode\Abilities\WorkspaceAbilities::unavailable_diagnostic('datamachine-code/workspace-list');
 		if ( 'closed' !== ( $diagnostic['registration_phase'] ?? null ) || 'scheduled' !== ( $diagnostic['workspace_registration_state'] ?? null ) || ! empty($diagnostic['registered_siblings']) ) {
 			throw new RuntimeException('Unavailable-ability diagnostic did not distinguish a closed registration lifecycle.');
@@ -130,7 +156,22 @@ if ( 'worker' === ( $argv[1] ?? '' ) ) {
 	if ( 'datamachine_code_ability_unavailable' !== ( $diagnostic['code'] ?? null ) || 1 !== ( $diagnostic['registration_generation'] ?? null ) || ! in_array('datamachine-code/workspace-worktree-add', $diagnostic['registered_siblings'] ?? array(), true) ) {
 		throw new RuntimeException('Unavailable-ability diagnostic omitted lifecycle or sibling information.');
 	}
-	echo json_encode(array( 'abilities' => array_keys($GLOBALS['dmc_ability_registry']), 'diagnostic' => $diagnostic ), JSON_THROW_ON_ERROR) . "\n";
+	$overridden = 0;
+	if ( 'override' === $worker_mode ) {
+		foreach ( $GLOBALS['dmc_ability_registry'] as $slug => $ability ) {
+			if ( ! str_starts_with($slug, 'datamachine-code/workspace-worktree-') ) {
+				continue;
+			}
+			++$overridden;
+			if ( 'dmc_fixture_worktree_backend' !== ( $ability['execute_callback'] ?? null ) ) {
+				throw new RuntimeException(sprintf('Worktree ability %s did not use the configured backend.', $slug));
+			}
+		}
+		if ( array( \DataMachineCode\Abilities\WorkspaceAbilities::class, 'listRepos' ) !== ( $GLOBALS['dmc_ability_registry']['datamachine-code/workspace-list']['execute_callback'] ?? null ) ) {
+			throw new RuntimeException('The worktree backend override changed a non-worktree ability.');
+		}
+	}
+	echo json_encode(array( 'abilities' => array_keys($GLOBALS['dmc_ability_registry']), 'diagnostic' => $diagnostic, 'overridden' => $overridden ), JSON_THROW_ON_ERROR) . "\n";
 	exit(0);
 }
 
@@ -165,6 +206,15 @@ $closed_status = proc_close($closed);
 workspace_ability_integration_assert(0 === $closed_status, sprintf('Closed-lifecycle diagnostic worker failed: %s', $closed_error));
 $closed_result = json_decode($closed_output, true, 512, JSON_THROW_ON_ERROR);
 workspace_ability_integration_assert('closed' === ( $closed_result['diagnostic']['registration_phase'] ?? null ), 'Closed-lifecycle diagnostic did not report its registration phase.');
+
+$override = proc_open(array( PHP_BINARY, __FILE__, 'worker', 'override' ), array( 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $override_pipes);
+workspace_ability_integration_assert(is_resource($override), 'Could not start backend-override registration worker.');
+$override_output = stream_get_contents($override_pipes[1]);
+$override_error  = stream_get_contents($override_pipes[2]);
+$override_status = proc_close($override);
+workspace_ability_integration_assert(0 === $override_status, sprintf('Backend-override registration worker failed: %s', $override_error));
+$override_result = json_decode($override_output, true, 512, JSON_THROW_ON_ERROR);
+workspace_ability_integration_assert(($override_result['overridden'] ?? 0) > 0, 'Backend override did not replace the worktree ability family.');
 
 $baseline = $results[0]['abilities'];
 foreach ( $results as $result ) {
