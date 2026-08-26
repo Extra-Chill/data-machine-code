@@ -2007,6 +2007,10 @@ class WorkspaceAbilities {
 								'type'        => 'string',
 								'description' => 'Optional GitHub PR URL or number.',
 							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'One wall-clock budget across lock wait, dirty probe, persistence, inventory upsert, and readback. Defaults to 10s.',
+							),
 						),
 						'required'   => array( 'handle', 'state' ),
 					),
@@ -2019,6 +2023,8 @@ class WorkspaceAbilities {
 							'lifecycle_state' => array( 'type' => 'string' ),
 							'metadata'        => array( 'type' => 'object' ),
 							'message'         => array( 'type' => 'string' ),
+							'phase_timings'     => array( 'type' => 'object' ),
+							'wall_clock_budget' => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreeFinalize' ),
@@ -5077,7 +5083,9 @@ class WorkspaceAbilities {
 			$input['handle'] ?? '',
 			$input['state'] ?? '',
 			isset( $input['pr'] ) ? (string) $input['pr'] : null,
-			isset( $input['owner_terminal_outcome'] ) ? (string) $input['owner_terminal_outcome'] : null
+			isset( $input['owner_terminal_outcome'] ) ? (string) $input['owner_terminal_outcome'] : null,
+			$input['until_budget'] ?? null,
+			isset( $input['progress_callback'] ) && is_callable( $input['progress_callback'] ) ? $input['progress_callback'] : null
 		);
 	}
 

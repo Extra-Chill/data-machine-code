@@ -1826,18 +1826,27 @@ class WorktreeContextInjector {
 	 * @param array  $metadata Metadata fields.
 	 */
 	public static function store_lifecycle_metadata( string $handle, array $metadata ): bool|\WP_Error {
+		$stored = self::store_lifecycle_metadata_record($handle, $metadata);
+		if ( is_wp_error($stored) ) {
+			return $stored;
+		}
+		$result = self::upsert_lifecycle_metadata_inventory($handle, $stored);
+		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
+	}
+
+	/** Persist the legacy metadata record without conflating its inventory projection. */
+	public static function store_lifecycle_metadata_record( string $handle, array $metadata, array $retry_options = array(), ?array $existing_metadata = null ): array|\WP_Error {
 		if ( ! function_exists('get_option') || ! function_exists('update_option') ) {
-			$existing = self::get_inventory_metadata($handle) ?? array();
-			$stored = array_merge($existing, $metadata);
-			$result = self::upsert_inventory_metadata($handle, $stored);
-			return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored);
+			$existing = $existing_metadata ?? self::get_inventory_metadata($handle, $retry_options) ?? array();
+			return array_merge($existing, $metadata);
 		}
 
-		$fresh_metadata  = self::get_metadata_fresh($handle) ?? array();
+		$fresh_metadata  = $existing_metadata ?? self::get_metadata_fresh($handle, $retry_options) ?? array();
 		$stored_metadata = array();
 		$updated         = SqliteBusyRetry::run(
 			'worktree_lifecycle_metadata_option',
 			static function () use ( $handle, $metadata, $fresh_metadata, &$stored_metadata ): bool {
+				global $wpdb;
 				$all = get_option( self::METADATA_OPTION, array() );
 				if ( ! is_array( $all ) ) {
 					$all = array();
@@ -1850,16 +1859,42 @@ class WorktreeContextInjector {
 
 				// A false return also means the value was already identical, which is
 				// idempotent. SQLite busy errors are identified through $wpdb->last_error.
-				update_option( self::METADATA_OPTION, $all, false );
-				return true;
-			}
+				$updated = update_option( self::METADATA_OPTION, $all, false );
+				return false !== $updated || ! is_object($wpdb) || '' === trim((string) ( $wpdb->last_error ?? '' ));
+			},
+			$retry_options
 		);
 		if ( is_wp_error( $updated ) ) {
 			return $updated;
 		}
+		if ( false === $updated ) {
+			return new \WP_Error('worktree_lifecycle_metadata_persist_failed', 'Failed to persist worktree lifecycle metadata.', array( 'status' => 500 ));
+		}
 
-		$result = self::upsert_inventory_metadata($handle, $stored_metadata);
-		return is_wp_error($result) ? $result : self::store_standalone_worktree_tracker($stored_metadata);
+		return $stored_metadata;
+	}
+
+	/** Project one prepared lifecycle record into the inventory. */
+	public static function upsert_lifecycle_metadata_inventory( string $handle, array $metadata, array $retry_options = array() ): bool|\WP_Error {
+		return self::upsert_inventory_metadata($handle, $metadata, $retry_options);
+	}
+
+	/** Whether the metadata-record phase writes a durable option before inventory projection. */
+	public static function lifecycle_metadata_record_is_durable(): bool {
+		return function_exists('get_option') && function_exists('update_option');
+	}
+
+	/** Read the committed inventory record without falling back to option metadata. */
+	public static function get_lifecycle_inventory_metadata( string $handle, array $retry_options = array() ): array|null|\WP_Error {
+		$repository = self::inventory_repository();
+		if ( null === $repository ) {
+			return null;
+		}
+		$row = $repository->get($handle, $retry_options);
+		if ( null !== $repository->last_error() ) {
+			return $repository->last_error();
+		}
+		return is_array($row) && is_array($row['metadata'] ?? null) ? (array) $row['metadata'] : null;
 	}
 
 	/** Whether standalone identity already carries the persisted task tracker. */
@@ -2219,8 +2254,8 @@ class WorktreeContextInjector {
 	 * @param  string $handle Workspace handle.
 	 * @return array|null
 	 */
-	public static function get_metadata( string $handle ): ?array {
-		$db_metadata = self::get_inventory_metadata($handle);
+	public static function get_metadata( string $handle, array $retry_options = array() ): ?array {
+		$db_metadata = self::get_inventory_metadata($handle, $retry_options);
 
 		if ( ! function_exists('get_option') ) {
 			return $db_metadata;
@@ -2244,12 +2279,12 @@ class WorktreeContextInjector {
 	 * @param  string $handle Workspace handle.
 	 * @return array|null
 	 */
-	public static function get_metadata_fresh( string $handle ): ?array {
+	public static function get_metadata_fresh( string $handle, array $retry_options = array() ): ?array {
 		if ( function_exists('wp_cache_delete') ) {
 			wp_cache_delete(self::METADATA_OPTION, 'options');
 		}
 
-		$inventory_metadata = self::get_inventory_metadata($handle);
+		$inventory_metadata = self::get_inventory_metadata($handle, $retry_options);
 		$option_metadata    = null;
 		if ( function_exists('get_option') ) {
 			$all = get_option(self::METADATA_OPTION, array());
@@ -2298,7 +2333,7 @@ class WorktreeContextInjector {
 	 * @param string              $handle   Workspace handle.
 	 * @param array<string,mixed> $metadata Lifecycle metadata.
 	 */
-	private static function upsert_inventory_metadata( string $handle, array $metadata ): bool|\WP_Error {
+	private static function upsert_inventory_metadata( string $handle, array $metadata, array $retry_options = array() ): bool|\WP_Error {
 		$repository = self::inventory_repository();
 		if ( null === $repository ) {
 			return true;
@@ -2328,7 +2363,8 @@ class WorktreeContextInjector {
 				'created_at'      => $metadata['created_at'] ?? null,
 				'last_seen_at'    => $metadata['last_seen_at'] ?? null,
 				'metadata'        => $metadata,
-			)
+			),
+			$retry_options
 		);
 
 		return $stored ? true : $repository->last_error() ?? new \WP_Error('worktree_inventory_persist_failed', 'Failed to persist worktree lifecycle metadata.', array( 'status' => 500 ));
@@ -2339,13 +2375,13 @@ class WorktreeContextInjector {
 	 *
 	 * @return array<string,mixed>|null
 	 */
-	private static function get_inventory_metadata( string $handle ): ?array {
+	private static function get_inventory_metadata( string $handle, array $retry_options = array() ): ?array {
 		$repository = self::inventory_repository();
 		if ( null === $repository ) {
 			return null;
 		}
 
-		$row = $repository->get($handle);
+		$row = $repository->get($handle, $retry_options);
 		if ( is_array($row) && is_array($row['metadata'] ?? null) ) {
 			return (array) $row['metadata'];
 		}

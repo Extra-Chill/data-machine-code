@@ -137,9 +137,17 @@ function lock_sqlite_worker(array $args): void {
 		return;
 	}
 
-	if ('finalize' === $mode) {
+	if ('finalize' === $mode || 'finalize-coordinated' === $mode) {
 		if (!defined('DATAMACHINE_WORKSPACE_PATH')) { define('DATAMACHINE_WORKSPACE_PATH', $workspace); }
-		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', WorktreeContextInjector::STATE_PR_OPENED, 'https://example.test/pull/1250', 'success');
+		$ready = (string) ($args[5] ?? '');
+		$go = (string) ($args[6] ?? '');
+		$progress = 'finalize-coordinated' === $mode ? static function (array $event) use ($ready, $go): void {
+			if ('metadata_persistence' === ($event['phase'] ?? null) && 'started' === ($event['state'] ?? null) && !is_file($ready)) {
+				file_put_contents($ready, 'ready');
+				lock_sqlite_wait($go);
+			}
+		} : null;
+		$result = (new Workspace())->worktree_finalize($repo . '@finalize-contention', WorktreeContextInjector::STATE_PR_OPENED, 'https://example.test/pull/1250', 'success', 'finalize-coordinated' === $mode ? '2s' : null, $progress);
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
@@ -333,6 +341,34 @@ try {
 	lock_sqlite_assert($elapsed < 2, 'Read-only exact discovery exceeded its bounded registry recovery window.');
 	$replayed = lock_sqlite_finish(lock_sqlite_start(array('finalize', $database, $workspace, 'lifecycle-repo', '100')));
 	lock_sqlite_assert(true === ($replayed['success']['success'] ?? null) && 'cleanup_eligible' === ($replayed['success']['lifecycle_state'] ?? null) && WorktreeContextInjector::STATE_PR_OPENED === ($replayed['success']['metadata']['finalized_state'] ?? null), 'Finalization replay did not recover after SQLite contention cleared: ' . json_encode($replayed));
+	foreach (array('lock_wait', 'dirty_probe', 'metadata_persistence', 'inventory_upsert', 'readback') as $phase) {
+		lock_sqlite_assert(isset($replayed['success']['phase_timings'][$phase]['elapsed_ms']), 'Successful finalization omitted the ' . $phase . ' timing.');
+	}
+	lock_sqlite_assert(($replayed['success']['wall_clock_budget']['elapsed_ms'] ?? 10000) < 2000, 'Uncontended finalization was not a fast local operation.');
+
+	// Once admitted, a finalizer still receives only one deadline across metadata,
+	// inventory, readback, and release. Its prompt OS unlock lets an unrelated repo
+	// proceed as soon as the shared SQLite writer clears.
+	[$bounded_worker, $bounded_ready, $bounded_go] = lock_sqlite_signal_worker('finalize-coordinated', $database, $workspace, 'lifecycle-repo', 5000);
+	$setup->exec('BEGIN EXCLUSIVE');
+	file_put_contents($bounded_go, 'go');
+	$unrelated = lock_sqlite_start(array('allocation', $database, $workspace, 'unrelated-repo', '5000'));
+	$started = microtime(true);
+	$bounded = lock_sqlite_finish($bounded_worker);
+	$bounded_elapsed = microtime(true) - $started;
+	lock_sqlite_assert('worktree_finalize_inventory_upsert_failed' === ($bounded['error'] ?? null), 'Admitted finalizer did not identify inventory persistence contention: ' . json_encode($bounded));
+	lock_sqlite_assert('inventory_upsert' === ($bounded['data']['phase'] ?? null) && true === ($bounded['data']['metadata_committed'] ?? null), 'Admitted finalizer omitted its typed commit boundary.');
+	lock_sqlite_assert(true === ($bounded['data']['recovery']['idempotent'] ?? null) && $finalize_retry . " --until-budget='2s'" === ($bounded['data']['recovery']['command'] ?? null), 'Admitted finalizer omitted its exact idempotent recovery.');
+	lock_sqlite_assert(array_key_exists('blocker_owner', $bounded['data'] ?? array()) && 1 === ($bounded['data']['retry_after_seconds'] ?? null), 'Admitted finalizer omitted blocker owner or retry-after evidence.');
+	lock_sqlite_assert($bounded_elapsed < 3, 'Admitted finalizer exceeded its two-second shared wall-clock contract.');
+	lock_sqlite_assert(($bounded['data']['wall_clock_budget']['elapsed_ms'] ?? 3000) < 2500, 'Finalizer receipt exceeded its shared budget envelope.');
+	$bounded_lock = fopen($workspace . '/.locks/worktree-lifecycle-repo.lock', 'c');
+	lock_sqlite_assert(is_resource($bounded_lock) && flock($bounded_lock, LOCK_EX | LOCK_NB), 'Admitted finalizer retained repository ownership after persistence contention.');
+	flock($bounded_lock, LOCK_UN); fclose($bounded_lock);
+	$setup->exec('COMMIT');
+	$unrelated_result = lock_sqlite_finish($unrelated);
+	lock_sqlite_assert('allocated' === ($unrelated_result['success'] ?? null), 'Bounded finalizer starved an unrelated repository allocation: ' . json_encode($unrelated_result));
+	lock_sqlite_cleanup_signals($bounded_ready, $bounded_go);
 
 	// Heartbeat retries through a short lock, then reports both writes if exhausted.
 	[$worker, $ready, $go] = lock_sqlite_signal_worker('heartbeat', $database, $workspace, 'heartbeat-recovers', 1000);

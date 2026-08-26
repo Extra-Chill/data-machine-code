@@ -32,7 +32,10 @@ final class SqliteBusyRetry {
 		}
 
 		$default_max_wait_ms = isset($options['max_wait_ms']) ? max(1, (int) $options['max_wait_ms']) : self::DEFAULT_MAX_WAIT_MS;
-		$max_wait_ms     = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', $default_max_wait_ms);
+		$max_wait_ms         = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_wait_ms', $default_max_wait_ms);
+		if ( isset($options['hard_max_wait_ms']) ) {
+			$max_wait_ms = min($max_wait_ms, max(1, (int) $options['hard_max_wait_ms']));
+		}
 		$initial_wait_ms = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_initial_wait_ms', self::DEFAULT_INITIAL_WAIT_MS);
 		$max_delay_ms    = self::filtered_positive_int('datamachine_code_sqlite_busy_retry_max_delay_ms', self::DEFAULT_MAX_DELAY_MS);
 		$started_at      = hrtime(true);

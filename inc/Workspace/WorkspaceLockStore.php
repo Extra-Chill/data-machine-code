@@ -40,9 +40,14 @@ final class WorkspaceLockStore {
 			return 0;
 		}
 
-		$ensured = self::ensure_table();
+		$max_wait_ms = isset($args['max_wait_ms']) ? max(1, (int) $args['max_wait_ms']) : null;
+		$deadline_ns = null === $max_wait_ms ? null : hrtime(true) + ( $max_wait_ms * 1000000 );
+		$ensured     = self::ensure_table($max_wait_ms);
 		if ( $ensured instanceof \WP_Error ) {
 			return $ensured;
+		}
+		if ( null !== $deadline_ns ) {
+			$max_wait_ms = max(1, (int) floor(($deadline_ns - hrtime(true)) / 1000000));
 		}
 
 		global $wpdb;
@@ -70,7 +75,8 @@ final class WorkspaceLockStore {
 					'metadata_json' => self::encode_metadata($meta),
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
-			)
+			),
+			$max_wait_ms
 		);
 		if ( is_wp_error($inserted) ) {
 			return $inserted;
@@ -107,7 +113,7 @@ final class WorkspaceLockStore {
 	/**
 	 * Mark a lock row released.
 	 */
-	public static function release( int $lock_id ): true|\WP_Error {
+	public static function release( int $lock_id, ?int $max_wait_ms = null ): true|\WP_Error {
 		if ( $lock_id <= 0 || ! self::is_available() ) {
 			return true;
 		}
@@ -124,7 +130,8 @@ final class WorkspaceLockStore {
 				array( 'id' => $lock_id ),
 				array( '%s', '%s' ),
 				array( '%d' )
-			)
+			),
+			$max_wait_ms
 		);
 		if ( is_wp_error($released) ) {
 			return $released;
@@ -187,11 +194,17 @@ final class WorkspaceLockStore {
 	}
 
 	/** Keep DB-visible lock operations compatible with bounded maintenance transactions. */
-	private static function with_sqlite_lock_retry( string $operation, callable $callback ): mixed {
+	private static function with_sqlite_lock_retry( string $operation, callable $callback, ?int $max_wait_ms = null ): mixed {
 		return \DataMachineCode\Storage\SqliteBusyRetry::run(
 			$operation,
 			$callback,
-			array( 'max_wait_ms' => self::SQLITE_LOCK_MAX_WAIT_MS )
+			array_filter(
+				array(
+					'max_wait_ms'      => self::SQLITE_LOCK_MAX_WAIT_MS,
+					'hard_max_wait_ms' => null === $max_wait_ms ? null : min(self::SQLITE_LOCK_MAX_WAIT_MS, max(1, $max_wait_ms)),
+				),
+				static fn( mixed $value ): bool => null !== $value
+			)
 		);
 	}
 
@@ -379,18 +392,28 @@ final class WorkspaceLockStore {
 		);
 	}
 
-	private static function ensure_table(): true|\WP_Error {
+	private static function ensure_table( ?int $max_wait_ms = null ): true|\WP_Error {
 		global $wpdb;
 		$table = self::table_name();
+
+		$exists = self::with_sqlite_lock_retry(
+			'workspace_lock_table_check',
+			static fn() => $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)),
+			$max_wait_ms
+		);
+		if ( is_wp_error($exists) ) {
+			return $exists;
+		}
+		if ( $exists === $table ) {
+			return true;
+		}
+		if ( null !== $max_wait_ms ) {
+			return new \WP_Error('workspace_lock_table_missing', sprintf('Workspace lock table is unavailable for bounded admission: %s.', $table), array( 'status' => 503, 'retryable' => true ));
+		}
 
 		$ensured = self::with_sqlite_lock_retry(
 			'workspace_lock_table_ensure',
 			static function () use ( $wpdb, $table ): bool {
-				$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
-				if ( $exists === $table ) {
-					return true;
-				}
-
 				include_once ABSPATH . 'wp-admin/includes/upgrade.php';
 				$charset_collate = method_exists($wpdb, 'get_charset_collate') ? $wpdb->get_charset_collate() : '';
 				$sql             = "CREATE TABLE {$table} (

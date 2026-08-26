@@ -116,7 +116,7 @@ class WorktreeInventoryRepository {
 	 * @param  array<string,mixed> $row Inventory row.
 	 * @return bool
 	 */
-	public function upsert( array $row ): bool {
+	public function upsert( array $row, array $retry_options = array() ): bool {
 		global $wpdb;
 		$this->last_error = null;
 
@@ -134,7 +134,7 @@ class WorktreeInventoryRepository {
 		}
 
 		if ( method_exists($wpdb, 'replace') ) {
-			$result = SqliteBusyRetry::run('worktree_inventory_upsert', fn() => $wpdb->replace(self::table_name(), $data));
+			$result = SqliteBusyRetry::run('worktree_inventory_upsert', fn() => $wpdb->replace(self::table_name(), $data), $retry_options);
 			if ( $result instanceof \WP_Error ) {
 				$this->last_error = $result;
 				return false;
@@ -203,7 +203,7 @@ class WorktreeInventoryRepository {
 	 *
 	 * @return array<string,mixed>|null
 	 */
-	public function get( string $handle ): ?array {
+	public function get( string $handle, array $retry_options = array() ): ?array {
 		global $wpdb;
 		$this->last_error = null;
 
@@ -219,7 +219,8 @@ class WorktreeInventoryRepository {
 				fn() => $wpdb->get_row(
 					$wpdb->prepare('SELECT * FROM %i WHERE handle = %s LIMIT 1', $table, $handle),
 					ARRAY_A
-				)
+				),
+				$retry_options
 			);
 			if ( $row instanceof \WP_Error ) {
 				$this->last_error = $row;
