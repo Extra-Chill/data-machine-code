@@ -12,19 +12,24 @@ defined('ABSPATH') || defined('DATAMACHINE_CODE_STANDALONE') || exit;
 final class StandaloneWorktreeProvider {
 
 	private const IDENTITY_SCHEMA = 'datamachine-code/worktree-identity/v1';
+	private const TASK_SCHEMA     = 'datamachine-code/worktree-task-resolution/v1';
 	private const SAFETY_SCHEMA   = 'datamachine-code/worktree-safety/v1';
 	private const CONVERGE_SCHEMA = 'datamachine-code/worktree-convergence/v1';
 	private const CAPABILITIES_SCHEMA = 'datamachine-code/worktree-provider-capabilities/v1';
 	private const TOKEN_PREFIX    = 'dmc-worktree-v1.';
 	private const PROBE_TIMEOUT   = 2.0;
 	private const LOCK_TIMEOUT    = 2.0;
+	private const TASK_MAX_MATCHES = 200;
+	private const TASK_MAX_ENTRIES = 10000;
 
 	/** @return array<string,mixed> */
 	public function capabilities(): array {
 		return array(
 			'schema'                => self::CAPABILITIES_SCHEMA,
-			'operations'            => array( 'capabilities', 'identity', 'safety', 'converge' ),
+			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge' ),
 			'identity_schema'       => self::IDENTITY_SCHEMA,
+			'task_resolution_schema' => self::TASK_SCHEMA,
+			'task_resolution_limit' => self::TASK_MAX_MATCHES,
 			'tracker_fields'        => array( 'task_url', 'task_ref' ),
 			'attachment_operation'  => 'datamachine-code/workspace-worktree-attach-tracker',
 			'attachment_preview_input' => array( 'dry_run' => true ),
@@ -35,6 +40,75 @@ final class StandaloneWorktreeProvider {
 			'attachment_apply_receipt'    => true,
 			'attachment_standalone' => false,
 			'authorization_bearing' => false,
+		);
+	}
+
+	/**
+	 * Resolve exact task ownership from DMC's local tracker files without WordPress.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function resolve_task( string $workspace, string $task_url ): array {
+		$started        = microtime(true);
+		$workspace_real = realpath($workspace);
+		$canonical      = TaskUrl::canonicalize_for_replay($task_url);
+		if ( false === $workspace_real || ! is_dir($workspace_real) ) {
+			return $this->error('workspace_not_found', 'The canonical workspace root does not exist.', $started);
+		}
+		if ( null === $canonical ) {
+			return $this->error('invalid_task_url', 'Task lookup requires a canonical replay-safe HTTP or HTTPS URL.', $started);
+		}
+
+		$identities = array();
+		$scanned    = 0;
+		foreach ( new \FilesystemIterator($workspace_real, \FilesystemIterator::SKIP_DOTS) as $entry ) {
+			if ( ++$scanned > self::TASK_MAX_ENTRIES ) {
+				return $this->error('task_workspace_entries_overflow', 'Task lookup exceeded the bounded workspace entry limit.', $started);
+			}
+			if ( ! $entry->isDir() || $entry->isLink() ) {
+				continue;
+			}
+			$identity = $this->resolve_identity($workspace_real, $entry->getBasename());
+			if ( 'owned' !== ( $identity['status'] ?? '' ) || $canonical !== ( $identity['task_url'] ?? null ) ) {
+				continue;
+			}
+			$identities[] = $identity;
+			if ( count($identities) > self::TASK_MAX_MATCHES ) {
+				return $this->error('task_candidates_overflow', 'Task lookup exceeded the complete matching candidate limit.', $started);
+			}
+		}
+
+		usort($identities, static fn( array $left, array $right ): int => strcmp((string) $left['handle'], (string) $right['handle']));
+		$candidates = array();
+		foreach ( $identities as $identity ) {
+			$safety = $this->attest_safety($workspace_real, (string) $identity['token']);
+			if ( 'error' === ( $safety['status'] ?? '' ) ) {
+				return $this->error('task_candidate_safety_failed', 'Could not attest a matching task candidate.', $started);
+			}
+			if ( true !== ( $safety['fresh'] ?? false ) ) {
+				continue;
+			}
+			$candidates[] = array(
+				'handle'   => $identity['handle'],
+				'path'     => $identity['path'],
+				'branch'   => $identity['branch'],
+				'task_url' => $canonical,
+				'safety'   => array(
+					'dirty'    => $safety['dirty'],
+					'unpushed' => $safety['unpushed'],
+					'primary'  => $identity['primary'],
+				),
+			);
+		}
+
+		return array(
+			'schema'          => self::TASK_SCHEMA,
+			'status'          => 'complete',
+			'task_url'        => $canonical,
+			'candidates'      => $candidates,
+			'total'           => count($candidates),
+			'entries_scanned' => $scanned,
+			'latency_ms'      => $this->elapsed_ms($started),
 		);
 	}
 

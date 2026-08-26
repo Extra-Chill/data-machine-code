@@ -13,8 +13,8 @@ $workspace = (string) ( $argv[2] ?? '' );
 $value     = (string) ( $argv[3] ?? '' );
 $base_sha  = (string) ( $argv[4] ?? '' );
 
-if ( ! in_array($operation, array( 'capabilities', 'identity', 'safety', 'converge' ), true) || ( 'capabilities' !== $operation && ( '' === $workspace || '' === $value ) ) || ( 'converge' === $operation && '' === $base_sha ) ) {
-	fwrite(STDERR, "Usage: dmc-worktree-provider capabilities | <identity|safety|converge> <workspace-root> <handle|identity-token> [base-sha]\n");
+if ( ! in_array($operation, array( 'capabilities', 'identity', 'task', 'safety', 'converge' ), true) || ( 'capabilities' !== $operation && ( '' === $workspace || '' === $value ) ) || ( 'converge' === $operation && '' === $base_sha ) ) {
+	fwrite(STDERR, "Usage: dmc-worktree-provider capabilities | <identity|task|safety|converge> <workspace-root> <handle|task-url|identity-token> [base-sha]\n");
 	exit(2);
 }
 
@@ -22,6 +22,7 @@ $provider = new StandaloneWorktreeProvider();
 $result   = match ( $operation ) {
 	'capabilities' => $provider->capabilities(),
 	'identity' => $provider->resolve_identity($workspace, $value),
+	'task' => $provider->resolve_task($workspace, $value),
 	'safety' => $provider->attest_safety($workspace, $value),
 	'converge' => $provider->converge($workspace, $value, $base_sha),
 };

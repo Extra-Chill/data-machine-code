@@ -82,6 +82,9 @@ try {
 	$capabilities_payload = json_decode($capabilities['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert(0 === $capabilities['status'], 'Provider capabilities failed.');
 	standalone_provider_assert(array( 'task_url', 'task_ref' ) === $capabilities_payload['tracker_fields'], 'Provider capabilities did not advertise both generic tracker fields.');
+	standalone_provider_assert(in_array('task', $capabilities_payload['operations'], true), 'Provider capabilities did not advertise standalone task resolution.');
+	standalone_provider_assert('datamachine-code/worktree-task-resolution/v1' === $capabilities_payload['task_resolution_schema'], 'Provider capabilities did not advertise the task resolution schema.');
+	standalone_provider_assert(200 === $capabilities_payload['task_resolution_limit'], 'Provider capabilities did not advertise the complete task candidate limit.');
 	standalone_provider_assert('datamachine-code/workspace-worktree-attach-tracker' === $capabilities_payload['attachment_operation'], 'Provider capabilities did not advertise the managed attachment operation.');
 	standalone_provider_assert(array( 'dry_run' => true ) === $capabilities_payload['attachment_preview_input'], 'Provider capabilities did not advertise the non-mutating preview input.');
 	standalone_provider_assert(array( 'dry_run' => false ) === $capabilities_payload['attachment_apply_input'], 'Provider capabilities did not advertise the apply input.');
@@ -115,6 +118,44 @@ try {
 	standalone_provider_assert('https://github.com/Example/Fixture/issues/1' === ($identity_payload['task_url'] ?? null), 'Identity did not canonicalize the persisted task tracker.');
 	standalone_provider_assert('example/fixture#1' === ($identity_payload['task_ref'] ?? null), 'Identity did not normalize the persisted task reference.');
 	standalone_provider_assert(str_contains((string) base64_decode(strtr(explode('.', $identity_payload['token'], 3)[2], '-_', '+/'), true), 'https://github.com/Example/Fixture/issues/1'), 'Identity token did not bind the canonical task tracker.');
+	$task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, ' HTTPS://GITHUB.COM/Example/Fixture/issues/1/?source=homeboy#task ' ));
+	$task_payload = json_decode($task['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(0 === $task['status'] && $task['elapsed'] < 1.0, 'Standalone task resolution was not bounded: ' . $task['stderr']);
+	standalone_provider_assert('datamachine-code/worktree-task-resolution/v1' === ($task_payload['schema'] ?? null), 'Task resolution schema mismatch.');
+	standalone_provider_assert('https://github.com/Example/Fixture/issues/1' === ($task_payload['task_url'] ?? null), 'Task resolution did not canonicalize the requested URL.');
+	standalone_provider_assert(array( $handle ) === array_column($task_payload['candidates'] ?? array(), 'handle'), 'Task resolution did not return the exact tracked worktree.');
+	standalone_provider_assert(false === ($task_payload['candidates'][0]['safety']['dirty'] ?? null) && false === ($task_payload['candidates'][0]['safety']['unpushed'] ?? null) && false === ($task_payload['candidates'][0]['safety']['primary'] ?? null), 'Task resolution did not include fresh clean safety evidence.');
+	file_put_contents($path . '/task-dirty.txt', "dirty\n");
+	$dirty_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, 'https://github.com/Example/Fixture/issues/1' ));
+	$dirty_task_payload = json_decode($dirty_task['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(true === ($dirty_task_payload['candidates'][0]['safety']['dirty'] ?? null), 'Task resolution did not project current dirty safety evidence.');
+	unlink($path . '/task-dirty.txt');
+	$primary_metadata = array( 'path' => $primary, 'origin_task' => array( 'task_url' => 'https://github.com/Example/Fixture/issues/1' ) );
+	standalone_provider_assert(true === \DataMachineCode\Workspace\WorktreeContextInjector::store_standalone_worktree_tracker($primary_metadata), 'Could not create ambiguous primary task ownership.');
+	$ambiguous_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, 'https://github.com/Example/Fixture/issues/1' ));
+	$ambiguous_task_payload = json_decode($ambiguous_task['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(array( 'fixture', $handle ) === array_column($ambiguous_task_payload['candidates'] ?? array(), 'handle'), 'Task resolution hid ambiguous ownership.');
+	standalone_provider_assert(true === ($ambiguous_task_payload['candidates'][0]['safety']['primary'] ?? null), 'Task resolution did not identify primary ownership.');
+	unlink($primary . '/.git/datamachine-code-task.json');
+	$missing_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, 'https://github.com/Example/Fixture/issues/404' ));
+	$missing_task_payload = json_decode($missing_task['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(0 === $missing_task['status'] && array() === ($missing_task_payload['candidates'] ?? null), 'Missing task ownership did not return a complete empty candidate set.');
+	$unsafe_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, 'https://user:secret@github.com/Example/Fixture/issues/1' ));
+	standalone_provider_assert(1 === $unsafe_task['status'] && 'invalid_task_url' === (json_decode($unsafe_task['stdout'], true, 512, JSON_THROW_ON_ERROR)['code'] ?? null), 'Task resolution accepted replay-unsafe URL userinfo.');
+	$overflow_url = 'https://github.com/Example/Fixture/issues/overflow';
+	for ( $index = 1; $index <= 201; ++$index ) {
+		$suffix  = str_pad((string) $index, 3, '0', STR_PAD_LEFT);
+		$fake    = $root . '/overflow@' . $suffix;
+		$git_dir = $root . '/.overflow-git-' . $suffix;
+		mkdir($fake);
+		mkdir($git_dir);
+		file_put_contents($fake . '/.git', 'gitdir: ' . $git_dir . "\n");
+		file_put_contents($git_dir . '/HEAD', 'ref: refs/heads/overflow/' . $suffix . "\n");
+		file_put_contents($git_dir . '/datamachine-code-task.json', json_encode(array( 'task_url' => $overflow_url ), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+	}
+	$overflow_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, $overflow_url ));
+	$overflow_task_payload = json_decode($overflow_task['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(1 === $overflow_task['status'] && 'task_candidates_overflow' === ($overflow_task_payload['code'] ?? null), 'Task resolution returned a partial candidate set past its complete bound.');
 
 	$safety = standalone_provider_run(array( PHP_BINARY, $script, 'safety', $root, $identity_payload['token'] ));
 	standalone_provider_assert(0 === $safety['status'], 'Clean safety attestation failed: ' . $safety['stderr']);
