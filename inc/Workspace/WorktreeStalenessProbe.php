@@ -61,7 +61,7 @@ final class WorktreeStalenessProbe {
 	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
 	 * @param  callable|null $fallback_resolver Optional equivalent-transport resolver, used by deterministic tests.
 	 * @param  string|null   $remote_ref Requested `origin/*` base, used to avoid repository-wide wildcard fetches.
-	 * @return array{ok: bool, attempts: int, attempted_transports: string[], successful_transport?: string, transport_fallback_used?: bool, fallback_preflight_code?: string, error?: string, timed_out?: bool, timeout_seconds?: int}
+	 * @return array{ok: bool, attempts: int, attempted_transports: string[], successful_transport?: string, transport_fallback_used?: bool, fallback_preflight_code?: string, error?: string, timed_out?: bool, timeout_seconds?: int, missing_remote_ref?: bool, remote_ref?: string}
 	 */
 	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null, ?callable $fallback_resolver = null, ?string $remote_ref = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
@@ -136,11 +136,17 @@ final class WorktreeStalenessProbe {
 					), $transport_evidence);
 				}
 
-				return array_merge(array(
+				$missing_remote_ref = null !== $remote_ref && self::remote_ref_missing($error);
+				$response = array_merge(array(
 					'ok'       => false,
 					'attempts' => $attempt,
 					'error'    => $error,
 				), $transport_evidence);
+				if ( $missing_remote_ref ) {
+					$response['missing_remote_ref'] = true;
+					$response['remote_ref']         = $remote_ref;
+				}
+				return $response;
 			}
 		}
 
@@ -149,6 +155,12 @@ final class WorktreeStalenessProbe {
 			'attempts'             => self::FETCH_MAX_ATTEMPTS,
 			'attempted_transports' => $attempted_transports,
 		);
+	}
+
+	/** Classify Git's stable missing-ref diagnostic separately from transport failure. */
+	private static function remote_ref_missing( string $error ): bool {
+		$error = strtolower($error);
+		return str_contains($error, "couldn't find remote ref") || str_contains($error, 'could not find remote ref');
 	}
 
 	/** Resolve an SSH retry for the same authorized GitHub repository. */

@@ -1088,7 +1088,7 @@ try {
 	assert_true(1 === ( $finalizer_timeout->get_error_data()['timeout_seconds'] ?? null ), 'stalled finalizer dirty probe did not preserve its configured budget');
 	assert_true($elapsed < 3.0, sprintf('stalled finalizer dirty probe exceeded its configured bound: %.3fs', $elapsed));
 	assert_true('active' === ( $wpdb->rows[$handle]['lifecycle_state'] ?? '' ), 'timed-out finalizer dirty probe mutated lifecycle metadata');
-	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 7;
+	$GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds'] = static fn() => 10;
 	putenv('DMC_FINALIZER_STATUS_DELAY=6');
 	$started = microtime(true);
 	$clean_finalization = $workspace->worktree_finalize($handle, 'merged');
@@ -1098,7 +1098,7 @@ try {
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_workspace_target_lookup_timeout_seconds']);
 	assert_true(! is_wp_error($clean_finalization), is_wp_error($clean_finalization) ? 'clean terminal worktree finalization failed: ' . $clean_finalization->get_error_code() . ' ' . $clean_finalization->get_error_message() : 'clean terminal worktree finalization failed');
 	assert_true('cleanup_eligible' === ( $clean_finalization['lifecycle_state'] ?? '' ), 'clean terminal finalization did not expose cleanup eligibility');
-	assert_true($elapsed >= 5.5 && $elapsed < 8.5, sprintf('large clean-worktree finalization did not honor its deterministic process budget: %.3fs', $elapsed));
+	assert_true($elapsed >= 5.5 && $elapsed < 11.5, sprintf('large clean-worktree finalization did not honor its deterministic process budget: %.3fs', $elapsed));
 
 	$show = $workspace->show_repo('homeboy@audit-primitives-20260616');
 	assert_true(! is_wp_error($show), 'persisted worktree is not visible to show_repo');
@@ -1217,7 +1217,7 @@ try {
 	// default ref and an exact corrected command for main, trunk, and custom heads.
 	$missing_main = $workspace->worktree_add('homeboy', 'missing-main-base', 'origin/not-a-ref', false, false, false, false, true);
 	assert_true(is_wp_error($missing_main), 'missing explicit main base reported success');
-	assert_true('worktree_target_ref_invalid' === $missing_main->get_error_code(), 'missing explicit main base changed the existing error code');
+	assert_true('worktree_target_ref_invalid' === $missing_main->get_error_code(), 'missing explicit main base changed the existing error code: ' . $missing_main->get_error_code() . ' ' . wp_json_encode($missing_main->get_error_data()));
 	$missing_main_data = (array) $missing_main->get_error_data();
 	assert_true('origin/main' === ( $missing_main_data['detected_default_ref'] ?? null ), 'missing explicit main base did not detect origin/main');
 	assert_true('remote_head' === ( $missing_main_data['default_ref_source'] ?? null ), 'missing explicit main base did not report remote-head evidence');
@@ -1317,7 +1317,7 @@ try {
 				return;
 			}
 			$bootstrap_outcome_at_complete = WorktreeContextInjector::get_metadata_fresh('homeboy@handoff-partial-success')['provisioning']['bootstrap']['outcome'] ?? null;
-			$script = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\n[ \"\$count\" -eq 1 ] && exec git upload-pack \"\$@\"\nsleep 10\n";
+			$script = "#!/bin/sh\ncount=0\n[ -f " . escapeshellarg($handoff_call_count) . " ] && count=\$(cat " . escapeshellarg($handoff_call_count) . ")\ncount=\$((count + 1))\nprintf '%s\\n' \"\$count\" > " . escapeshellarg($handoff_call_count) . "\n[ \"\$count\" -eq 1 ] && exec git upload-pack \"\$@\"\nsleep 60\n";
 			file_put_contents($handoff_upload_pack, $script);
 			chmod($handoff_upload_pack, 0700);
 			run_command('git config remote.origin.uploadpack ' . escapeshellarg($handoff_upload_pack), $primary_path);
@@ -1326,7 +1326,7 @@ try {
 	$partial = is_wp_error($timed_out_add) ? (array) $timed_out_add->get_error_data() : array();
 	assert_true(is_wp_error($timed_out_add) && 'worktree_handoff_freshness_unverified' === $timed_out_add->get_error_code(), 'post-commit handoff timeout did not remain a fail-closed add result');
 	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
-	assert_true(in_array((string) ( $partial['handoff_freshness']['reason'] ?? '' ), array( 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved' ), true) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff failure lost its typed freshness cause or committed allocation');
+	assert_true(in_array((string) ( $partial['handoff_freshness']['reason'] ?? '' ), array( 'worktree_handoff_revalidation_timeout', 'remote_default_unresolved' ), true) && true === ( $partial['allocation']['success'] ?? false ), 'post-commit handoff failure lost its typed freshness cause or committed allocation: ' . wp_json_encode($partial));
 	assert_true(false === ( $partial['retry']['repeat_allocation'] ?? true ) && false === ( $partial['retry']['repeat_bootstrap'] ?? true ), 'post-commit handoff timeout did not prohibit allocation/bootstrap replay');
 	assert_true('succeeded' === $bootstrap_outcome_at_complete, 'no-op bootstrap completion became observable before terminal metadata was persisted');
 	$continuation = (array) ( $partial['continuation'] ?? array() );

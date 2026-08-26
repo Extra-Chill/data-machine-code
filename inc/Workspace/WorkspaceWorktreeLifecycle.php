@@ -1039,21 +1039,20 @@ trait WorkspaceWorktreeLifecycle {
 	private function worktree_plan_capacity_identity( array $capacity ): array {
 		$exception           = (array) ( $capacity['admission_exception'] ?? array() );
 		$projected_exception = (array) ( $exception['projected_post_create_capacity'] ?? array() );
-		if ( array() !== $projected_exception ) {
+		$bind_measurements    = ! empty($exception['operator_intent']);
+		if ( $bind_measurements && array() !== $projected_exception ) {
 			$exception['projected_post_create_capacity'] = array(
 				'free_bytes'  => $this->worktree_plan_capacity_measurement($projected_exception['free_bytes'] ?? null, 64 * 1024 * 1024),
 				'free_inodes' => $this->worktree_plan_capacity_measurement($projected_exception['free_inodes'] ?? null, 1000000),
 			);
+		} else {
+			unset($exception['projected_post_create_capacity']);
 		}
 
-		return array(
+		$identity = array(
 			'status'                       => $capacity['status'] ?? null,
 			'creation_allowed'             => $capacity['creation_allowed'] ?? null,
 			'filesystem_total_bytes'       => $capacity['filesystem_total_bytes'] ?? null,
-			'filesystem_free_bytes'        => $this->worktree_plan_capacity_measurement($capacity['filesystem_free_bytes'] ?? null, 64 * 1024 * 1024),
-			'projected_free_bytes'         => $this->worktree_plan_capacity_measurement($capacity['projected_free_bytes'] ?? null, 64 * 1024 * 1024),
-			'filesystem_free_inodes'       => $this->worktree_plan_capacity_measurement($capacity['filesystem_free_inodes'] ?? null, 1000000),
-			'projected_free_inodes'        => $this->worktree_plan_capacity_measurement($capacity['projected_free_inodes'] ?? null, 1000000),
 			'refuse_free_bytes'            => $capacity['refuse_free_bytes'] ?? null,
 			'refuse_percent_bytes_floor'   => $capacity['refuse_percent_bytes_floor'] ?? null,
 			'effective_refuse_bytes'       => $capacity['effective_refuse_bytes'] ?? null,
@@ -1067,6 +1066,13 @@ trait WorkspaceWorktreeLifecycle {
 			'force_override_applied'       => $capacity['force_override_applied'] ?? null,
 			'worktree_count'               => $capacity['worktree_count'] ?? null,
 		);
+		if ( $bind_measurements ) {
+			$identity['filesystem_free_bytes']  = $this->worktree_plan_capacity_measurement($capacity['filesystem_free_bytes'] ?? null, 64 * 1024 * 1024);
+			$identity['projected_free_bytes']   = $this->worktree_plan_capacity_measurement($capacity['projected_free_bytes'] ?? null, 64 * 1024 * 1024);
+			$identity['filesystem_free_inodes'] = $this->worktree_plan_capacity_measurement($capacity['filesystem_free_inodes'] ?? null, 1000000);
+			$identity['projected_free_inodes']  = $this->worktree_plan_capacity_measurement($capacity['projected_free_inodes'] ?? null, 1000000);
+		}
+		return $identity;
 	}
 
 	private function worktree_plan_capacity_measurement( mixed $value, int $quantum ): mixed {
@@ -1449,6 +1455,19 @@ trait WorkspaceWorktreeLifecycle {
 		$this->worktree_add_progress($progress_callback, 'freshness_fetch');
 		$fetch = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline, null, $from);
 		if ( ! $fetch['ok'] ) {
+			if ( ! empty($fetch['missing_remote_ref']) ) {
+				$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+				$target_ref   = $exists_local ? 'refs/heads/' . $branch : (string) $from;
+				$demand_plan  = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+				if ( $demand_plan instanceof \WP_Error ) {
+					return array(
+						'fetch'        => $fetch,
+						'exists_local' => $exists_local,
+						'target_ref'   => $target_ref,
+						'demand_plan'  => $demand_plan,
+					);
+				}
+			}
 			return array( 'fetch' => $fetch );
 		}
 
@@ -1701,6 +1720,16 @@ trait WorkspaceWorktreeLifecycle {
 				);
 			}
 		}
+		$exists_local = array_key_exists('exists_local', $preflight) ? (bool) $preflight['exists_local'] : GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = (string) ( $preflight['target_ref'] ?? ( $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) ) );
+		$demand_plan  = $preflight['demand_plan'] ?? null;
+		if ( $demand_plan instanceof \WP_Error ) {
+			if ( 'worktree_target_ref_invalid' === $demand_plan->get_error_code() && ! $exists_local && null !== $from && '' !== trim($from) ) {
+				return $this->worktree_missing_explicit_base_error($demand_plan, $primary_path, $repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, $intent);
+			}
+			return $demand_plan;
+		}
+
 		$fetch                 = (array) ( $preflight['fetch'] ?? WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline) );
 		$fetch_failed          = ! $fetch['ok'];
 		$fetch_error           = $fetch['error'] ?? null;
@@ -1737,8 +1766,6 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
-		$exists_local = array_key_exists('exists_local', $preflight) ? (bool) $preflight['exists_local'] : GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
-		$target_ref   = (string) ( $preflight['target_ref'] ?? ( $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) ) );
 		if ( array() !== $expected_freshness_identity ) {
 			$actual_freshness_identity = $this->primary_freshness_identity($primary_path, $target_ref);
 			if ( $expected_freshness_identity !== $actual_freshness_identity ) {
@@ -1753,7 +1780,7 @@ trait WorkspaceWorktreeLifecycle {
 				);
 			}
 		}
-		$demand_plan  = $preflight['demand_plan'] ?? WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		$demand_plan ??= WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
 			if ( 'worktree_target_ref_invalid' === $demand_plan->get_error_code() && ! $exists_local && null !== $from && '' !== trim($from) ) {
 				return $this->worktree_missing_explicit_base_error(
