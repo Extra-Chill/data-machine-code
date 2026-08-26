@@ -75,11 +75,12 @@ final class WorktreeStalenessProbe {
 			$remaining     = null === $deadline ? $attempt_limit : (int) floor($deadline - microtime(true));
 			if ( $remaining <= 0 ) {
 				return array(
-					'ok'              => false,
-					'attempts'        => $attempt - 1,
-					'timed_out'       => true,
-					'timeout_seconds' => 0,
-					'error'           => 'The aggregate worktree operation deadline expired during remote freshness verification.',
+					'ok'                   => false,
+					'attempts'             => $attempt - 1,
+					'attempted_transports' => $attempted_transports,
+					'timed_out'            => true,
+					'timeout_seconds'      => 0,
+					'error'                => 'The aggregate worktree operation deadline expired during remote freshness verification.',
 				);
 			}
 			$args      = $is_fallback

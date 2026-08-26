@@ -107,4 +107,13 @@ transport_fallback_assert_same(array( array( '/repo', 'fetch --quiet origin' ), 
 transport_fallback_assert_same('ssh_agent_no_identities', $failed['fallback_preflight_code'] ?? null, 'SSH preflight evidence must survive final refusal.');
 transport_fallback_assert_same(true, $failed['transport_fallback_used'] ?? null, 'Attempted fallback must be reported as used.');
 
+$expired = WorktreeStalenessProbe::fetch(
+	'/repo',
+	static function (): never {
+		throw new RuntimeException('Expired freshness verification must not invoke Git.');
+	},
+	microtime(true) - 1
+);
+transport_fallback_assert_same(array(), $expired['attempted_transports'], 'Deadline expiry before the first fetch must return an empty transport evidence list.');
+
 fwrite(STDOUT, "worktree-staleness-transport-fallback: ok\n");
