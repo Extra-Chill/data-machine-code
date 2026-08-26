@@ -108,7 +108,18 @@ remote_isolation_assert(is_wp_error($branch_collision) && 'branch_mismatch' === 
 $refused = $backend->worktree_add('repo', 'second', 'main', $task);
 remote_isolation_assert(is_wp_error($refused) && 'same_task_candidate_requires_explicit_isolation' === ( $refused->get_error_data()['reuse']['reason_code'] ?? null ), 'default remote duplicate was not refused');
 remote_isolation_assert('repo@first' === ( $refused->get_error_data()['reuse']['conflicting_handle'] ?? null ) && 'isolated' === ( $refused->get_error_data()['reuse']['supported_reuse_policy'] ?? null ), 'remote conflict did not identify the blocking handle and supported reuse policy');
+$remote_refusal = (array) $refused->get_error_data()['reuse'];
+remote_isolation_assert(array( '--purpose', '--owner-run-ref', '--cleanup-policy' ) === array_column((array) ( $remote_refusal['missing_fields'] ?? array() ), 'cli_flag'), 'remote conflict did not expose canonical structured missing fields');
+remote_isolation_assert(array() === array_diff(array( 'handle', 'owner', 'state', 'cleanup_policy' ), array_keys((array) ( $remote_refusal['candidates'][0] ?? array() ))), 'remote conflict omitted bounded candidate ownership evidence');
+remote_isolation_assert(str_contains((string) ( $remote_refusal['corrected_command_template'] ?? '' ), "--reuse-policy='isolated'") && str_contains((string) $remote_refusal['corrected_command_template'], "--owner-run-ref='<owner-run-ref>'"), 'remote conflict did not include a replayable isolation template');
 remote_isolation_assert(! isset($GLOBALS['remote_workspace_task_isolation_state']['worktrees']['repo@second']), 'refused remote duplicate mutated state');
+
+for ( $index = 0; $index < 7; $index++ ) {
+	$GLOBALS['remote_workspace_task_isolation_state']['worktrees'][ 'repo@bounded-' . $index ] = array( 'repo_name' => 'repo', 'branch' => 'bounded-' . $index, 'task' => array( 'task_ref' => 'bounded#1' ), 'owner_run_ref' => 'run-' . $index, 'cleanup_policy' => 'manual' );
+}
+$bounded = $backend->worktree_add('repo', 'bounded-new', 'main', array( 'task_ref' => 'bounded#1' ));
+remote_isolation_assert(is_wp_error($bounded) && 5 === count((array) ( $bounded->get_error_data()['reuse']['candidates'] ?? array() )), 'remote same-task candidate evidence exceeded its declared bound');
+remote_isolation_assert(array( 'repo@bounded-0', 'repo@bounded-1', 'repo@bounded-2', 'repo@bounded-3', 'repo@bounded-4' ) === array_column((array) $bounded->get_error_data()['reuse']['candidates'], 'handle'), 'bounded remote candidate evidence was not deterministic');
 
 $ownerless = $backend->worktree_add('repo', 'second', 'main', $task, array(), 'isolated');
 remote_isolation_assert(is_wp_error($ownerless) && 'same_task_isolation_intent_required' === ( $ownerless->get_error_data()['reuse']['reason_code'] ?? null ), 'ownerless remote isolation was not refused');
@@ -132,6 +143,7 @@ for ( $mask = 0; $mask < 7; $mask++ ) {
 	$incomplete = $backend->worktree_add('repo', 'incomplete-isolation-' . $mask, 'main', $task, $intent, 'isolated');
 	remote_isolation_assert(is_wp_error($incomplete), 'incomplete remote isolation was accepted for mask ' . $mask);
 	remote_isolation_assert($missing === ( $incomplete->get_error_data()['reuse']['missing_intent'] ?? null ), 'incomplete remote isolation did not return the complete missing-field list for mask ' . $mask);
+	remote_isolation_assert(count((array) ( $incomplete->get_error_data()['reuse']['missing_fields'] ?? array() )) === count($missing), 'incomplete remote isolation did not mirror missing intent as structured CLI fields for mask ' . $mask);
 }
 
 $isolated = $backend->worktree_add('repo', 'second', 'main', $task, array( 'purpose' => 'parallel-review', 'owner_run_ref' => 'run-1', 'cleanup_policy' => 'remove_on_success' ), 'isolated');

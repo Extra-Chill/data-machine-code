@@ -15,11 +15,20 @@ final class WorktreeCandidateActions {
 				continue;
 			}
 			$classification = self::classify($candidate, $branch, $task);
-			$row = $candidate + array( 'handle' => null, 'path' => null, 'branch' => null );
-			$row['classification'] = $classification;
+			$row = array(
+				'handle'         => $candidate['handle'] ?? null,
+				'owner'          => $candidate['owner'] ?? array(),
+				'state'          => $candidate['state'] ?? null,
+				'cleanup_policy' => $candidate['cleanup_policy'] ?? null,
+				'branch'         => $candidate['branch'] ?? null,
+				'dirty'          => $candidate['dirty'] ?? null,
+				'unpushed'       => $candidate['unpushed'] ?? null,
+				'liveness'       => $candidate['liveness'] ?? null,
+				'classification' => $classification,
+			);
 			$classified[] = $row;
 			if ( 'exact_head_clean' === $classification ) {
-				$adoptable[] = $row;
+				$adoptable[] = $candidate;
 			}
 		}
 

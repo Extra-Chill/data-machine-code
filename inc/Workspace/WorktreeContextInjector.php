@@ -107,6 +107,7 @@ class WorktreeContextInjector {
 		'owner_run_ref',
 		'cleanup_policy=remove_on_success',
 	);
+	public const SAME_TASK_CANDIDATE_EVIDENCE_LIMIT = 5;
 
 	/**
 	 * Shared policy schema for all worktree-add callers.
@@ -118,11 +119,11 @@ class WorktreeContextInjector {
 			'reuse_policy'   => array(
 				'type'        => 'string',
 				'enum'        => self::VALID_REUSE_POLICIES,
-				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires purpose, owner_run_ref, and cleanup_policy=remove_on_success for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base. claim_expired transfers an exact clean handle only after its unattributed heartbeat expires or an authoritative terminal signal exists.',
+				'description' => 'Reuse and allocation behavior. reuse_compatible reuses only an exact compatible handle and refuses another same-repo handle for the same task. isolated requires the ability fields purpose, owner_run_ref, and cleanup_policy=remove_on_success (CLI: --purpose, --owner-run-ref, and --cleanup-policy=remove_on_success) for parallel same-task work. recycle_terminal resets only a proven-clean terminal exact handle whose HEAD is contained in the requested base. claim_expired transfers an exact clean handle only after its unattributed heartbeat expires or an authoritative terminal signal exists.',
 			),
-			'purpose'        => array( 'type' => 'string', 'description' => 'Purpose required with owner_run_ref and cleanup_policy=remove_on_success for isolated same-task work.' ),
-			'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Owner run reference required with purpose and cleanup_policy=remove_on_success for isolated same-task work.' ),
-			'cleanup_policy' => array( 'type' => 'string', 'enum' => self::VALID_CLEANUP_POLICIES, 'description' => 'Cleanup policy: manual, remove_on_success, or preserve_on_failure. Isolated same-task work requires remove_on_success.' ),
+			'purpose'        => array( 'type' => 'string', 'description' => 'Purpose (--purpose in CLI) required with --owner-run-ref and --cleanup-policy=remove_on_success for isolated same-task work.' ),
+			'owner_run_ref'  => array( 'type' => 'string', 'description' => 'Owner run reference (--owner-run-ref in CLI) required with --purpose and --cleanup-policy=remove_on_success for isolated same-task work.' ),
+			'cleanup_policy' => array( 'type' => 'string', 'enum' => self::VALID_CLEANUP_POLICIES, 'description' => 'Cleanup policy (--cleanup-policy in CLI): manual, remove_on_success, or preserve_on_failure. Isolated same-task work requires --cleanup-policy=remove_on_success.' ),
 		);
 	}
 
@@ -138,6 +139,96 @@ class WorktreeContextInjector {
 			}
 		}
 		return $missing;
+	}
+
+	/** Return canonical CLI fields still required for explicit same-task isolation. */
+	public static function missing_isolation_cli_fields( array $intent ): array {
+		$missing = array();
+		foreach ( self::missing_isolation_intent($intent) as $requirement ) {
+			$ability_field = explode('=', $requirement, 2)[0];
+			$field         = str_replace('_', '-', $ability_field);
+			$missing[] = array(
+				'field'          => $field,
+				'cli_flag'       => '--' . $field,
+				'ability_field'  => $ability_field,
+				'required_value' => 'cleanup_policy' === $ability_field ? self::CLEANUP_POLICY_REMOVE_ON_SUCCESS : 'operator supplied non-empty value',
+			);
+		}
+		return $missing;
+	}
+
+	/** Build the common machine-readable correction for a same-task isolation refusal. */
+	public static function same_task_isolation_refusal( array $request ): array {
+		$intent  = (array) ( $request['intent'] ?? array() );
+		$missing = self::missing_isolation_cli_fields($intent);
+		return array(
+			'required_cli_flags'         => array( '--reuse-policy=isolated', '--purpose=<purpose>', '--owner-run-ref=<owner-run-ref>', '--cleanup-policy=remove_on_success' ),
+			'missing_fields'             => $missing,
+			'corrected_command'          => array() === $missing ? self::worktree_add_isolation_command($request, false) : null,
+			'corrected_command_template' => self::worktree_add_isolation_command($request, true),
+			'template_values_required'   => array_values(array_map(static fn( array $field ): string => (string) $field['cli_flag'], array_filter($missing, static fn( array $field ): bool => 'cleanup_policy' !== $field['ability_field']))),
+		);
+	}
+
+	/** Build a safe CLI replay while forcing only the explicitly requested isolation contract. */
+	private static function worktree_add_isolation_command( array $request, bool $template ): ?string {
+		$task = (array) ( $request['task'] ?? array() );
+		if ( isset($task['task_url']) ) {
+			$task_url = TaskUrl::canonicalize_for_replay($task['task_url']);
+			if ( null === $task_url ) {
+				return null;
+			}
+			$task['task_url'] = $task_url;
+		}
+		$parts = array(
+			'wp datamachine-code workspace worktree add',
+			escapeshellarg((string) ( $request['repo'] ?? '' )),
+			escapeshellarg((string) ( $request['branch'] ?? '' )),
+		);
+		if ( null !== ( $request['from'] ?? null ) && '' !== trim((string) $request['from']) ) {
+			$parts[] = '--from=' . escapeshellarg((string) $request['from']);
+		}
+		if ( array_key_exists('inject_context', $request) && empty($request['inject_context']) ) {
+			$parts[] = '--skip-context-injection';
+		}
+		if ( array_key_exists('bootstrap', $request) && empty($request['bootstrap']) ) {
+			$parts[] = '--skip-bootstrap';
+		}
+		foreach ( array(
+			'allow_stale'                           => '--allow-stale',
+			'allow_unverified_freshness'            => '--allow-unverified-freshness',
+			'rebase_base'                           => '--rebase-base',
+			'force'                                 => '--force',
+			'allow_percentage_byte_floor_exception' => '--allow-percentage-byte-floor',
+			'remediate_capacity'                    => '--remediate-capacity',
+			'remediate_capacity_dry_run'            => '--remediate-capacity-dry-run',
+			'verbose'                               => '--verbose',
+		) as $key => $flag ) {
+			if ( ! empty($request[ $key ]) ) {
+				$parts[] = $flag;
+			}
+		}
+		foreach ( array( 'task_url' => 'task-url', 'task_ref' => 'task-ref' ) as $key => $flag ) {
+			if ( ! empty($task[ $key ]) ) {
+				$parts[] = '--' . $flag . '=' . escapeshellarg((string) $task[ $key ]);
+			}
+		}
+		if ( ! empty($request['require_task_tracker']) ) {
+			$parts[] = '--require-task-tracker';
+		}
+		$intent = (array) ( $request['intent'] ?? array() );
+		foreach ( array( 'purpose' => 'purpose', 'owner_run_ref' => 'owner-run-ref' ) as $key => $flag ) {
+			$value = self::normalize_scalar_metadata_value($intent[ $key ] ?? null);
+			if ( null === $value && $template ) {
+				$value = '<' . $flag . '>';
+			}
+			if ( null !== $value ) {
+				$parts[] = '--' . $flag . '=' . escapeshellarg($value);
+			}
+		}
+		$parts[] = '--cleanup-policy=' . escapeshellarg(self::CLEANUP_POLICY_REMOVE_ON_SUCCESS);
+		$parts[] = '--reuse-policy=' . escapeshellarg('isolated');
+		return implode(' ', $parts);
 	}
 
 	/**

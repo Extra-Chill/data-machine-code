@@ -1274,7 +1274,8 @@ trait WorkspaceWorktreeLifecycle {
 				$capacity_lock,
 				$progress_callback,
 				$expected_freshness_identity,
-				$allow_percentage_byte_floor_exception
+				$allow_percentage_byte_floor_exception,
+				$retry_request
 			),
 			$capacity_timeout,
 			array(
@@ -1508,7 +1509,8 @@ trait WorkspaceWorktreeLifecycle {
 		?WorkspaceMutationLock $capacity_lock = null,
 		?callable $progress_callback = null,
 		array $expected_freshness_identity = array(),
-		bool $allow_percentage_byte_floor_exception = false
+		bool $allow_percentage_byte_floor_exception = false,
+		array $retry_request = array()
 	): array|\WP_Error {
 		$operation_timeout  = $operation_timeout > 0 ? $operation_timeout : self::worktree_capacity_operation_timeout_seconds($bootstrap);
 		$operation_started  = $operation_started > 0.0 ? $operation_started : microtime(true);
@@ -1551,20 +1553,24 @@ trait WorkspaceWorktreeLifecycle {
 		// acquired only for final creation, so remediation can safely take per-repo
 		// cleanup locks without self-deadlocking.
 		$reuse_candidates = $this->worktree_reuse_candidates($repo, $task);
-		if ( array() !== $reuse_candidates && 'isolated' !== $reuse_policy ) {
+		$candidate_actions = array( 'candidates' => array(), 'actions' => array() );
+		if ( array() !== $reuse_candidates ) {
 			if ( ! class_exists(WorktreeCandidateActions::class) ) {
 				require_once __DIR__ . '/WorktreeCandidateActions.php';
 			}
 			$candidate_actions = WorktreeCandidateActions::project($reuse_candidates, $repo, $branch, $from, $task, $intent);
+		}
+		if ( array() !== $reuse_candidates && 'isolated' !== $reuse_policy ) {
 			return $this->worktree_reuse_refused(
 				$wt_handle,
 				'same_task_candidate_requires_explicit_isolation',
 				array(
 					'reuse_policy'            => $reuse_policy,
 					'canonical_task_identity' => $this->worktree_reuse_task_identity($task),
-					'candidates'              => $candidate_actions['candidates'],
+					'candidates'               => $candidate_actions['candidates'],
+					'candidate_evidence_limit' => WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT,
 					'candidate_actions'       => $candidate_actions['actions'],
-				)
+				) + WorktreeContextInjector::same_task_isolation_refusal($retry_request)
 			);
 		}
 		if ( array() !== $reuse_candidates && 'isolated' === $reuse_policy ) {
@@ -1577,8 +1583,9 @@ trait WorkspaceWorktreeLifecycle {
 						'reuse_policy'            => $reuse_policy,
 						'canonical_task_identity' => $this->worktree_reuse_task_identity($task),
 						'missing_intent'          => $missing_intent,
-						'candidates'              => $reuse_candidates,
-					)
+						'candidates'               => $candidate_actions['candidates'],
+						'candidate_evidence_limit' => WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT,
+					) + WorktreeContextInjector::same_task_isolation_refusal($retry_request)
 				);
 			}
 		}
@@ -3071,11 +3078,14 @@ trait WorkspaceWorktreeLifecycle {
 				'dirty'    => $dirty,
 				'unpushed' => $unpushed,
 				'liveness' => $liveness['liveness'],
+				'owner'    => array_merge(WorktreeContextInjector::summarize_owner($metadata), array( 'owner_run_ref' => is_array($metadata) ? ( $metadata['owner_run_ref'] ?? null ) : null )),
+				'state'    => is_array($metadata) ? WorktreeContextInjector::project_lifecycle_state($metadata) : null,
+				'cleanup_policy' => is_array($metadata) ? ( $metadata['cleanup_policy'] ?? null ) : null,
 				'task'     => $candidate_task,
 			);
 		}
 		usort($candidates, static fn( array $left, array $right ): int => strcmp( (string) $left['handle'], (string) $right['handle']));
-		return $candidates;
+		return array_slice($candidates, 0, WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT);
 	}
 
 	/** Reset an exact terminal handle only after proving its pushed HEAD is in the requested base. */
@@ -3361,8 +3371,10 @@ trait WorkspaceWorktreeLifecycle {
 			$evidence['supported_reuse_policy'] = 'isolated';
 		}
 		$message = '' !== $conflicting_handle
-			? sprintf('Refusing to create worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with purpose, owner_run_ref, and cleanup_policy=remove_on_success.', $handle, $conflicting_handle)
-			: sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code));
+			? sprintf('Refusing to create worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with --purpose, --owner-run-ref, and --cleanup-policy=remove_on_success.', $handle, $conflicting_handle)
+			: ( 'same_task_isolation_intent_required' === $reason_code
+				? sprintf('Refusing to create worktree "%s": --reuse-policy=isolated requires --purpose, --owner-run-ref, and --cleanup-policy=remove_on_success for same-task work.', $handle)
+				: sprintf('Refusing to reuse worktree "%s": %s.', $handle, str_replace('_', ' ', $reason_code)) );
 
 		return new \WP_Error(
 			'worktree_reuse_refused',

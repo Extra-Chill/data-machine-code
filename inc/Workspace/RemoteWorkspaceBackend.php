@@ -245,17 +245,27 @@ class RemoteWorkspaceBackend {
 						$candidate_task = is_array($candidate['task'] ?? null) ? $candidate['task'] : array();
 						if ( (string) ( $candidate_task['task_url'] ?? $candidate_task['task_ref'] ?? '' ) === $task_identity ) {
 							$candidates[] = array(
-								'handle' => (string) $candidate_handle,
-								'branch' => $candidate['branch'] ?? null,
-								'task'   => $candidate_task,
+								'handle'         => (string) $candidate_handle,
+								'owner'          => array_merge(WorktreeContextInjector::summarize_owner($candidate), array( 'owner_run_ref' => $candidate['owner_run_ref'] ?? null )),
+								'state'          => $candidate['lifecycle_state'] ?? WorktreeContextInjector::STATE_ACTIVE,
+								'cleanup_policy' => $candidate['cleanup_policy'] ?? null,
 							);
 						}
 					}
 					usort($candidates, static fn( array $left, array $right ): int => strcmp( (string) $left['handle'], (string) $right['handle']));
+					$candidates = array_slice($candidates, 0, WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT);
 				}
+				$isolation_request = array(
+					'repo'                       => $repo_name,
+					'branch'                     => $branch,
+					'from'                       => $from,
+					'allow_unverified_freshness' => $allow_unverified_freshness,
+					'task'                       => $task,
+					'intent'                     => $intent,
+				);
 				if ( array() !== $candidates && 'isolated' !== $reuse_policy ) {
 					$conflicting_handle = (string) $candidates[0]['handle'];
-					return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with purpose, owner_run_ref, and cleanup_policy=remove_on_success.', $handle, $conflicting_handle), array(
+					return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same-task candidate "%s" requires --reuse-policy=isolated with --purpose, --owner-run-ref, and --cleanup-policy=remove_on_success.', $handle, $conflicting_handle), array(
 						'status' => 409,
 						'reuse'  => array(
 							'status'                  => 'refused',
@@ -264,19 +274,21 @@ class RemoteWorkspaceBackend {
 							'conflicting_handle'      => $conflicting_handle,
 							'supported_reuse_policy'  => 'isolated',
 							'candidates'              => $candidates,
-						),
+							'candidate_evidence_limit' => WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT,
+						) + WorktreeContextInjector::same_task_isolation_refusal($isolation_request),
 					));
 				} elseif ( array() !== $candidates ) {
 					$missing_intent = WorktreeContextInjector::missing_isolation_intent($intent);
 					if ( array() !== $missing_intent ) {
-						return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": same task isolation intent is incomplete.', $handle), array(
+						return new \WP_Error('worktree_reuse_refused', sprintf('Refusing to create remote worktree "%s": --reuse-policy=isolated requires --purpose, --owner-run-ref, and --cleanup-policy=remove_on_success for same-task work.', $handle), array(
 							'status' => 409,
 							'reuse'  => array(
 								'status'         => 'refused',
 								'reason_code'    => 'same_task_isolation_intent_required',
 								'missing_intent' => $missing_intent,
 								'candidates'     => $candidates,
-							),
+								'candidate_evidence_limit' => WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT,
+							) + WorktreeContextInjector::same_task_isolation_refusal($isolation_request),
 						));
 					}
 				}

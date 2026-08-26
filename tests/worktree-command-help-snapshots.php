@@ -70,7 +70,7 @@ namespace {
 	worktree_help_assert(str_contains($add_options['allow-percentage-byte-floor']['description'], 'percentage-byte-only refusal'), 'Add help must describe the bounded percentage-byte exception.');
 	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], 'reuse_compatible|isolated|recycle_terminal|claim_expired'), 'Compact add help does not enumerate reuse policies.');
 	worktree_help_assert(str_contains($add_options['cleanup-policy']['description'], 'manual|remove_on_success|preserve_on_failure'), 'Compact add help does not enumerate cleanup policies.');
-	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], 'purpose, owner_run_ref, and cleanup_policy=remove_on_success'), 'Compact add help does not describe the isolated same-task contract.');
+	worktree_help_assert(str_contains($add_options['reuse-policy']['description'], '--purpose, --owner-run-ref, and --cleanup-policy=remove_on_success'), 'Compact add help does not describe the canonical isolated same-task CLI contract.');
 	worktree_help_assert(array_column($definitions['attach-tracker']['synopsis'], 'name') === array( 'handle', 'task-url', 'task-ref', 'dry-run', 'format' ), 'Attach-tracker help omitted the preview input.');
 
 	$remove = $definitions['remove'];

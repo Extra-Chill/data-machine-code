@@ -718,6 +718,14 @@ try {
 	$same_task_evidence = (array) $same_task_refused->get_error_data();
 	assert_true('same_task_candidate_requires_explicit_isolation' === ( $same_task_evidence['reuse']['reason_code'] ?? null ), 'same-task refusal did not expose its typed reason code');
 	assert_true(array( 'homeboy@idempotent-reuse' ) === array_column((array) ( $same_task_evidence['reuse']['candidates'] ?? array() ), 'handle'), 'same-task refusal did not include deterministic candidate evidence');
+	$candidate_evidence = (array) ( $same_task_evidence['reuse']['candidates'][0] ?? array() );
+	assert_true(array() === array_diff(array( 'handle', 'owner', 'state', 'cleanup_policy' ), array_keys($candidate_evidence)), 'same-task refusal omitted required bounded candidate ownership evidence');
+	assert_true(WorktreeContextInjector::SAME_TASK_CANDIDATE_EVIDENCE_LIMIT === ( $same_task_evidence['reuse']['candidate_evidence_limit'] ?? null ), 'same-task refusal did not declare its candidate evidence bound');
+	assert_true(array( '--purpose', '--owner-run-ref', '--cleanup-policy' ) === array_column((array) ( $same_task_evidence['reuse']['missing_fields'] ?? array() ), 'cli_flag'), 'same-task refusal did not return structured canonical missing fields');
+	$corrected_template = (string) ( $same_task_evidence['reuse']['corrected_command_template'] ?? '' );
+	foreach ( array( "'homeboy'", "'same-task-refused'", "--from='origin/main'", '--skip-context-injection', '--skip-bootstrap', '--force', "--task-url='https://example.test/issues/reuse'", "--purpose='<purpose>'", "--owner-run-ref='<owner-run-ref>'", "--cleanup-policy='remove_on_success'", "--reuse-policy='isolated'" ) as $fragment ) {
+		assert_true(str_contains($corrected_template, $fragment), 'same-task corrected command template lost original or canonical fragment ' . $fragment);
+	}
 	assert_true(! is_dir($workspace_root . '/homeboy@same-task-refused') && '' === trim(run_command('git branch --list same-task-refused', $primary_path)), 'same-task refusal created a worktree path or branch');
 	$isolated_without_owner = $workspace->worktree_add('homeboy', 'same-task-ownerless', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'isolated');
 	assert_true(is_wp_error($isolated_without_owner) && 'same_task_isolation_intent_required' === ( $isolated_without_owner->get_error_data()['reuse']['reason_code'] ?? null ), 'ownerless same-task isolation was not refused');
