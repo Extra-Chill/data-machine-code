@@ -49,6 +49,7 @@ final class WorktreeStalenessProbe {
 	 * git probes, without allowing a remote to hold the workspace mutation lock.
 	 */
 	private const FETCH_TIMEOUT_SECONDS = 5;
+	private const FALLBACK_FETCH_TIMEOUT_SECONDS = 15;
 	private const FETCH_MAX_ATTEMPTS    = 2;
 
 
@@ -59,15 +60,19 @@ final class WorktreeStalenessProbe {
 	 * @param  string        $repo_path Primary repo path (passed to `git -C`).
 	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
 	 * @param  callable|null $fallback_resolver Optional equivalent-transport resolver, used by deterministic tests.
-	 * @return array{ok: bool, attempts: int, attempted_transports: string[], successful_transport?: string, transport_fallback_used?: bool, fallback_unavailable?: string, error?: string, timed_out?: bool, timeout_seconds?: int}
+	 * @param  string|null   $remote_ref Requested `origin/*` base, used to avoid repository-wide wildcard fetches.
+	 * @return array{ok: bool, attempts: int, attempted_transports: string[], successful_transport?: string, transport_fallback_used?: bool, fallback_preflight_code?: string, error?: string, timed_out?: bool, timeout_seconds?: int}
 	 */
-	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null, ?callable $fallback_resolver = null ): array {
+	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null, ?callable $fallback_resolver = null, ?string $remote_ref = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
 		$attempted_transports = array();
 		$fallback             = null;
+		$fetch_args           = self::fetch_args($remote_ref);
 		for ( $attempt_index = 0; $attempt_index < self::FETCH_MAX_ATTEMPTS; ++$attempt_index ) {
-			$attempt   = $attempt_index + 1;
-			$remaining = null === $deadline ? self::FETCH_TIMEOUT_SECONDS : (int) floor($deadline - microtime(true));
+			$attempt       = $attempt_index + 1;
+			$is_fallback   = $attempt_index > 0 && is_array($fallback) && ! empty($fallback['args']);
+			$attempt_limit = $is_fallback ? self::FALLBACK_FETCH_TIMEOUT_SECONDS : self::FETCH_TIMEOUT_SECONDS;
+			$remaining     = null === $deadline ? $attempt_limit : (int) floor($deadline - microtime(true));
 			if ( $remaining <= 0 ) {
 				return array(
 					'ok'              => false,
@@ -77,22 +82,27 @@ final class WorktreeStalenessProbe {
 					'error'           => 'The aggregate worktree operation deadline expired during remote freshness verification.',
 				);
 			}
-			$args      = $attempt_index > 0 && is_array($fallback) && ! empty($fallback['args'])
+			$args      = $is_fallback
 				? (string) $fallback['args']
-				: 'fetch --quiet origin';
-			$transport = $attempt_index > 0 && is_array($fallback) && ! empty($fallback['args'])
+				: $fetch_args;
+			$transport = $is_fallback
 				? (string) ( $fallback['transport'] ?? 'equivalent' )
 				: (string) ( $fallback['configured_transport'] ?? 'configured' );
 			$attempted_transports[] = $transport;
-			$result = $runner($repo_path, $args, min(self::FETCH_TIMEOUT_SECONDS, $remaining));
+			$attempt_timeout = min($attempt_limit, $remaining);
+			$result = $runner($repo_path, $args, $attempt_timeout);
 			if ( ! is_wp_error($result) ) {
-				return array(
+				$response = array(
 					'ok'                      => true,
 					'attempts'                => $attempt,
 					'attempted_transports'     => $attempted_transports,
 					'successful_transport'     => $transport,
 					'transport_fallback_used'  => $attempt_index > 0 && is_array($fallback) && ! empty($fallback['args']),
 				);
+				if ( is_array($fallback) && ! empty($fallback['preflight_code']) ) {
+					$response['fallback_preflight_code'] = (string) $fallback['preflight_code'];
+				}
+				return $response;
 			}
 
 			$data  = $result->get_error_data();
@@ -101,8 +111,8 @@ final class WorktreeStalenessProbe {
 			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
 			if ( 1 === $attempt && null === $fallback ) {
 				$fallback = null !== $fallback_resolver
-					? $fallback_resolver($repo_path)
-					: self::equivalent_transport_fallback($repo_path);
+					? $fallback_resolver($repo_path, $remote_ref)
+					: self::equivalent_transport_fallback($repo_path, $remote_ref);
 				if ( is_array($fallback) && ! empty($fallback['configured_transport']) ) {
 					$attempted_transports[0] = (string) $fallback['configured_transport'];
 				}
@@ -112,16 +122,16 @@ final class WorktreeStalenessProbe {
 					'attempted_transports'    => $attempted_transports,
 					'transport_fallback_used' => is_array($fallback) && ! empty($fallback['args']),
 				);
-				if ( is_array($fallback) && ! empty($fallback['unavailable_code']) ) {
-					$transport_evidence['fallback_unavailable'] = (string) $fallback['unavailable_code'];
+				if ( is_array($fallback) && ! empty($fallback['preflight_code']) ) {
+					$transport_evidence['fallback_preflight_code'] = (string) $fallback['preflight_code'];
 				}
 				if ( 'git_command_timeout' === $code ) {
 					return array_merge(array(
 						'ok'              => false,
 						'attempts'        => $attempt,
 						'timed_out'       => true,
-						'timeout_seconds' => self::FETCH_TIMEOUT_SECONDS,
-						'error'           => sprintf("Remote freshness fetch timed out after %d seconds. Check origin connectivity or credentials and retry; use allow_unverified_freshness=true only for intentional offline work.\nGit fetch stderr:\n%s", self::FETCH_TIMEOUT_SECONDS, $error),
+						'timeout_seconds' => $attempt_timeout,
+						'error'           => sprintf("Remote freshness fetch timed out after %d seconds. Check origin connectivity or credentials and retry; use allow_unverified_freshness=true only for intentional offline work.\nGit fetch stderr:\n%s", $attempt_timeout, $error),
 					), $transport_evidence);
 				}
 
@@ -141,13 +151,13 @@ final class WorktreeStalenessProbe {
 	}
 
 	/** Resolve an SSH retry for the same authorized GitHub repository. */
-	private static function equivalent_transport_fallback( string $repo_path ): ?array {
+	private static function equivalent_transport_fallback( string $repo_path, ?string $remote_ref = null ): ?array {
 		$remote = GitRunner::remote_url($repo_path);
-		return null === $remote ? null : self::equivalent_transport_fallback_for_remote($remote);
+		return null === $remote ? null : self::equivalent_transport_fallback_for_remote($remote, null, $remote_ref);
 	}
 
 	/** Build a config-only fallback without mutating the repository remote. */
-	public static function equivalent_transport_fallback_for_remote( string $remote, ?array $preflight = null ): ?array {
+	public static function equivalent_transport_fallback_for_remote( string $remote, ?array $preflight = null, ?string $remote_ref = null ): ?array {
 		if ( 1 !== preg_match('#^https://#i', $remote) ) {
 			return null;
 		}
@@ -158,19 +168,23 @@ final class WorktreeStalenessProbe {
 		}
 
 		$preflight = $preflight ?? GitTransportPreflight::diagnose($ssh);
-		if ( ! is_array($preflight) || empty($preflight['ready']) ) {
-			return array(
-				'configured_transport' => 'https',
-				'transport'            => 'ssh',
-				'unavailable_code'     => (string) ( $preflight['code'] ?? 'ssh_transport_unavailable' ),
-			);
-		}
-
 		return array(
 			'configured_transport' => 'https',
 			'transport'            => 'ssh',
-			'args'                 => sprintf('-c %s fetch --quiet origin', escapeshellarg('remote.origin.url=' . $ssh)),
+			'args'                 => sprintf('-c %s %s', escapeshellarg('url.' . $ssh . '.insteadOf=' . $remote), self::fetch_args($remote_ref)),
+			'preflight_code'       => (string) ( $preflight['code'] ?? 'ssh_transport_unverified' ),
 		);
+	}
+
+	/** Limit freshness fetches to the requested remote branch when it is safe to do so. */
+	private static function fetch_args( ?string $remote_ref ): string {
+		$branch = is_string($remote_ref) && str_starts_with($remote_ref, 'origin/') ? substr($remote_ref, 7) : '';
+		if ( '' === $branch || ! preg_match('#^[A-Za-z0-9][A-Za-z0-9._/-]*$#', $branch) || str_contains($branch, '..') || str_contains($branch, '//') || str_ends_with($branch, '.') || str_ends_with($branch, '.lock') ) {
+			return 'fetch --quiet origin';
+		}
+
+		$refspec = '+refs/heads/' . $branch . ':refs/remotes/origin/' . $branch;
+		return sprintf('fetch --quiet origin %s', escapeshellarg($refspec));
 	}
 
 	/** Redact remote output through the shared Git diagnostic boundary. */

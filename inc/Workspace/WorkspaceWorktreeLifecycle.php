@@ -261,7 +261,7 @@ trait WorkspaceWorktreeLifecycle {
 		return $result;
 	}
 
-	private const HANDOFF_REMOTE_PROBE_TIMEOUT = 5;
+	private const HANDOFF_REMOTE_PROBE_TIMEOUT = 25;
 	private const HANDOFF_CONTINUATION_RESERVE_SECONDS = 2;
 
 	/**
@@ -297,7 +297,7 @@ trait WorkspaceWorktreeLifecycle {
 			if ( is_wp_error($base_ref) ) {
 				return $base_ref;
 			}
-			$fetch = WorktreeStalenessProbe::fetch($primary, null, $deadline);
+			$fetch = WorktreeStalenessProbe::fetch($primary, null, $deadline, null, $base_ref);
 			if ( empty($fetch['ok']) ) {
 				return array(
 					'success' => false,
@@ -512,7 +512,7 @@ trait WorkspaceWorktreeLifecycle {
 			);
 			return $this->worktree_unverified_handoff_error($result, $allow_unverified_freshness, $continuation_deadline);
 		}
-		$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline);
+		$fetch    = WorktreeStalenessProbe::fetch($primary, null, $deadline, null, $base_ref);
 		if ( empty($fetch['ok']) ) {
 			$result['handoff_freshness'] = array(
 				'status' => 'unverified',
@@ -1340,7 +1340,7 @@ trait WorkspaceWorktreeLifecycle {
 	/** Prepare repo-local freshness and projected demand before global admission. */
 	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline, ?callable $progress_callback = null ): array|\WP_Error {
 		$this->worktree_add_progress($progress_callback, 'freshness_fetch');
-		$fetch = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline);
+		$fetch = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline, null, $from);
 		if ( ! $fetch['ok'] ) {
 			return array( 'fetch' => $fetch );
 		}
@@ -1593,7 +1593,7 @@ trait WorkspaceWorktreeLifecycle {
 			'attempted_transports'    => array_values((array) ( $fetch['attempted_transports'] ?? array( 'configured' ) )),
 			'successful_transport'    => $fetch['successful_transport'] ?? null,
 			'transport_fallback_used' => ! empty($fetch['transport_fallback_used']),
-			'fallback_unavailable'    => $fetch['fallback_unavailable'] ?? null,
+			'fallback_preflight_code' => $fetch['fallback_preflight_code'] ?? null,
 		);
 		if ( $fetch_timed_out && $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
 			return $this->worktree_operation_timeout('freshness', $operation_timeout, $operation_started, array( 'fetch' => $fetch ));
