@@ -2,6 +2,22 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.6] - 2026-08-27
+
+### Changed
+- satisfy operation lint
+- add shared standalone runner
+- require ability projections
+- extract run control operation
+- migrate allocation callers
+- extract allocation operation
+- type allocation requests
+
+### Fixed
+- host run-control operation with workspace operations
+- preserve stable plan outcomes
+- stabilize plan capacity identity
+
 ## [0.72.5] - 2026-08-27
 
 ### Fixed
