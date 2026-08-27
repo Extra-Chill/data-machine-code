@@ -36,9 +36,11 @@ namespace {
 
 	require_once dirname(__DIR__) . '/inc/Cleanup/CleanupRunEvidenceStoreInterface.php';
 	require_once dirname(__DIR__) . '/inc/Support/SystemTaskDrainability.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/CleanupRunControlOperation.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
+	use DataMachineCode\Workspace\CleanupRunControlOperation;
 	use DataMachineCode\Cli\Commands\WorkspaceCommand;
 
 	$GLOBALS['workspace_cleanup_drainability_jobs'] = array(
@@ -79,6 +81,16 @@ namespace {
 		public function execute( array $input ): array {
 			$job = $GLOBALS['workspace_cleanup_drainability_jobs'][ (int) ( $input['job_id'] ?? 0 ) ] ?? null;
 			return array( 'success' => null !== $job, 'jobs' => null === $job ? array() : array( $job ) );
+		}
+	}
+
+	final class WorkspaceCleanupControlAbility {
+		/** @var array<int,array<string,mixed>> */
+		public array $calls = array();
+
+		public function execute( array $input ): array {
+			$this->calls[] = $input;
+			return array( 'success' => true, 'job_id' => (int) $input['job_id'] );
 		}
 	}
 
@@ -157,6 +169,20 @@ namespace {
 	workspace_cleanup_drainability_assert_same('completed', $GLOBALS['workspace_cleanup_drainability_jobs'][2095]['status'] ?? null, 'Child must complete before parent completion is returned.');
 	workspace_cleanup_drainability_assert_same(true, $store->child_completion_observed, 'Drain should observe child terminal completion before reading terminal parent status.');
 	workspace_cleanup_drainability_assert_same('completed', $result['state'] ?? null, 'Terminal parent status should follow child completion.');
+
+	$control_ability   = new WorkspaceCleanupControlAbility();
+	$control_operation = new CleanupRunControlOperation(
+		$store,
+		static fn( string $command ): string => '',
+		static fn( string $ability_name ): WorkspaceCleanupControlAbility => $control_ability
+	);
+	$resumed = $control_operation->control('resume', 71, true);
+	workspace_cleanup_drainability_assert_same(array( 'job_id' => 71, 'force' => true ), $control_ability->calls[0] ?? null, 'Resume should target the parent with the explicit force policy.');
+	workspace_cleanup_drainability_assert_same('running', $resumed instanceof \WP_Error ? null : $resumed['state'] ?? null, 'Resume should return running state.');
+
+	$cancelled = $control_operation->control('cancel', 71);
+	workspace_cleanup_drainability_assert_same(array( 'job_id' => 71, 'reason' => 'cleanup_cancelled' ), $control_ability->calls[1] ?? null, 'Cancel should target the parent with the cleanup cancellation reason.');
+	workspace_cleanup_drainability_assert_same('cancelled', $cancelled instanceof \WP_Error ? null : $cancelled['state'] ?? null, 'Cancel should return cancelled state.');
 
 	echo "workspace cleanup drainability repair test passed.\n";
 }

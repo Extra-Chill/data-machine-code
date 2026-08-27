@@ -65,7 +65,9 @@ class AbilityToolProjections {
 			'workspace_run_runner_command'          => self::workspace_write('datamachine-code/run-runner-workspace-command'),
 			'workspace_git_rebase'                 => self::workspace_write('datamachine-code/workspace-git-rebase'),
 			'workspace_git_reset'                  => self::workspace_write('datamachine-code/workspace-git-reset'),
+			'workspace_worktree_plan'              => self::workspace('datamachine-code/workspace-worktree-plan'),
 			'workspace_worktree_add'               => self::workspace_write('datamachine-code/workspace-worktree-add'),
+			'workspace_publish_runner'             => self::workspace_write('datamachine-code/publish-runner-workspace'),
 			'workspace_pr_status'                  => self::workspace_write('datamachine-code/workspace-pr-status'),
 			'workspace_pr_rebase'                  => self::workspace_write('datamachine-code/workspace-pr-rebase'),
 
@@ -83,6 +85,12 @@ class AbilityToolProjections {
 			'list_github_tree'                     => self::github('datamachine-code/list-github-tree'),
 			'get_github_file'                      => self::github('datamachine-code/get-github-file'),
 			'list_github_repos'                    => self::github('datamachine-code/list-github-repos'),
+			'remove_label_from_issue'              => self::github('datamachine-code/remove-github-label'),
+			'comment_github_pull_request'          => self::github('datamachine-code/comment-github-pull-request'),
+			'upsert_github_pull_review_comment'    => self::github('datamachine-code/upsert-github-pull-review-comment'),
+			'merge_github_pull_request'            => self::github('datamachine-code/merge-github-pull-request'),
+			'cleanup_github_pull_request'          => self::github('datamachine-code/cleanup-github-pull-request'),
+			'create_or_update_github_file'         => self::github('datamachine-code/create-or-update-github-file'),
 		);
 	}
 

@@ -10,6 +10,7 @@ namespace DataMachineCode\CodeTask;
 use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorkspaceWriter;
+use DataMachineCode\Workspace\WorktreeAllocationRequest;
 
 defined('ABSPATH') || exit;
 
@@ -62,18 +63,15 @@ class CodeTaskCreator {
 		? (string) $args['base_ref']
 		: 'origin/main';
 
-		$worktree = $this->workspace->worktree_add(
-			$repo['name'],
-			$branch,
-			$base_ref,
-			true,
-			true,
-			! empty($args['allow_stale']),
-			false,
-			! empty($args['force']),
-			array( 'task_url' => $packet->source_url() ),
-			true
-		);
+		$worktree = $this->workspace->worktree_add(new WorktreeAllocationRequest(
+			repo: $repo['name'],
+			branch: $branch,
+			from: $base_ref,
+			task: array( 'task_url' => $packet->source_url() ),
+			allow_stale: ! empty($args['allow_stale']),
+			force: ! empty($args['force']),
+			require_task_tracker: true
+		));
 
 		if ( $worktree instanceof \WP_Error ) {
 			return $worktree;

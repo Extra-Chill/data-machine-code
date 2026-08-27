@@ -280,13 +280,15 @@ on it are how parallel agents corrupt each other's work.
 
 - WordPress 6.9+
 - PHP 8.2+
-- [Data Machine](https://github.com/Extra-Chill/data-machine) plugin (core)
+- [Data Machine](https://github.com/Extra-Chill/data-machine) 0.139.6+ when using model-facing ability tool projections
 - A driver for the abilities you plan to use — at least one of:
   - An external coding-agent runtime on the same host; see [`wp-coding-agents`](https://github.com/Extra-Chill/wp-coding-agents) for an opinionated setup.
   - A Data Machine flow on the site that calls DMC's tools / abilities (in-process driver).
   - A CI workflow that boots WordPress with DMC loaded and runs a DM flow against it; see [`wc-site-generator`](https://github.com/chubes4/wc-site-generator) for the canonical Playground-based example.
 - Shell-backed workspace/git features require `exec()`, a local `git` binary, and a visible writable workspace path.
 DMC's abilities still register without a co-located runtime. API-first flows can exercise GitHub abilities directly; an idle workspace is only relevant when using workspace/git abilities.
+
+Model-facing workspace tools and one-to-one GitHub tools are projected directly from their canonical abilities through Data Machine. The remaining `GitHubTools` wrappers are intentionally bespoke: `manage_github_issue` composes update, close, and comment abilities, while `add_label_to_issue` adapts a single model-facing `label` to the canonical ability's `labels` collection.
 
 ## Installation
 

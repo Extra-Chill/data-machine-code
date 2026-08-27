@@ -8,6 +8,7 @@
 namespace DataMachineCode\CodeTask;
 
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorktreeAllocationRequest;
 
 defined('ABSPATH') || exit;
 
@@ -29,8 +30,8 @@ class WorkspaceCodeTaskWorkspace implements CodeTaskWorkspaceInterface {
 		return $this->workspace->clone_repo($url, $name);
 	}
 
-	public function worktree_add( string $repo, string $branch, ?string $from, bool $inject_context, bool $bootstrap, bool $allow_stale, bool $rebase_base, bool $force, array $task, bool $require_task_tracker ): array|\WP_Error {
-		return $this->workspace->worktree_add($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $force, $task, false, $require_task_tracker);
+	public function worktree_add( WorktreeAllocationRequest $request ): array|\WP_Error {
+		return $this->workspace->worktree_add_request($request);
 	}
 
 	public function get_repo_path( string $handle ): string {

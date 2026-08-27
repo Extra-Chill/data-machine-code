@@ -500,24 +500,24 @@ trait WorkspaceRepositoryLifecycle {
 			? 'origin/' . $branch
 			: ( '' !== trim( (string) ( $remote['base_ref'] ?? '' ) ) ? (string) $remote['base_ref'] : null );
 
-		$result = $this->worktree_add(
-			$repo_name,
-			$branch,
-			$from,
-			array_key_exists('inject_context', $options) ? (bool) $options['inject_context'] : true,
-			array_key_exists('bootstrap', $options) ? (bool) $options['bootstrap'] : true,
-			! empty($options['allow_stale']),
-			! empty($options['rebase_base']),
-			! empty($options['force']),
-			(array) ( $remote['task'] ?? array() ),
-			! empty($options['allow_unverified_freshness']),
-			array_key_exists('require_task_tracker', $options) ? (bool) $options['require_task_tracker'] : true,
-			array_filter(array(
+		$result = $this->worktree_add_request(WorktreeAllocationRequest::from_input(array(
+			'repo'                       => $repo_name,
+			'branch'                     => $branch,
+			'from'                       => $from,
+			'inject_context'             => array_key_exists('inject_context', $options) ? (bool) $options['inject_context'] : true,
+			'bootstrap'                  => array_key_exists('bootstrap', $options) ? (bool) $options['bootstrap'] : true,
+			'allow_stale'                => ! empty($options['allow_stale']),
+			'rebase_base'                => ! empty($options['rebase_base']),
+			'force'                      => ! empty($options['force']),
+			'task'                       => (array) ( $remote['task'] ?? array() ),
+			'allow_unverified_freshness' => ! empty($options['allow_unverified_freshness']),
+			'require_task_tracker'       => array_key_exists('require_task_tracker', $options) ? (bool) $options['require_task_tracker'] : true,
+			'intent'                     => array_filter(array(
 				'purpose'        => $remote['purpose'] ?? null,
 				'owner_run_ref'  => $remote['owner_run_ref'] ?? null,
 				'cleanup_policy' => $remote['cleanup_policy'] ?? null,
-			), static fn( $value ) => null !== $value)
-		);
+			), static fn( $value ) => null !== $value),
+		)));
 		if ( is_wp_error($result) ) {
 			return $result;
 		}

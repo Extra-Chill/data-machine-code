@@ -5,18 +5,18 @@ of handle parsing and slugification lives in `smoke-worktree-handles.php`.
 Integration coverage for the cleanup-merged flow (real git repos in a tmpdir,
 including safety-rail regressions) lives in `smoke-worktree-cleanup.php`.
 
-## 0. Pre-flight — the automated smoke tests
+## 0. Pre-flight — automated tests
 
 ```bash
-php tests/smoke-worktree-handles.php                          # pure-unit, fast
-php tests/smoke-worktree-cleanup.php                          # spawns a real git workspace
-php tests/smoke-worktree-cleanup-merged-obsolete-dirty.php    # merged + obsolete-on-default classifier
-php tests/smoke-worktree-bootstrap.php                        # fixture + real git, no WP required
-php tests/github-atomic-commit.php                            # GitHub API stubs, no network
+bin/dmc-test
 ```
 
-Expected: `32/32 passed`, `131/131 passed`, `14/14 passed`, and `30/30 passed`
-respectively. Skip the cleanup/bootstrap tests if `git` is unavailable.
+The runner executes each standalone test in an isolated PHP process. Pass exact
+test paths to run a focused set:
+
+```bash
+bin/dmc-test tests/workspace-operation-architecture.php tests/worktree-allocation-request.php
+```
 
 Prereqs:
 - WordPress 6.9+ with Data Machine + data-machine-code activated.
