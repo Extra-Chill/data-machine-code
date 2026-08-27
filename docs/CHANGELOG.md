@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.5] - 2026-08-27
+
+### Fixed
+- decide lock prunability by holder liveness, not age
+- keep cleanup safe --dry-run on the synchronous preview path
+
 ## [0.72.4] - 2026-08-27
 
 ### Fixed
