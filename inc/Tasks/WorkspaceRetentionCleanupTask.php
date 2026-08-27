@@ -10,6 +10,7 @@ namespace DataMachineCode\Tasks;
 use DataMachine\Core\PluginSettings;
 use DataMachine\Engine\AI\System\Tasks\SystemTask;
 use DataMachine\Engine\Tasks\TaskScheduler;
+use DataMachineCode\Storage\CleanupRunRepository;
 use DataMachineCode\Support\SystemTaskDrainability;
 use DataMachineCode\Workspace\Workspace;
 
@@ -120,6 +121,8 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 			return;
 		}
 
+		$result['expired_plans'] = $this->expire_unapplied_plans( empty( $opts['dry_run'] ) );
+
 		$report = (array) ( $result['report'] ?? array() );
 		do_action(
 			'datamachine_log',
@@ -140,6 +143,65 @@ class WorkspaceRetentionCleanupTask extends SystemTask {
 		);
 
 		$this->completeJob($jobId, $result);
+	}
+
+	/**
+	 * Expire cleanup plans that were persisted for review and never applied.
+	 *
+	 * Every plan or dry run persists a run so an operator can apply it later,
+	 * and nothing removed those rows afterwards, so a busy install accumulates
+	 * plans indefinitely. Applied and completed runs are untouched: only the
+	 * unapplied planning state expires.
+	 *
+	 * @param  bool $apply Whether to delete rather than report the candidates.
+	 * @return array<string,mixed>
+	 */
+	private function expire_unapplied_plans( bool $apply ): array {
+		/**
+		 * Filter how long an unapplied cleanup plan is retained.
+		 *
+		 * @param int $days Retention window in days.
+		 */
+		$days = (int) apply_filters( 'datamachine_code_cleanup_plan_max_age_days', 7 );
+		$days = max( 1, $days );
+
+		/**
+		 * Filter how many unapplied plans one retention pass may expire.
+		 *
+		 * @param int $limit Maximum runs per pass.
+		 */
+		$limit = (int) apply_filters( 'datamachine_code_cleanup_plan_expiry_limit', 2000 );
+		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
+
+		if ( ! $apply ) {
+			return array( 'applied' => false, 'max_age_days' => $days, 'cutoff' => $cutoff );
+		}
+
+		$repository = new CleanupRunRepository();
+		$expired = $repository->expire_runs( 'planned', $cutoff, $limit );
+
+		if ( $expired['runs'] > 0 ) {
+			do_action(
+				'datamachine_log',
+				'info',
+				sprintf( 'Workspace retention cleanup: expired %d unapplied cleanup plan(s).', $expired['runs'] ),
+				array(
+					'task'         => $this->getTaskType(),
+					'runs'         => $expired['runs'],
+					'items'        => $expired['items'],
+					'max_age_days' => $days,
+					'cutoff'       => $cutoff,
+				)
+			);
+		}
+
+		return array(
+			'applied'      => true,
+			'max_age_days' => $days,
+			'cutoff'       => $cutoff,
+			'runs'         => $expired['runs'],
+			'items'        => $expired['items'],
+		);
 	}
 
 	/**

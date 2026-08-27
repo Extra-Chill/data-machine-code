@@ -186,6 +186,55 @@ class CleanupRunRepository implements CleanupRunRepositoryInterface {
 	}
 
 	/**
+	 * Delete cleanup runs in a terminalless state that were never applied.
+	 *
+	 * A plan is persisted so an operator can review it and apply it later, so
+	 * an unapplied plan is expected rather than broken. Nothing removed it
+	 * afterwards, so plans accumulated for the life of the install. Expiry is
+	 * bounded per pass and removes each run's items alongside it.
+	 *
+	 * @param  string $status Run status to expire.
+	 * @param  string $cutoff Delete runs created strictly before this GMT datetime.
+	 * @param  int    $limit  Maximum runs to delete in one pass.
+	 * @return array{runs:int,items:int}
+	 */
+	public function expire_runs( string $status, string $cutoff, int $limit = 500 ): array {
+		global $wpdb;
+
+		$limit = max( 1, min( 5000, $limit ) );
+		// phpcs:disable WordPress.DB.PreparedSQL -- Table names derive from $wpdb prefix; predicates are prepared.
+		$run_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT run_id FROM ' . CleanupSchema::runs_table() . ' WHERE status = %s AND created_at < %s ORDER BY created_at ASC LIMIT %d',
+				$status,
+				$cutoff,
+				$limit
+			)
+		);
+		$run_ids = array_values( array_filter( array_map( 'strval', is_array( $run_ids ) ? $run_ids : array() ) ) );
+		if ( array() === $run_ids ) {
+			return array( 'runs' => 0, 'items' => 0 );
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $run_ids ), '%s' ) );
+		$items = (int) SqliteBusyRetry::run(
+			'cleanup_run_expire_items',
+			fn() => $wpdb->query(
+				$wpdb->prepare( 'DELETE FROM ' . CleanupSchema::items_table() . ' WHERE run_id IN (' . $placeholders . ')', ...$run_ids )
+			)
+		);
+		$runs = (int) SqliteBusyRetry::run(
+			'cleanup_run_expire_runs',
+			fn() => $wpdb->query(
+				$wpdb->prepare( 'DELETE FROM ' . CleanupSchema::runs_table() . ' WHERE run_id IN (' . $placeholders . ')', ...$run_ids )
+			)
+		);
+		// phpcs:enable WordPress.DB.PreparedSQL
+
+		return array( 'runs' => max( 0, $runs ), 'items' => max( 0, $items ) );
+	}
+
+	/**
 	 * Fetch items for a run.
 	 *
 	 * @param  string $run_id Run ID.
