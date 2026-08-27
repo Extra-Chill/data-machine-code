@@ -1610,7 +1610,8 @@ class WorkspaceCommand extends BaseCommand {
 			};
 		}
 
-		$ability = wp_get_ability( 'json' === (string) ( $assoc_args['format'] ?? '' ) ? 'datamachine-code/workspace-cleanup-safe-run' : 'datamachine-code/workspace-cleanup-safe' );
+		$json_format = 'json' === (string) ( $assoc_args['format'] ?? '' );
+		$ability     = wp_get_ability( $json_format && empty( $input['dry_run'] ) ? 'datamachine-code/workspace-cleanup-safe-run' : 'datamachine-code/workspace-cleanup-safe' );
 		if ( ! $ability ) {
 			WP_CLI::error( 'Safe workspace cleanup ability not available.' );
 			return;
