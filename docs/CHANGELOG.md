@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.4] - 2026-08-27
+
+### Fixed
+- expire unapplied workspace cleanup plans
+
 ## [0.72.3] - 2026-08-26
 
 ### Changed
