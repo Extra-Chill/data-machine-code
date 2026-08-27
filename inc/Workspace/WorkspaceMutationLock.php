@@ -1122,13 +1122,30 @@ final class WorkspaceMutationLock {
 
 		flock($handle, LOCK_UN); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_flock
 		fclose($handle); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-		$stale                     = false !== $mtime && $mtime < $cutoff;
-		$entry['state']            = $stale ? 'stale' : 'recent';
-		$entry['reason']           = $stale ? 'unlocked_stale_file' : 'unlocked_recent_file';
-		$entry['safe_to_prune']    = $stale;
-		$entry['recovery_command'] = $stale
-			? 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json'
-			: 'wp datamachine-code workspace worktree locks --format=json';
+
+		// The flock above is the authoritative liveness signal: acquiring it
+		// proves no process holds this lock. Age only guards the window between
+		// creating the file and taking the flock, so it is a short grace period
+		// rather than a retention window. Gating prunability on the 24h staleness
+		// window instead left orphaned locks protected for a full day with zero
+		// holders, so `active_locks: 0` still reported nothing prunable (#1273).
+		$orphan_grace           = (int) $policy['orphan_grace_seconds'];
+		$age                    = false === $mtime ? null : max(0, time() - $mtime);
+		$within_creation_grace  = null === $age || $age < $orphan_grace;
+		$entry['orphan_grace_seconds'] = $orphan_grace;
+
+		$entry['state']            = $within_creation_grace ? 'recent' : 'stale';
+		$entry['reason']           = $within_creation_grace ? 'unlocked_within_creation_grace' : 'unlocked_no_live_holder';
+		$entry['safe_to_prune']    = ! $within_creation_grace;
+		$entry['recovery_command'] = $within_creation_grace
+			? 'wp datamachine-code workspace worktree locks --format=json'
+			: 'wp datamachine-code workspace worktree locks --prune-stale --dry-run --format=json';
+		if ( $within_creation_grace ) {
+			$entry['operator_guidance'] = sprintf(
+				'No process holds this lock, but it was created less than %ds ago. It becomes prunable once the creation grace window passes.',
+				$orphan_grace
+			);
+		}
 
 		return $entry;
 	}
@@ -1156,7 +1173,10 @@ final class WorkspaceMutationLock {
 		$files    = is_dir($lock_dir) ? glob($lock_dir . '/*.lock') : array();
 		$files    = false === $files ? array() : $files;
 		$policy   = self::retention_policy();
-		$cutoff   = time() - (int) $policy['filesystem_stale_after_seconds'];
+		// Matches the classifier: liveness decides, and age only covers the
+		// create-then-flock race. Skipping on the 24h staleness window here meant
+		// an orphaned lock was never even tested for a live holder (#1273).
+		$cutoff   = time() - (int) $policy['orphan_grace_seconds'];
 		$removed  = array();
 		$skipped  = array();
 
@@ -1168,7 +1188,7 @@ final class WorkspaceMutationLock {
 			if ( false === $mtime || $mtime >= $cutoff ) {
 				$skipped[] = array(
 					'path'   => $file,
-					'reason' => 'not_stale',
+					'reason' => 'within_creation_grace',
 				);
 				continue;
 			}
@@ -1215,6 +1235,7 @@ final class WorkspaceMutationLock {
 	private static function retention_policy(): array {
 		$policy = array(
 			'filesystem_stale_after_seconds' => 86400,
+			'orphan_grace_seconds'           => 300,
 		);
 		if ( function_exists('apply_filters') ) {
 			$policy = (array) apply_filters('datamachine_code_cleanup_lock_retention_policy', $policy);
@@ -1222,6 +1243,7 @@ final class WorkspaceMutationLock {
 
 		return array(
 			'filesystem_stale_after_seconds' => max(60, (int) ( $policy['filesystem_stale_after_seconds'] ?? 86400 )),
+			'orphan_grace_seconds'           => max(30, (int) ( $policy['orphan_grace_seconds'] ?? 300 )),
 		);
 	}
 }
