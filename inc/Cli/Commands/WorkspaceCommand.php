@@ -24,7 +24,7 @@ use DataMachineCode\Cli\CliRepeatableOptionParser;
 use DataMachineCode\Cli\WorkspaceCompactOutput;
 use DataMachineCode\Cleanup\CompositeCleanupRunEvidenceStore;
 use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
-use DataMachineCode\Cleanup\CleanupRunControlOperation;
+use DataMachineCode\Workspace\CleanupRunControlOperation;
 use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;

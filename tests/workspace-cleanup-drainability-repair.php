@@ -36,11 +36,11 @@ namespace {
 
 	require_once dirname(__DIR__) . '/inc/Cleanup/CleanupRunEvidenceStoreInterface.php';
 	require_once dirname(__DIR__) . '/inc/Support/SystemTaskDrainability.php';
-	require_once dirname(__DIR__) . '/inc/Cleanup/CleanupRunControlOperation.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/CleanupRunControlOperation.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	use DataMachineCode\Cleanup\CleanupRunEvidenceStoreInterface;
-	use DataMachineCode\Cleanup\CleanupRunControlOperation;
+	use DataMachineCode\Workspace\CleanupRunControlOperation;
 	use DataMachineCode\Cli\Commands\WorkspaceCommand;
 
 	$GLOBALS['workspace_cleanup_drainability_jobs'] = array(
