@@ -38,28 +38,6 @@ trait WorkspaceWorktreeLifecycle {
 	 *
 	 * @return array<string,mixed>|\WP_Error
 	 */
-	public function worktree_plan( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $allow_percentage_byte_floor_exception = false ): array|\WP_Error {
-		return $this->worktree_plan_request(
-			new WorktreeAllocationRequest(
-				repo: $repo,
-				branch: $branch,
-				from: $from,
-				inject_context: $inject_context,
-				bootstrap: $bootstrap,
-				allow_stale: $allow_stale,
-				rebase_base: $rebase_base,
-				force: $force,
-				task: $task,
-				allow_unverified_freshness: $allow_unverified_freshness,
-				require_task_tracker: $require_task_tracker,
-				intent: $intent,
-				reuse_policy: $reuse_policy,
-				allow_percentage_byte_floor_exception: $allow_percentage_byte_floor_exception
-			)
-		);
-	}
-
-	/** Execute worktree planning from one explicit allocation contract. */
 	public function worktree_plan_request( WorktreeAllocationRequest $request ): array|\WP_Error {
 		$repo                                  = $request->repo;
 		$branch                                = $request->branch;
@@ -1116,92 +1094,6 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 
-
-	/**
-	 * Create a git worktree for a branch.
-	 *
-	 * Layout: `<workspace>/<repo>@<branch-slug>` is added as a worktree of
-	 * `<workspace>/<repo>` checked out to `<branch>`. If the branch does not
-	 * exist locally, it is created from `<from>` (default `origin/HEAD`).
-	 *
-	 * When `$inject_context` is true (default) and Data Machine's agent memory
-	 * layer is available, the originating site context is rendered into the
-	 * runtime projections registered by installed integrations. Projected paths
-	 * are added to the worktree's per-checkout `info/exclude`. When the memory
-	 * layer is absent the worktree is still created successfully; injection
-	 * silently skips.
-	 *
-	 * When `$bootstrap` is true (default), a bootstrap pass runs after the
-	 * worktree is created: `git submodule update --init --recursive` if
-	 * `.gitmodules` is present, package-manager installs for root or one-level
-	 * nested dependency roots with lockfiles (pnpm/bun/yarn/npm; submodule roots
-	 * are excluded unless `.datamachine/worktree-bootstrap.json` opts them in), and
-	 * `composer install` for root or one-level nested dependency roots with
-	 * `composer.lock`. Steps are independent and each one is skipped gracefully
-	 * when its tool is unavailable. A failing step is surfaced in the result
-	 * but does not roll back the worktree — the checkout exists either way.
-	 * Pass `$bootstrap = false` (or `--no-bootstrap` on the CLI) for a bare
-	 * checkout when you only need to read code on that branch.
-	 *
-	 * When remote freshness cannot be verified, worktree creation is refused
-	 * unless `$allow_unverified_freshness` is set. This keeps default operation
-	 * fail-closed while preserving intentional offline workflows.
-	 *
-	 * When the branch/base is behind the remote default branch, worktree
-	 * creation is refused unless `$allow_stale` is set. This check is
-	 * zero-tolerance: any default-branch commits missing from the requested
-	 * branch/base mean the worktree would start stale.
-	 *
-	 * When the materialized branch (or its local base) is more than
-	 * `datamachine_worktree_stale_threshold` commits behind upstream and
-	 * neither `$allow_stale` nor `$rebase_base` is set, the worktree is
-	 * torn down and the call returns a `worktree_stale` WP_Error with
-	 * remediation guidance. Pass `$allow_stale = true` to proceed anyway,
-	 * or `$rebase_base = true` to auto-rebase onto the upstream tip before
-	 * returning. On rebase conflicts the rebase is aborted (worktree stays
-	 * at its pre-rebase state) and `rebase_failed: true` is surfaced in
-	 * the response so the agent can resolve manually.
-	 *
-	 * @param  string      $repo           Primary repo name (no @-suffix).
-	 * @param  string      $branch         Branch to check out (e.g. "fix/foo-bar").
-	 * @param  string|null $from           Base ref when creating the branch.
-	 * @param  bool        $inject_context Whether to inject site-agent context (default true).
-	 * @param  bool        $bootstrap      Whether to run submodule/package/composer install after creation (default true).
-	 * @param  bool        $allow_stale    Bypass the staleness gate (default false).
-	 * @param  bool        $rebase_base    Rebase onto upstream after creation (default false).
-	 * @param  bool        $force          Bypass the disk-budget refusal threshold (default false).
-	 * @param  array       $task           Optional task metadata recorded on the worktree.
-	 * @param  bool        $allow_unverified_freshness Bypass fetch-failure freshness verification (default false).
-	 * @param  bool        $require_task_tracker Reject creation without task metadata (default false).
-	 * @param  string      $reuse_policy Existing-handle and same-task allocation policy.
-	 * @param  callable|null $progress_callback Best-effort lifecycle phase observer.
-	 * @param  bool        $allow_percentage_byte_floor_exception Admit a bounded demand past only the percentage byte floor.
-	 * @return array{success: bool, handle: string, path: string, branch: string, slug: string, created_branch: bool, message: string, disk_budget?: array, context_injected?: bool, context_files?: string[], context_skip_reason?: string, bootstrap?: array, fetch_failed?: bool, fetch_error?: string, fetch_attempts?: int, stale_commits_behind?: int, upstream?: string, base_stale_commits_behind?: int, base_upstream?: string, default_branch_commits_behind?: int, default_branch_ref?: string, gate_threshold?: int, rebase_attempted?: bool, rebase_succeeded?: bool, rebase_error?: string, rebase_target?: string}|\WP_Error
-	 */
-	public function worktree_add( string $repo, string $branch, ?string $from = null, bool $inject_context = true, bool $bootstrap = true, bool $allow_stale = false, bool $rebase_base = false, bool $force = false, array $task = array(), bool $allow_unverified_freshness = false, bool $require_task_tracker = false, array $intent = array(), string $reuse_policy = 'reuse_compatible', bool $remediate_capacity = false, bool $remediate_capacity_dry_run = false, ?callable $progress_callback = null, array $expected_freshness_identity = array(), bool $allow_percentage_byte_floor_exception = false ): array|\WP_Error {
-		return $this->worktree_add_request(
-			new WorktreeAllocationRequest(
-				repo: $repo,
-				branch: $branch,
-				from: $from,
-				inject_context: $inject_context,
-				bootstrap: $bootstrap,
-				allow_stale: $allow_stale,
-				rebase_base: $rebase_base,
-				force: $force,
-				task: $task,
-				allow_unverified_freshness: $allow_unverified_freshness,
-				require_task_tracker: $require_task_tracker,
-				intent: $intent,
-				reuse_policy: $reuse_policy,
-				remediate_capacity: $remediate_capacity,
-				remediate_capacity_dry_run: $remediate_capacity_dry_run,
-				progress_callback: $progress_callback,
-				expected_freshness_identity: $expected_freshness_identity,
-				allow_percentage_byte_floor_exception: $allow_percentage_byte_floor_exception
-			)
-		);
-	}
 
 	/** Execute worktree allocation from one explicit allocation contract. */
 	public function worktree_add_request( WorktreeAllocationRequest $request ): array|\WP_Error {

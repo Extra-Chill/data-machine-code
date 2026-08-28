@@ -4605,7 +4605,7 @@ class WorkspaceAbilities {
 	 * @return array
 	 */
 	public static function worktreeAdd( array $input ): array|\WP_Error {
-		$result = ( new WorktreeAllocationOperation() )->add(WorktreeAllocationRequest::from_input($input));
+		$result = ( new WorktreeAllocationOperation(new Workspace()) )->add(WorktreeAllocationRequest::from_input($input));
 		if ( is_array($result) && 'github_api' === ( $result['backend'] ?? null ) ) {
 			$result = self::decorate_remote_workspace_result('worktree_add', $result);
 		}
@@ -4651,7 +4651,7 @@ class WorkspaceAbilities {
 
 	/** Plan a local worktree using the same typed fields and defaults as add. */
 	public static function worktreePlan( array $input ): array|\WP_Error {
-		return ( new WorktreeAllocationOperation() )->plan(WorktreeAllocationRequest::from_input($input));
+		return ( new WorktreeAllocationOperation(new Workspace()) )->plan(WorktreeAllocationRequest::from_input($input));
 	}
 
 	/** Apply a previously returned local worktree plan. */

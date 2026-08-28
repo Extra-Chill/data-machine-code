@@ -8,6 +8,7 @@ if ( ! defined('ABSPATH') ) {
 	define('ABSPATH', __DIR__ . '/fixtures/');
 }
 
+require_once __DIR__ . '/support/bootstrap.php';
 require_once __DIR__ . '/worktree-lifecycle-fixture-guard-support.inc';
 
 $temp_root      = realpath(sys_get_temp_dir()) ?: sys_get_temp_dir();
@@ -329,7 +330,7 @@ try {
 
 	$source_path = $workspace_root . '/source';
 	$primary_path = $workspace_root . '/homeboy';
-	$refresh_required = $workspace->worktree_plan('homeboy', 'planned-before-refresh', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-before-refresh' ));
+	$refresh_required = $workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'planned-before-refresh', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-before-refresh' )));
 	assert_true(is_wp_error($refresh_required) && 'freshness_refresh_required' === $refresh_required->get_error_code() && 'wp datamachine-code workspace git pull homeboy --allow-primary-refresh' === ( $refresh_required->get_error_data()['refresh_command'] ?? null ), 'plan without explicit freshness evidence did not return the typed exact refresh command');
 	$refreshed = $workspace->git_pull('homeboy', false, true);
 	assert_true(! is_wp_error($refreshed), is_wp_error($refreshed) ? $refreshed->get_error_message() : 'explicit primary refresh did not establish plan freshness evidence');
@@ -354,7 +355,7 @@ try {
 			return array( 'status' => 'ok', 'creation_allowed' => true, 'demand_plan' => $demand_plan );
 		}
 	};
-	$create_plan = $stable_plan_workspace->worktree_plan('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' ));
+	$create_plan = $stable_plan_workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'planned-create', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-create' )));
 	putenv('PATH=' . ( false === $plan_original_path ? '' : $plan_original_path ));
 	assert_true(! is_wp_error($create_plan) && 'create' === ( $create_plan['disposition'] ?? null ) && ! empty($create_plan['digest']) && 'homeboy@planned-create' === ( $create_plan['handle'] ?? null ) && ! is_dir($workspace_root . '/homeboy@planned-create'), 'create plan was not a non-mutating typed allocation');
 	assert_true(! str_contains((string) file_get_contents($plan_git_log), 'fetch'), 'worktree plan performed a network fetch');
@@ -371,9 +372,9 @@ try {
 			return array( 'status' => 'refused', 'demand_plan' => $demand_plan );
 		}
 	};
-	$capacity_plan = $capacity_planner->worktree_plan('homeboy', 'planned-capacity', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-capacity' ));
+	$capacity_plan = $capacity_planner->worktree_plan_request(dmc_test_allocation_request('homeboy', 'planned-capacity', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-capacity' )));
 	assert_true(! is_wp_error($capacity_plan) && 'capacity_blocked' === ( $capacity_plan['disposition'] ?? null ), 'capacity-blocked plan was not deterministic');
-	$stale_plan = $stable_plan_workspace->worktree_plan('homeboy', 'planned-stale', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-stale' ));
+	$stale_plan = $stable_plan_workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'planned-stale', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/planned-stale' )));
 	file_put_contents($source_path . '/plan-remote-change.txt', "changed\n");
 	run_command('git add plan-remote-change.txt && git commit -m plan-remote-change && git push', $source_path);
 	$stale_apply = $stable_plan_workspace->worktree_apply_plan($stale_plan);
@@ -402,7 +403,7 @@ try {
 	);
 	assert_true(! is_wp_error($cloned), is_wp_error($cloned) ? $cloned->get_error_message() : 'local clone was diverted to remote registration');
 	assert_true(is_dir($workspace_root . '/clone-handoff/.git'), 'workspace clone did not materialize the local primary');
-	$cloned_worktree = $workspace->worktree_add('clone-handoff', 'feat/clone-handoff', 'origin/main', false, false, false, false, true);
+	$cloned_worktree = $workspace->worktree_add_request(dmc_test_allocation_request('clone-handoff', 'feat/clone-handoff', 'origin/main', false, false, false, false, true));
 	assert_true(! is_wp_error($cloned_worktree), is_wp_error($cloned_worktree) ? $cloned_worktree->get_error_message() : 'worktree add failed from the cloned primary');
 	assert_true(is_file($workspace_root . '/clone-handoff@feat-clone-handoff/.git'), 'cloned primary did not support worktree materialization');
 
@@ -414,9 +415,9 @@ try {
 	file_put_contents($source_path . '/upstream-package/composer.lock', '{}');
 	run_command('git add upstream-package/composer.lock && git commit -m upstream-dependency && git push', $source_path);
 	$rebase_progress = array();
-	$rebased_admission = $workspace->worktree_add('homeboy', 'stale-rebase-demand', null, false, true, false, true, true, array(), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$rebase_progress ): void {
+	$rebased_admission = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'stale-rebase-demand', null, false, true, false, true, true, array(), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$rebase_progress ): void {
 		$rebase_progress[] = $event['phase'] ?? null;
-	});
+	}));
 	assert_true(! is_wp_error($rebased_admission), is_wp_error($rebased_admission) ? $rebased_admission->get_error_message() : 'stale branch rebase admission failed');
 	assert_true(true === ( $rebased_admission['rebase_succeeded'] ?? false ), 'stale branch was not rebased onto its advanced upstream');
 	$post_create_validation = array_search('post_create_validation', $rebase_progress, true);
@@ -486,7 +487,7 @@ try {
 		$thresholds['warn_free_percent']   = 0.0;
 		return $thresholds;
 	};
-	$refused = $workspace->worktree_add('homeboy', 'audit-primitives-disk-refused', 'origin/main', false, false, false, false, false);
+	$refused = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-disk-refused', 'origin/main', false, false, false, false, false));
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
 	assert_true(is_wp_error($refused), 'disk pressure below the hard floor reported success');
 	assert_true('worktree_disk_budget_exceeded' === $refused->get_error_code(), 'unexpected disk pressure refusal error code');
@@ -515,7 +516,7 @@ try {
 		$thresholds['warn_free_percent']   = 0.0;
 		return $thresholds;
 	};
-	$admitted_dry_run = $workspace->worktree_add('homeboy', 'capacity-remediation-admitted-dry-run', 'origin/main', false, false, false, false, false, array(), false, false, array(), 'reuse_compatible', true, true);
+	$admitted_dry_run = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'capacity-remediation-admitted-dry-run', 'origin/main', false, false, false, false, false, array(), false, false, array(), 'reuse_compatible', true, true));
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
 	assert_true(! is_wp_error($admitted_dry_run), is_wp_error($admitted_dry_run) ? $admitted_dry_run->get_error_message() : 'admitted capacity remediation dry-run failed');
 	assert_true(true === ( $admitted_dry_run['dry_run'] ?? false ), 'admitted capacity remediation request did not report dry-run.');
@@ -573,16 +574,16 @@ try {
 	assert_true(isset($ability_operator_local['capacity']['status']), 'default ability response omitted the concise capacity decision');
 	assert_true(true === ( $ability_operator_local['evidence']['verbose']['input']['verbose'] ?? null ), 'default ability response omitted its explicit verbose evidence request');
 
-	$strict_missing = $workspace->worktree_add('homeboy', 'audit-primitives-tracker-required', 'origin/main', false, false, false, false, true, array(), false, true);
+	$strict_missing = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-tracker-required', 'origin/main', false, false, false, false, true, array(), false, true));
 	assert_true(is_wp_error($strict_missing), 'strict worktree creation accepted missing tracker metadata');
 	assert_true('worktree_task_tracker_required' === $strict_missing->get_error_code(), 'strict worktree creation returned an unexpected error code');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-tracker-required'), 'strict tracker refusal left a worktree directory behind');
 
 	putenv('DATAMACHINE_TASK_URL=https://example.test/issues/environment');
 	$progress = array();
-	$result    = $workspace->worktree_add('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
+	$result    = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-20260616', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/explicit' ), false, true, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$progress ): void {
 		$progress[] = $event;
-	});
+	}));
 	assert_true(! is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : 'worktree_add failed');
 	$handoff_freshness = (array) ( $result['handoff_freshness'] ?? array() );
 	$handoff_proof = (array) ( $handoff_freshness['proof'] ?? array() );
@@ -639,12 +640,12 @@ try {
 	assert_true('https://example.test/issues/explicit' === ( $wpdb->rows['homeboy@audit-primitives-20260616']['task_url'] ?? '' ), 'explicit tracker metadata did not override the environment fallback');
 	run_command('git push -u origin audit-primitives-20260616', $result['path']);
 
-	$environment_tracker = $workspace->worktree_add('homeboy', 'audit-primitives-environment-tracker', 'origin/main', false, false, false, false, true, array(), false, true);
+	$environment_tracker = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-environment-tracker', 'origin/main', false, false, false, false, true, array(), false, true));
 	assert_true(! is_wp_error($environment_tracker), is_wp_error($environment_tracker) ? $environment_tracker->get_error_message() : 'environment tracker fallback failed');
 	assert_true('https://example.test/issues/environment' === ( $wpdb->rows['homeboy@audit-primitives-environment-tracker']['task_url'] ?? '' ), 'environment tracker metadata was not persisted');
 	putenv('DATAMACHINE_TASK_URL');
 
-	$attach_fixture = $workspace->worktree_add('homeboy', 'attach-tracker', 'origin/main', false, false, false, false, true);
+	$attach_fixture = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'attach-tracker', 'origin/main', false, false, false, false, true));
 	assert_true(! is_wp_error($attach_fixture), is_wp_error($attach_fixture) ? $attach_fixture->get_error_message() : 'tracker attachment fixture creation failed');
 	$attach_handle = 'homeboy@attach-tracker';
 	$owner_identity = array(
@@ -716,12 +717,12 @@ try {
 	WorktreeContextInjector::store_lifecycle_metadata($attach_handle, $owner_identity);
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_current_ownership_identity']);
 
-	$reusable = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$reusable = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(! is_wp_error($reusable), is_wp_error($reusable) ? $reusable->get_error_message() : 'reuse fixture creation failed');
-	$invalid_reuse_policy = $workspace->worktree_add('homeboy', 'invalid-reuse-policy', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'recycle-terminal');
+	$invalid_reuse_policy = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'invalid-reuse-policy', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'recycle-terminal'));
 	assert_true(is_wp_error($invalid_reuse_policy) && 'invalid_worktree_reuse_policy' === $invalid_reuse_policy->get_error_code(), 'invalid reuse policy did not fail with a typed error');
 	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $primary_path);
-	$same_task_refused = $workspace->worktree_add('homeboy', 'same-task-refused', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$same_task_refused = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'same-task-refused', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/origin.git'), $primary_path);
 	assert_true(is_wp_error($same_task_refused) && 'worktree_reuse_refused' === $same_task_refused->get_error_code(), 'default same-task allocation did not fail with a typed reuse refusal before fetch');
 	$same_task_evidence = (array) $same_task_refused->get_error_data();
@@ -736,22 +737,22 @@ try {
 		assert_true(str_contains($corrected_template, $fragment), 'same-task corrected command template lost original or canonical fragment ' . $fragment);
 	}
 	assert_true(! is_dir($workspace_root . '/homeboy@same-task-refused') && '' === trim(run_command('git branch --list same-task-refused', $primary_path)), 'same-task refusal created a worktree path or branch');
-	$isolated_without_owner = $workspace->worktree_add('homeboy', 'same-task-ownerless', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'isolated');
+	$isolated_without_owner = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'same-task-ownerless', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'isolated'));
 	assert_true(is_wp_error($isolated_without_owner) && 'same_task_isolation_intent_required' === ( $isolated_without_owner->get_error_data()['reuse']['reason_code'] ?? null ), 'ownerless same-task isolation was not refused');
 	assert_true(! is_dir($workspace_root . '/homeboy@same-task-ownerless') && '' === trim(run_command('git branch --list same-task-ownerless', $primary_path)), 'ownerless isolation refusal created a worktree path or branch');
 	$isolated_intent = array( 'purpose' => 'parallel-verification', 'owner_run_ref' => 'run-123', 'cleanup_policy' => 'remove_on_success' );
-	$candidate_report = $workspace->worktree_add('homeboy', 'same-task-isolated', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, $isolated_intent, 'isolated');
+	$candidate_report = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'same-task-isolated', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, $isolated_intent, 'isolated'));
 	assert_true(! is_wp_error($candidate_report), is_wp_error($candidate_report) ? $candidate_report->get_error_message() : 'same-task isolated creation failed');
 	assert_true('homeboy@same-task-isolated' === ( $candidate_report['handle'] ?? '' ), 'isolated policy adopted a same-task candidate instead of creating the requested handle');
 	assert_true(array( 'homeboy@idempotent-reuse' ) === array_column((array) ($candidate_report['reuse_candidates'] ?? array()), 'handle'), 'same-task admission did not report deterministic informational candidates');
-	$isolated_owner_retry = $workspace->worktree_add('homeboy', 'same-task-isolated', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, $isolated_intent, 'isolated');
+	$isolated_owner_retry = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'same-task-isolated', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, $isolated_intent, 'isolated'));
 	assert_true(! is_wp_error($isolated_owner_retry) && true === ( $isolated_owner_retry['reused'] ?? false ) && 'owner_identical_live_retry' === ( $isolated_owner_retry['reuse']['reason_code'] ?? null ), is_wp_error($isolated_owner_retry) ? $isolated_owner_retry->get_error_message() : 'same-owner live isolated retry was not accepted');
-	$isolated_foreign_owner = $workspace->worktree_add('homeboy', 'same-task-isolated', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array( 'purpose' => 'parallel-verification', 'owner_run_ref' => 'run-foreign', 'cleanup_policy' => 'remove_on_success' ), 'isolated');
+	$isolated_foreign_owner = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'same-task-isolated', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array( 'purpose' => 'parallel-verification', 'owner_run_ref' => 'run-foreign', 'cleanup_policy' => 'remove_on_success' ), 'isolated'));
 	assert_true(is_wp_error($isolated_foreign_owner) && 'disposable_intent_mismatch' === ( $isolated_foreign_owner->get_error_data()['reuse']['reason_code'] ?? null ), 'foreign owner live isolated retry did not fail closed');
-	$candidate_report_second = $workspace->worktree_add('homeboy', 'same-task-second', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array( 'purpose' => 'parallel-review', 'owner_run_ref' => 'run-456', 'cleanup_policy' => 'remove_on_success' ), 'isolated');
+	$candidate_report_second = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'same-task-second', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array( 'purpose' => 'parallel-review', 'owner_run_ref' => 'run-456', 'cleanup_policy' => 'remove_on_success' ), 'isolated'));
 	assert_true(! is_wp_error($candidate_report_second), is_wp_error($candidate_report_second) ? $candidate_report_second->get_error_message() : 'second same-task isolated creation failed');
 	assert_true(array( 'homeboy@idempotent-reuse', 'homeboy@same-task-isolated' ) === array_column((array) ($candidate_report_second['reuse_candidates'] ?? array()), 'handle'), 'same-task candidates were not deterministically ordered');
-	$recycle_fixture = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-old' ));
+	$recycle_fixture = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-old' )));
 	assert_true(! is_wp_error($recycle_fixture), is_wp_error($recycle_fixture) ? $recycle_fixture->get_error_message() : 'terminal recycle fixture creation failed');
 	run_command('git push -u origin terminal-recycle', $recycle_fixture['path']);
 	$recycle_handle = 'homeboy@terminal-recycle';
@@ -766,7 +767,7 @@ try {
 		$thresholds['refuse_free_percent'] = 0.0;
 		return $thresholds;
 	};
-	$dry_recycle = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/recycle-dry-run' ), false, false, array(), 'recycle_terminal', true, true);
+	$dry_recycle = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, false, array( 'task_url' => 'https://example.test/issues/recycle-dry-run' ), false, false, array(), 'recycle_terminal', true, true));
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_worktree_disk_budget_thresholds']);
 	assert_true(! is_wp_error($dry_recycle) && true === ($dry_recycle['dry_run'] ?? false), 'capacity remediation dry-run did not return its non-mutating preview');
 	assert_true($dry_recycle_head === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])), 'capacity remediation dry-run reset a terminal worktree');
@@ -776,7 +777,7 @@ try {
 	file_put_contents($recycle_fixture['path'] . '/.recycle-context', "preserved context\n");
 	mkdir($recycle_fixture['path'] . '/vendor', 0777, true);
 	file_put_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker', "preserved bootstrap\n");
-	$recycled = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
+	$recycled = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal'));
 	assert_true(! is_wp_error($recycled) && true === ( $recycled['recycled'] ?? false ), is_wp_error($recycled) ? $recycled->get_error_message() : 'terminal recycle did not succeed');
 	assert_true('verified' === ( $recycled['handoff_freshness']['status'] ?? null ) && ! empty($recycled['handoff_freshness']['proof']), 'terminal recycle did not issue a verified handoff proof');
 	assert_true('terminal_exact_handle' === ( $recycled['recycle']['reason_code'] ?? null ) && 'https://example.test/issues/recycle-old' === ( $recycled['recycle']['lineage']['previous_task']['task_url'] ?? null ) && 'https://example.test/issues/recycle-new' === ( $recycled['recycle']['lineage']['new_task']['task_url'] ?? null ), 'terminal recycle did not return durable task lineage');
@@ -784,22 +785,22 @@ try {
 	assert_true('preserved context' === trim((string) file_get_contents($recycle_fixture['path'] . '/.recycle-context')) && 'preserved bootstrap' === trim((string) file_get_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker')) && 'preserved' === ( $recycled['recycle']['context'] ?? null ) && 'preserved' === ( $recycled['recycle']['bootstrap'] ?? null ), 'terminal recycle did not preserve compatible context/bootstrap assets');
 	$recycle_before_refusal = trim(run_command('git rev-parse HEAD', $recycle_fixture['path']));
 	file_put_contents($recycle_fixture['path'] . '/recycle-dirty.txt', "dirty\n");
-	$recycle_dirty = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
+	$recycle_dirty = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal'));
 	assert_true(is_wp_error($recycle_dirty) && 'dirty_worktree' === ( $recycle_dirty->get_error_data()['reuse']['reason_code'] ?? null ) && $recycle_before_refusal === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])), 'dirty terminal recycle refusal mutated the worktree');
 	unlink($recycle_fixture['path'] . '/recycle-dirty.txt');
 	file_put_contents($recycle_fixture['path'] . '/recycle-unpushed.txt', "unpushed\n");
 	run_command('git add recycle-unpushed.txt && git commit -m recycle-unpushed', $recycle_fixture['path']);
 	$recycle_unpushed_head = trim(run_command('git rev-parse HEAD', $recycle_fixture['path']));
-	$recycle_unpushed = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
+	$recycle_unpushed = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal'));
 	assert_true(is_wp_error($recycle_unpushed) && 'unpushed_commits' === ( $recycle_unpushed->get_error_data()['reuse']['reason_code'] ?? null ) && $recycle_unpushed_head === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])), 'unpushed terminal recycle refusal mutated the worktree');
 	run_command('git reset --hard origin/main', $recycle_fixture['path']);
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c') ));
-	$recycle_live = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
+	$recycle_live = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal'));
 	assert_true(! is_wp_error($recycle_live) && true === ( $recycle_live['recycled'] ?? false ), 'finalized terminal worktree heartbeat revived lifecycle state instead of allowing terminal recycle');
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
-	$recycle_base = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/other-base', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
+	$recycle_base = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/other-base', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal'));
 	assert_true(is_wp_error($recycle_base) && 'base_mismatch' === ( $recycle_base->get_error_data()['reuse']['reason_code'] ?? null ), 'base-mismatched terminal recycle did not fail closed');
-	$recycle_context = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', true, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal');
+	$recycle_context = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', true, false, false, false, true, array( 'task_url' => 'https://example.test/issues/recycle-new' ), false, false, array(), 'recycle_terminal'));
 	assert_true(is_wp_error($recycle_context) && 'runtime_incompatible' === ( $recycle_context->get_error_data()['reuse']['reason_code'] ?? null ), 'context-mismatched terminal recycle did not fail closed');
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($recycle_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
 	$recycle_terminal = $workspace->worktree_finalize($recycle_handle, 'merged');
@@ -807,17 +808,17 @@ try {
 	$rollback_head = trim(run_command('git rev-parse HEAD', $recycle_fixture['path']));
 	$rollback_task = $wpdb->rows[$recycle_handle]['task_url'] ?? '';
 	$GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_recycle_metadata_preflight'] = static fn() => new WP_Error('metadata_failure', 'Injected metadata failure.');
-	$metadata_failure = $workspace->worktree_add('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/rollback-metadata' ), false, false, array(), 'recycle_terminal');
+	$metadata_failure = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'terminal-recycle', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/rollback-metadata' ), false, false, array(), 'recycle_terminal'));
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_worktree_recycle_metadata_preflight']);
 	assert_true(is_wp_error($metadata_failure) && 'worktree_recycle_metadata_persistence_failed' === $metadata_failure->get_error_code() && true === ( $metadata_failure->get_error_data()['recycle']['rollback']['head_restored'] ?? false ) && true === ( $metadata_failure->get_error_data()['recycle']['rollback']['metadata_restored'] ?? false ) && $rollback_head === trim(run_command('git rev-parse HEAD', $recycle_fixture['path'])) && $rollback_task === ( $wpdb->rows[$recycle_handle]['task_url'] ?? '' ) && 'cleanup_eligible' === ( $wpdb->rows[$recycle_handle]['lifecycle_state'] ?? '' ) && 'preserved context' === trim((string) file_get_contents($recycle_fixture['path'] . '/.recycle-context')) && 'preserved bootstrap' === trim((string) file_get_contents($recycle_fixture['path'] . '/vendor/.recycle-bootstrap-marker')), 'metadata failure did not restore exact terminal state or preserve compatible assets');
 	$reuse_handle      = 'homeboy@idempotent-reuse';
 	$disposable_intent = array( 'purpose' => 'integration-test', 'owner_run_ref' => 'run-991', 'cleanup_policy' => 'remove_on_success' );
-	$disposable = $workspace->worktree_add('homeboy', 'purpose-owned-disposable', 'origin/main', false, false, false, false, true, array(), false, false, $disposable_intent);
+	$disposable = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'purpose-owned-disposable', 'origin/main', false, false, false, false, true, array(), false, false, $disposable_intent));
 	assert_true(! is_wp_error($disposable), is_wp_error($disposable) ? $disposable->get_error_message() : 'purpose-owned disposable creation failed');
 	assert_true('integration-test' === ( $wpdb->rows['homeboy@purpose-owned-disposable']['purpose'] ?? '' ), 'purpose was not persisted to local inventory');
 	assert_true('run-991' === ( $disposable['metadata']['owner_run_ref'] ?? '' ), 'owner run reference did not round-trip through lifecycle metadata');
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata('homeboy@purpose-owned-disposable', array( 'last_seen_at' => gmdate('c', time() - 90000) ));
-	$disposable_mismatch = $workspace->worktree_add('homeboy', 'purpose-owned-disposable', 'origin/main', false, false, false, false, true, array(), false, false, array( 'purpose' => 'other', 'owner_run_ref' => 'run-991', 'cleanup_policy' => 'remove_on_success' ));
+	$disposable_mismatch = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'purpose-owned-disposable', 'origin/main', false, false, false, false, true, array(), false, false, array( 'purpose' => 'other', 'owner_run_ref' => 'run-991', 'cleanup_policy' => 'remove_on_success' )));
 	assert_true(is_wp_error($disposable_mismatch) && 'disposable_intent_mismatch' === ( $disposable_mismatch->get_error_data()['reuse']['reason_code'] ?? '' ), 'incompatible disposable reuse did not return typed intent evidence');
 	$disposable_finalized = $workspace->worktree_finalize('homeboy@purpose-owned-disposable', 'active', null, 'success');
 	assert_true(! is_wp_error($disposable_finalized) && 'cleanup_eligible' === ( $disposable_finalized['lifecycle_state'] ?? '' ), 'successful owner terminal outcome did not make disposable worktree cleanup eligible');
@@ -837,15 +838,15 @@ try {
 	assert_true(! is_wp_error($disposable_push), is_wp_error($disposable_push) ? $disposable_push->get_error_message() : 'workspace git push refused a present finalized local worktree');
 	assert_true('homeboy' === ( $disposable_push['workspace_repo'] ?? null ) && array_key_exists('force_with_lease', $disposable_push) && 'Remote workspace branch already updated via GitHub API.' !== ( $disposable_push['message'] ?? '' ), 'workspace git push did not use the canonical local route for a finalized worktree');
 	$reuse_created_at  = $wpdb->rows[$reuse_handle]['created_at'] ?? null;
-	$owner_conflict_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$owner_conflict_plan = $workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(! is_wp_error($owner_conflict_plan) && 'owner_conflict' === ( $owner_conflict_plan['disposition'] ?? null ), 'live owner conflict was not planned');
-	$live_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$live_reuse_refusal = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(is_wp_error($live_reuse_refusal) && 'worktree_reuse_refused' === $live_reuse_refusal->get_error_code(), 'live worktree reuse did not fail closed');
 	assert_true('live_worktree' === ( $live_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'live worktree refusal lacked typed reuse evidence');
-	$isolated_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'isolated');
+	$isolated_refusal = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ), false, false, array(), 'isolated'));
 	assert_true(is_wp_error($isolated_refusal) && 'isolated_requested' === ( $isolated_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'explicit isolated policy did not return typed refusal evidence');
 	\DataMachineCode\Workspace\WorktreeContextInjector::store_lifecycle_metadata($reuse_handle, array( 'last_seen_at' => gmdate('c', time() - 90000) ));
-	$reused = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$reused = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(! is_wp_error($reused), is_wp_error($reused) ? $reused->get_error_message() : 'clean compatible worktree was not reused');
 	assert_true(true === ( $reused['reused'] ?? false ) && 'exact_compatible_handle' === ( $reused['reuse']['reason_code'] ?? null ), 'exact reuse did not return accepted evidence');
 	assert_true('accepted' === ( $reused['reuse']['status'] ?? null ) && 'homeboy@idempotent-reuse' === ( $reused['reuse']['handle'] ?? null ), 'default exact reuse did not preserve typed result evidence');
@@ -863,16 +864,16 @@ try {
 	assert_true(! is_wp_error($late_reuse_result) && true === ( $late_reuse_result['reused'] ?? false ) && 'verified' === ( $late_reuse_result['handoff_freshness']['status'] ?? null ) && ! empty($late_reuse_result['handoff_freshness']['proof']), 'late capacity admission reuse did not take the repo-locked proof path');
 	assert_true($reuse_created_at === ( $wpdb->rows[$reuse_handle]['created_at'] ?? null ), 'reuse rewrote durable lifecycle metadata');
 	assert_true('https://example.test/issues/reuse' === ( $wpdb->rows[$reuse_handle]['task_url'] ?? '' ), 'reuse rewrote durable task metadata');
-	$claim_fixture = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ));
+	$claim_fixture = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' )));
 	assert_true(! is_wp_error($claim_fixture), is_wp_error($claim_fixture) ? $claim_fixture->get_error_message() : 'claim fixture creation failed');
 	run_command('git push -u origin claim-expired', $claim_fixture['path']);
 	$claim_handle = 'homeboy@claim-expired';
 	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c', time() - WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS - 1), 'origin_agent' => (object) array( 'id' => 'invalid' ), 'origin_session' => 'session', 'origin_user' => 'user', 'owner_run_ref' => 'old-run' ));
 	$claim_intent = array( 'purpose' => 'recovered-owner', 'owner_run_ref' => 'claim-run-1', 'cleanup_policy' => 'remove_on_success' );
-	$malformed_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
+	$malformed_claim = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired'));
 	assert_true(is_wp_error($malformed_claim) && 'malformed_ownership_metadata' === ( $malformed_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 'malformed' === ( $malformed_claim->get_error_data()['reuse']['liveness_evidence']['attribution'] ?? null ) && array( 'origin_agent' ) === ( $malformed_claim->get_error_data()['reuse']['liveness_evidence']['malformed_ownership_fields'] ?? null ), 'claim expired refused malformed ownership metadata');
 	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array( 'last_seen_at' => gmdate('c'), 'origin_agent' => '', 'origin_session' => '', 'origin_user' => '', 'owner_run_ref' => '' ));
-	$fresh_claim = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
+	$fresh_claim = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired'));
 	assert_true(is_wp_error($fresh_claim) && 'fresh_unattributed_heartbeat' === ( $fresh_claim->get_error_data()['reuse']['reason_code'] ?? null ) && 0 <= (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_age_seconds'] ?? -1 ) && WorktreeContextInjector::DEFAULT_HEARTBEAT_TTL_SECONDS === (int) ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['heartbeat_ttl_seconds'] ?? 0 ) && array( 'origin_agent', 'origin_session', 'origin_user', 'owner_run_ref' ) === ( $fresh_claim->get_error_data()['reuse']['liveness_evidence']['missing_ownership_fields'] ?? null ), 'fresh unattributed heartbeat did not refuse with complete deterministic evidence');
 	$owner_a_finalized_at = gmdate('c', time() - 3600);
 	WorktreeContextInjector::store_lifecycle_metadata($claim_handle, array(
@@ -889,7 +890,7 @@ try {
 		'finalized_owner_run_ref'         => 'old-run',
 		'cleanup_eligible_at'             => $owner_a_finalized_at,
 	));
-	$claimed = $workspace->worktree_add('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired');
+	$claimed = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'claim-expired', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/claim-expired' ), false, false, $claim_intent, 'claim_expired'));
 	assert_true(! is_wp_error($claimed) && true === ( $claimed['claimed'] ?? false ) && 'terminal_exact_handle' === ( $claimed['claim']['reason_code'] ?? null ) && WorktreeContextInjector::STATE_ACTIVE === ( $claimed['metadata']['lifecycle_state'] ?? null ) && 'claim-run-1' === ( $claimed['metadata']['owner_run_ref'] ?? null ) && 'old-run' === ( $claimed['metadata']['ownership_lineage'][0]['previous_owner_run_ref'] ?? null ), is_wp_error($claimed) ? $claimed->get_error_message() : 'owner B could not claim owner A terminal worktree with ownership lineage');
 	foreach ( array( 'owner_terminal_outcome', 'owner_terminal_at', 'owner_terminal_owner_run_ref', 'finalized_at', 'finalized_state', 'finalized_owner_run_ref', 'cleanup_eligible_at' ) as $terminal_field ) {
 		assert_true(! array_key_exists($terminal_field, $claimed['metadata']), sprintf('ownership claim retained stale terminal field %s', $terminal_field));
@@ -898,9 +899,9 @@ try {
 	// bootstrap starts: its durable running phase must block readiness until the
 	// exact compatible add retry completes bootstrap.
 	$bootstrap_progress = array();
-	$interrupted_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$bootstrap_progress ): void {
+	$interrupted_bootstrap = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ), false, false, array(), 'reuse_compatible', false, false, static function ( array $event ) use ( &$bootstrap_progress ): void {
 		$bootstrap_progress[] = $event['phase'] ?? null;
-	});
+	}));
 	assert_true(! is_wp_error($interrupted_bootstrap), is_wp_error($interrupted_bootstrap) ? $interrupted_bootstrap->get_error_message() : 'interrupted bootstrap fixture creation failed');
 	assert_true('verified' === ( $interrupted_bootstrap['handoff_freshness']['status'] ?? null ) && ! empty($interrupted_bootstrap['handoff_freshness']['proof']) && 'succeeded' === ( $interrupted_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ), 'completed bootstrap allocation did not receive a verified handoff proof');
 	$bootstrap_start = array_search('bootstrap_start', $bootstrap_progress, true);
@@ -924,7 +925,7 @@ try {
 	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'live' ) ));
 	$interrupted_metadata['provisioning']['bootstrap']['owner'] = WorktreeContextInjector::bootstrap_owner();
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
-	$live_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$live_bootstrap = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' )));
 	assert_true(is_wp_error($live_bootstrap) && 'worktree_bootstrap_in_progress' === $live_bootstrap->get_error_code(), 'live bootstrap owner did not reject concurrent resume');
 	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
 	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = $interrupted_metadata['provisioning']['bootstrap']['owner'];
@@ -932,7 +933,7 @@ try {
 	unset($interrupted_metadata['provisioning']['bootstrap']['owner']);
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
 	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => 4242 === $pid ? array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => 4242, 'token' => 'child' ) ) : array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
-	$child_live_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$child_live_bootstrap = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' )));
 	assert_true(is_wp_error($child_live_bootstrap) && 'worktree_bootstrap_in_progress' === $child_live_bootstrap->get_error_code(), 'dead coordinator with live child did not reject resume');
 	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
 	unset($interrupted_metadata['provisioning']['bootstrap']['active_child']);
@@ -940,10 +941,10 @@ try {
 	$interrupted_metadata['provisioning']['bootstrap']['coordinator'] = WorktreeContextInjector::bootstrap_owner();
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
 	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' ));
-	$unverifiable_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$unverifiable_bootstrap = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' )));
 	assert_true(is_wp_error($unverifiable_bootstrap) && 'worktree_bootstrap_owner_unverifiable' === $unverifiable_bootstrap->get_error_code() && 'owner_probe_denied' === ($unverifiable_bootstrap->get_error_data()['coordinator']['reason'] ?? null), 'unverifiable bootstrap owner did not fail closed with typed evidence');
 	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'active', 'identity' => array( 'platform' => 'test', 'pid' => $pid, 'token' => 'replacement' ) ));
-	$resumed_bootstrap = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$resumed_bootstrap = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' )));
 	assert_true(! is_wp_error($resumed_bootstrap) && true === ( $resumed_bootstrap['resumed'] ?? false ) && 'succeeded' === ( $resumed_bootstrap['metadata']['provisioning']['bootstrap']['outcome'] ?? null ) && empty($resumed_bootstrap['metadata']['provisioning']['bootstrap']['capacity_reservation']), is_wp_error($resumed_bootstrap) ? $resumed_bootstrap->get_error_message() : 'verified PID identity mismatch did not reconcile and resume');
 	$interrupted_metadata = WorktreeContextInjector::get_metadata($interrupted_bootstrap_handle) ?? array();
 	$interrupted_metadata['provisioning']['bootstrap']['outcome'] = 'running';
@@ -952,7 +953,7 @@ try {
 	unset($interrupted_metadata['provisioning']['bootstrap']['active_child'], $interrupted_metadata['provisioning']['bootstrap']['owner']);
 	WorktreeContextInjector::store_lifecycle_metadata($interrupted_bootstrap_handle, $interrupted_metadata);
 	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(static fn( int $pid ): array => array( 'state' => 'stale', 'reason' => 'owner_process_missing' ));
-	$dead_owner_resume = $workspace->worktree_add('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' ));
+	$dead_owner_resume = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-bootstrap', 'origin/main', false, true, false, false, true, array( 'task_url' => 'https://example.test/issues/interrupted-bootstrap' )));
 	assert_true(! is_wp_error($dead_owner_resume) && true === ($dead_owner_resume['resumed'] ?? false) && 'succeeded' === ($dead_owner_resume['metadata']['provisioning']['bootstrap']['outcome'] ?? null), is_wp_error($dead_owner_resume) ? $dead_owner_resume->get_error_message() : 'verified dead bootstrap owner did not reconcile and resume');
 	WorktreeContextInjector::set_bootstrap_owner_probe_for_test(null);
 	assert_true(true === ( $workspace->worktree_get($interrupted_bootstrap_handle)['worktrees'][0]['readiness']['ready'] ?? false ), 'resumed bootstrap remained incomplete');
@@ -964,29 +965,29 @@ try {
 			return parent::worktree_behind_count($repo_path, $ref, $upstream, $timeout_seconds);
 		}
 	};
-	$probe_timeout = $probe_timeout_workspace->worktree_add('homeboy', 'post-create-probe-timeout', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/post-create-probe-timeout' ));
+	$probe_timeout = $probe_timeout_workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'post-create-probe-timeout', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/post-create-probe-timeout' )));
 	$probe_timeout_handle = 'homeboy@post-create-probe-timeout';
 	$probe_timeout_path = $workspace_root . '/' . $probe_timeout_handle;
 	assert_true(is_wp_error($probe_timeout) && 'worktree_operation_timeout' === $probe_timeout->get_error_code() && 'default_branch_probe' === ( $probe_timeout->get_error_data()['phase'] ?? null ) && 'creation_journal_retained' === ( $probe_timeout->get_error_data()['recovery']['status'] ?? null ) && is_dir($probe_timeout_path) && null !== WorktreeContextInjector::get_creation_intent($probe_timeout_handle), 'timed-out post-create default-branch probe did not retain typed recovery state');
 	run_command('git worktree remove --force ' . escapeshellarg($probe_timeout_path), $primary_path);
 	run_command('git branch -D post-create-probe-timeout', $primary_path);
 	WorktreeContextInjector::forget_creation_intent($probe_timeout_handle, WorktreeContextInjector::get_creation_intent($probe_timeout_handle) ?? array());
-	$exact_reuse_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$exact_reuse_plan = $workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(! is_wp_error($exact_reuse_plan) && 'exact_reuse' === ( $exact_reuse_plan['disposition'] ?? null ), 'exact compatible reuse was not planned');
 	file_put_contents($reusable['path'] . '/reuse-dirty.txt', "dirty\n");
-	$unsafe_plan = $workspace->worktree_plan('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$unsafe_plan = $workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(! is_wp_error($unsafe_plan) && 'unsafe' === ( $unsafe_plan['disposition'] ?? null ), 'unsafe existing destination was not planned');
-	$dirty_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$dirty_reuse_refusal = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(is_wp_error($dirty_reuse_refusal) && 'dirty_worktree' === ( $dirty_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'dirty worktree reuse did not fail closed');
 	unlink($reusable['path'] . '/reuse-dirty.txt');
-	$runtime_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', true, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$runtime_reuse_refusal = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', true, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(is_wp_error($runtime_reuse_refusal) && 'runtime_incompatible' === ( $runtime_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'incompatible context runtime reuse did not fail closed');
-	$base_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/other-base', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$base_reuse_refusal = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/other-base', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(is_wp_error($base_reuse_refusal) && 'base_mismatch' === ( $base_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'mismatched base reuse did not fail closed');
 	run_command('git push -u origin idempotent-reuse', $reusable['path']);
 	file_put_contents($reusable['path'] . '/reuse-commit.txt', "unpushed\n");
 	run_command('git add reuse-commit.txt && git commit -m reuse-unpushed', $reusable['path']);
-	$unpushed_reuse_refusal = $workspace->worktree_add('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' ));
+	$unpushed_reuse_refusal = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'idempotent-reuse', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/reuse' )));
 	assert_true(is_wp_error($unpushed_reuse_refusal) && 'unpushed_commits' === ( $unpushed_reuse_refusal->get_error_data()['reuse']['reason_code'] ?? null ), 'unpushed worktree reuse did not fail closed');
 
 	// Simulate process termination immediately after `git worktree add`: the
@@ -996,16 +997,16 @@ try {
 	$interrupted_task = array( 'task_url' => 'https://example.test/issues/interrupted-add' );
 	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-recovery', interrupted_creation_intent('interrupted-add-recovery', $interrupted_base_head, $interrupted_task)), 'interruption fixture could not persist its pre-creation intent');
 	run_command('git worktree add -b interrupted-add-recovery ' . escapeshellarg($interrupted_path) . ' origin/main', $primary_path);
-	$adoptable_plan = $workspace->worktree_plan('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
+	$adoptable_plan = $workspace->worktree_plan_request(dmc_test_allocation_request('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task));
 	assert_true(! is_wp_error($adoptable_plan) && 'adoptable' === ( $adoptable_plan['disposition'] ?? null ) && null !== WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted exact handle was not planned as adoptable without metadata mutation');
-	$adopted = $workspace->worktree_add('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task);
+	$adopted = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-add-recovery', 'origin/main', false, false, false, false, true, $interrupted_task));
 	assert_true(! is_wp_error($adopted) && true === ( $adopted['adopted'] ?? false ), is_wp_error($adopted) ? $adopted->get_error_message() : 'exact interrupted worktree was not adopted');
 	assert_true('interrupted_exact_handle' === ( $adopted['recovery']['reason_code'] ?? null ) && 'https://example.test/issues/interrupted-add' === ( $adopted['metadata']['origin_task']['task_url'] ?? null ) && 'origin/main' === ( $adopted['metadata']['reuse_contract']['base_ref'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-recovery'), 'interrupted adoption did not promote and clear the exact journal contract');
 	assert_true('verified' === ( $adopted['handoff_freshness']['status'] ?? null ) && ! empty($adopted['handoff_freshness']['proof']), 'interrupted adoption did not issue a verified handoff proof');
 
 	$external_path = $workspace_root . '/homeboy@interrupted-add-external';
 	run_command('git worktree add -b interrupted-add-external ' . escapeshellarg($external_path) . ' origin/main', $primary_path);
-	$external = $workspace->worktree_add('homeboy', 'interrupted-add-external', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/external' ));
+	$external = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-add-external', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/external' )));
 	assert_true(is_wp_error($external) && 'interrupted_recovery_intent_missing' === ( $external->get_error_data()['reuse']['reason_code'] ?? null ) && null === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-external'), 'external metadata-less worktree was adopted from the retry task alone');
 
 	$mismatch_path = $workspace_root . '/homeboy@interrupted-add-task-mismatch';
@@ -1013,7 +1014,7 @@ try {
 	$mismatch_intent = interrupted_creation_intent('interrupted-add-task-mismatch', $interrupted_base_head, $mismatch_task);
 	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-task-mismatch', $mismatch_intent), 'mismatched-task fixture could not persist its pre-creation intent');
 	run_command('git worktree add -b interrupted-add-task-mismatch ' . escapeshellarg($mismatch_path) . ' origin/main', $primary_path);
-	$mismatched_task = $workspace->worktree_add('homeboy', 'interrupted-add-task-mismatch', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/retry-task' ));
+	$mismatched_task = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-add-task-mismatch', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/retry-task' )));
 	assert_true(is_wp_error($mismatched_task) && 'interrupted_recovery_intent_mismatch' === ( $mismatched_task->get_error_data()['reuse']['reason_code'] ?? null ) && $mismatch_intent === WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-task-mismatch'), 'mismatched retry task adopted or cleared an interrupted creation journal');
 
 	$dirty_interrupted_path = $workspace_root . '/homeboy@interrupted-add-dirty';
@@ -1021,7 +1022,7 @@ try {
 	assert_true(true === WorktreeContextInjector::store_creation_intent('homeboy@interrupted-add-dirty', interrupted_creation_intent('interrupted-add-dirty', $interrupted_base_head, $dirty_interrupted_task)), 'dirty interruption fixture could not persist its pre-creation intent');
 	run_command('git worktree add -b interrupted-add-dirty ' . escapeshellarg($dirty_interrupted_path) . ' origin/main', $primary_path);
 	file_put_contents($dirty_interrupted_path . '/interrupted-dirty.txt', "dirty\n");
-	$dirty_interrupted = $workspace->worktree_add('homeboy', 'interrupted-add-dirty', 'origin/main', false, false, false, false, true, $dirty_interrupted_task);
+	$dirty_interrupted = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-add-dirty', 'origin/main', false, false, false, false, true, $dirty_interrupted_task));
 	assert_true(is_wp_error($dirty_interrupted) && 'dirty_worktree' === ( $dirty_interrupted->get_error_data()['reuse']['reason_code'] ?? null ) && null !== WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-dirty'), 'dirty interrupted worktree was adopted');
 
 	$advanced_interrupted_path = $workspace_root . '/homeboy@interrupted-add-advanced';
@@ -1030,7 +1031,7 @@ try {
 	run_command('git worktree add -b interrupted-add-advanced ' . escapeshellarg($advanced_interrupted_path) . ' origin/main', $primary_path);
 	file_put_contents($advanced_interrupted_path . '/advanced.txt', "advanced\n");
 	run_command('git add advanced.txt && git commit -m interrupted-advanced', $advanced_interrupted_path);
-	$advanced_interrupted = $workspace->worktree_add('homeboy', 'interrupted-add-advanced', 'origin/main', false, false, false, false, true, $advanced_interrupted_task);
+	$advanced_interrupted = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'interrupted-add-advanced', 'origin/main', false, false, false, false, true, $advanced_interrupted_task));
 	assert_true(is_wp_error($advanced_interrupted) && 'unpushed_commits' === ( $advanced_interrupted->get_error_data()['reuse']['reason_code'] ?? null ) && null !== WorktreeContextInjector::get_creation_intent('homeboy@interrupted-add-advanced'), 'advanced interrupted worktree was adopted');
 
 	$handle = 'homeboy@audit-primitives-20260616';
@@ -1202,7 +1203,7 @@ try {
 	$failure_wpdb = new Datamachine_Code_Test_Wpdb();
 	$failure_wpdb->fail_replace = true;
 	$GLOBALS['wpdb'] = $failure_wpdb;
-	$failed = $workspace->worktree_add('homeboy', 'audit-primitives-persist-fails', 'origin/main', false, false, false, false, true);
+	$failed = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-persist-fails', 'origin/main', false, false, false, false, true));
 	assert_true(is_wp_error($failed), 'inventory persistence failure reported success');
 	assert_true('worktree_inventory_persist_failed' === $failed->get_error_code(), 'unexpected persistence failure error code');
 	$failure_data = (array) $failed->get_error_data();
@@ -1215,7 +1216,7 @@ try {
 
 	// An explicit missing base remains fail-closed, but exposes the detected
 	// default ref and an exact corrected command for main, trunk, and custom heads.
-	$missing_main = $workspace->worktree_add('homeboy', 'missing-main-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_main = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'missing-main-base', 'origin/not-a-ref', false, false, false, false, true));
 	assert_true(is_wp_error($missing_main), 'missing explicit main base reported success');
 	assert_true('worktree_target_ref_invalid' === $missing_main->get_error_code(), 'missing explicit main base changed the existing error code: ' . $missing_main->get_error_code() . ' ' . wp_json_encode($missing_main->get_error_data()));
 	$missing_main_data = (array) $missing_main->get_error_data();
@@ -1228,14 +1229,14 @@ try {
 		'owner_run_ref'  => 'run;$(touch should-not-run)',
 		'cleanup_policy' => 'remove_on_success',
 	);
-	$adversarial = $workspace->worktree_add('homeboy', $adversarial_branch, 'origin/not-a-ref;$(touch should-not-run)', false, false, false, false, true, array(), false, false, $adversarial_intent);
+	$adversarial = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', $adversarial_branch, 'origin/not-a-ref;$(touch should-not-run)', false, false, false, false, true, array(), false, false, $adversarial_intent));
 	$adversarial_data = (array) $adversarial->get_error_data();
 	$adversarial_command = (string) ( $adversarial_data['next_commands'][0] ?? '' );
 	assert_true(is_wp_error($adversarial) && 'worktree_target_ref_invalid' === $adversarial->get_error_code(), 'adversarial missing base changed fail-closed error behavior');
 	assert_true(str_contains($adversarial_command, escapeshellarg($adversarial_branch)) && str_contains($adversarial_command, '--purpose=' . escapeshellarg($adversarial_intent['purpose'])) && str_contains($adversarial_command, '--owner-run-ref=' . escapeshellarg($adversarial_intent['owner_run_ref'])), 'replay command did not shell-escape adversarial values');
 	assert_true(! str_contains($adversarial_command, 'origin/not-a-ref;'), 'replay command retained the invalid explicit base');
 	assert_true(! file_exists($workspace_root . '/should-not-run'), 'replay command executed adversarial shell input while rendering');
-	$unsafe_tracker_retry = $workspace->worktree_add('homeboy', 'unsafe-tracker-retry', 'origin/not-a-ref', false, false, false, false, true, array( 'task_url' => 'https://token:must-not-leak@example.test/issues/1247' ));
+	$unsafe_tracker_retry = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'unsafe-tracker-retry', 'origin/not-a-ref', false, false, false, false, true, array( 'task_url' => 'https://token:must-not-leak@example.test/issues/1247' )));
 	assert_true(is_wp_error($unsafe_tracker_retry), 'credential-bearing missing-base request unexpectedly succeeded');
 	$unsafe_tracker_data  = (array) $unsafe_tracker_retry->get_error_data();
 	assert_true(array() === ( $unsafe_tracker_data['next_commands'] ?? null ), 'credential-bearing tracker identity retained a missing-base retry command');
@@ -1244,29 +1245,29 @@ try {
 	run_command('git checkout main', $source_path);
 	run_command('git branch -f trunk main && git push -f origin trunk', $source_path);
 	run_command('git fetch origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk', $primary_path);
-	$missing_trunk = $workspace->worktree_add('homeboy', 'missing-trunk-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_trunk = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'missing-trunk-base', 'origin/not-a-ref', false, false, false, false, true));
 	$missing_trunk_data = (array) $missing_trunk->get_error_data();
 	assert_true(is_wp_error($missing_trunk) && 'origin/trunk' === ( $missing_trunk_data['detected_default_ref'] ?? null ), 'missing explicit trunk base did not detect origin/trunk');
 
 	run_command('git branch -f release/current main && git push -f origin release/current', $source_path);
 	run_command('git fetch origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/release/current', $primary_path);
-	$missing_custom = $workspace->worktree_add('homeboy', 'missing-custom-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_custom = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'missing-custom-base', 'origin/not-a-ref', false, false, false, false, true));
 	$missing_custom_data = (array) $missing_custom->get_error_data();
 	assert_true(is_wp_error($missing_custom) && 'origin/release/current' === ( $missing_custom_data['detected_default_ref'] ?? null ), 'missing explicit custom base did not detect the configured remote head');
 
 	run_command('git --git-dir=' . escapeshellarg($workspace_root . '/origin.git') . ' symbolic-ref HEAD refs/heads/no-default-branch', $primary_path);
 	run_command('git symbolic-ref -d refs/remotes/origin/HEAD', $primary_path);
-	$missing_remote_head = $workspace->worktree_add('homeboy', 'missing-remote-head-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_remote_head = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'missing-remote-head-base', 'origin/not-a-ref', false, false, false, false, true));
 	$missing_remote_head_data = (array) $missing_remote_head->get_error_data();
 	assert_true(is_wp_error($missing_remote_head) && 'origin/main' === ( $missing_remote_head_data['detected_default_ref'] ?? null ) && 'workspace_upstream' === ( $missing_remote_head_data['default_ref_source'] ?? null ), 'missing remote head did not fall back to the configured workspace upstream');
 	run_command('git symbolic-ref refs/remotes/origin/HEAD refs/heads/main', $primary_path);
-	$malformed_remote_head = $workspace->worktree_add('homeboy', 'malformed-remote-head-base', 'origin/not-a-ref', false, false, false, false, true);
+	$malformed_remote_head = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'malformed-remote-head-base', 'origin/not-a-ref', false, false, false, false, true));
 	$malformed_remote_head_data = (array) $malformed_remote_head->get_error_data();
 	assert_true(is_wp_error($malformed_remote_head) && 'origin/main' === ( $malformed_remote_head_data['detected_default_ref'] ?? null ) && 'workspace_upstream' === ( $malformed_remote_head_data['default_ref_source'] ?? null ), 'malformed remote head did not fall back to the configured workspace upstream');
 
 	run_command('git symbolic-ref -d refs/remotes/origin/HEAD', $primary_path);
 	run_command('git config --unset branch.main.remote && git config --unset branch.main.merge', $primary_path);
-	$missing_metadata = $workspace->worktree_add('homeboy', 'missing-metadata-base', 'origin/not-a-ref', false, false, false, false, true);
+	$missing_metadata = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'missing-metadata-base', 'origin/not-a-ref', false, false, false, false, true));
 	$missing_metadata_data = (array) $missing_metadata->get_error_data();
 	assert_true(is_wp_error($missing_metadata) && array_key_exists('detected_default_ref', $missing_metadata_data) && null === $missing_metadata_data['detected_default_ref'], 'unavailable remote metadata reported a default ref');
 	assert_true('unavailable' === ( $missing_metadata_data['default_ref_source'] ?? null ), 'unavailable remote metadata did not report its evidence state');
@@ -1276,7 +1277,7 @@ try {
 	$contention_wpdb->busy_replace = true;
 	$GLOBALS['wpdb'] = $contention_wpdb;
 	$GLOBALS['datamachine_code_test_filters']['datamachine_code_sqlite_busy_retry_max_wait_ms'] = static fn(): int => 1;
-	$contention = $workspace->worktree_add('homeboy', 'audit-primitives-sqlite-locked', 'origin/main', false, false, false, false, true);
+	$contention = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-sqlite-locked', 'origin/main', false, false, false, false, true));
 	unset($GLOBALS['datamachine_code_test_filters']['datamachine_code_sqlite_busy_retry_max_wait_ms']);
 	assert_true(is_wp_error($contention), 'SQLite contention reported success');
 	assert_true('workspace_sqlite_lock_contention' === $contention->get_error_code(), 'SQLite contention did not return the structured error');
@@ -1294,7 +1295,7 @@ try {
 	$handoff_call_count  = $workspace_root . '/handoff-upload-pack-count';
 	$progress            = array();
 	$bootstrap_outcome_at_complete = null;
-	$timed_out_add       = $workspace->worktree_add(
+	$timed_out_add       = $workspace->worktree_add_request(dmc_test_allocation_request(
 		'homeboy',
 		'handoff-partial-success',
 		'origin/main',
@@ -1322,7 +1323,7 @@ try {
 			chmod($handoff_upload_pack, 0700);
 			run_command('git config remote.origin.uploadpack ' . escapeshellarg($handoff_upload_pack), $primary_path);
 		}
-	);
+	));
 	$partial = is_wp_error($timed_out_add) ? (array) $timed_out_add->get_error_data() : array();
 	assert_true(is_wp_error($timed_out_add) && 'worktree_handoff_freshness_unverified' === $timed_out_add->get_error_code(), 'post-commit handoff timeout did not remain a fail-closed add result');
 	assert_true(true === ( $partial['partial_success'] ?? false ) && true === ( $partial['mutation_committed'] ?? false ) && 'worktree_allocation_committed' === ( $partial['mutation_boundary'] ?? null ), 'post-commit handoff timeout omitted its explicit mutation boundary');
@@ -1392,7 +1393,7 @@ try {
 	run_command('git config --unset remote.origin.uploadpack', $primary_path);
 
 	run_command('git remote set-url origin ' . escapeshellarg($workspace_root . '/missing-origin.git'), $primary_path);
-	$fetch_failed_default = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails', 'origin/main', false, false, false, false, true);
+	$fetch_failed_default = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-fetch-fails', 'origin/main', false, false, false, false, true));
 	assert_true(is_wp_error($fetch_failed_default), 'fetch failure reported success without explicit opt-in');
 	assert_true('worktree_freshness_unverified' === $fetch_failed_default->get_error_code(), 'unexpected fetch failure error code');
 	$fetch_failure_data = (array) $fetch_failed_default->get_error_data();
@@ -1402,7 +1403,7 @@ try {
 	assert_true(! str_contains(implode(' ', (array) $fetch_failure_data['next_commands']), '--allow-unverified-freshness'), 'persistent fetch failure recommended an unsafe freshness bypass');
 	assert_true(! is_dir($workspace_root . '/homeboy@audit-primitives-fetch-fails'), 'fetch failure left a worktree directory behind');
 
-	$fetch_failed_allowed = $workspace->worktree_add('homeboy', 'audit-primitives-fetch-fails-allowed', 'origin/main', false, false, false, false, true, array(), true);
+	$fetch_failed_allowed = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'audit-primitives-fetch-fails-allowed', 'origin/main', false, false, false, false, true, array(), true));
 	assert_true(! is_wp_error($fetch_failed_allowed), is_wp_error($fetch_failed_allowed) ? $fetch_failed_allowed->get_error_message() : 'fetch failure opt-in failed');
 	assert_true(! empty($fetch_failed_allowed['fetch_failed']), 'fetch failure opt-in did not surface fetch_failed');
 	assert_true(is_dir($fetch_failed_allowed['path']), 'fetch failure opt-in worktree path is not accessible');
