@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.7] - 2026-08-28
+
+### Changed
+- delete positional allocation adapters
+
 ## [0.72.6] - 2026-08-27
 
 ### Changed
