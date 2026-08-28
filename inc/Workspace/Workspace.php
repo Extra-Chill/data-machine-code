@@ -27,6 +27,7 @@ require_once __DIR__ . '/WorkspaceMetadataReconciliation.php';
 require_once __DIR__ . '/WorkspaceRepositoryLifecycle.php';
 require_once __DIR__ . '/WorkspacePrimaryRestore.php';
 require_once __DIR__ . '/WorkspaceRowTriage.php';
+require_once __DIR__ . '/WorktreeLifecycle.php';
 require_once __DIR__ . '/WorkspaceWorktreeLifecycle.php';
 require_once __DIR__ . '/WorktreeAgeFilter.php';
 require_once __DIR__ . '/WorktreeCleanupSignal.php';
@@ -38,7 +39,7 @@ require_once __DIR__ . '/WorkspaceWorktreeEmergencyCleanup.php';
 require_once __DIR__ . '/WorktreeCleanupClassifier.php';
 require_once __DIR__ . '/WorkspaceSafeCleanupOrchestrator.php';
 
-class Workspace {
+class Workspace implements WorktreeLifecycle {
 	use WorkspaceCoreUtilities;
 	use WorkspaceActiveNoSignalCleanup;
 	use WorkspaceArtifactCleanup;

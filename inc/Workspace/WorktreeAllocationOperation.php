@@ -18,18 +18,17 @@ final class WorktreeAllocationOperation {
 	 * @param callable():bool|null $remote_enabled
 	 */
 	public function __construct(
-		private ?Workspace $workspace = null,
+		private WorktreeLifecycle $lifecycle,
 		private ?RemoteWorkspaceBackend $remote = null,
 		?callable $remote_enabled = null
 	) {
-		$this->workspace      ??= new Workspace();
 		$this->remote         ??= new RemoteWorkspaceBackend();
 		$this->remote_enabled = $remote_enabled ?? static fn(): bool => RemoteWorkspaceBackend::should_handle();
 	}
 
 	/** Execute a read-only allocation plan. */
 	public function plan( WorktreeAllocationRequest $request ): array|\WP_Error {
-		return $this->workspace->worktree_plan_request($request);
+		return $this->lifecycle->worktree_plan_request($request);
 	}
 
 	/** Execute allocation against the authoritative available backend. */
@@ -42,7 +41,7 @@ final class WorktreeAllocationOperation {
 		}
 
 		if ( ! $remote_enabled || $local_primary ) {
-			return $this->workspace->worktree_add_request($request);
+			return $this->lifecycle->worktree_add_request($request);
 		}
 
 		if ( $request->allow_percentage_byte_floor_exception ) {
@@ -81,7 +80,7 @@ final class WorktreeAllocationOperation {
 			$request->allow_unverified_freshness
 		);
 		if ( $this->should_fallback_to_local($result) ) {
-			return $this->workspace->worktree_add_request($request);
+			return $this->lifecycle->worktree_add_request($request);
 		}
 
 		return $result;
@@ -92,7 +91,7 @@ final class WorktreeAllocationOperation {
 			return false;
 		}
 
-		$result = $this->workspace->show_repo($repo);
+		$result = $this->lifecycle->show_repo($repo);
 		if ( is_wp_error($result) ) {
 			return false;
 		}

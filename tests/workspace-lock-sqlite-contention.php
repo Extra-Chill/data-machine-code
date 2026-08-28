@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 const ARRAY_A = 'ARRAY_A';
 define('ABSPATH', __DIR__ . '/fixtures/');
+require_once __DIR__ . '/support/bootstrap.php';
 
 final class WP_Error {
 	public function __construct(private string $code = '', private string $message = '', private mixed $data = null) {}
@@ -121,7 +122,7 @@ function lock_sqlite_worker(array $args): void {
 		putenv('DATAMACHINE_TASK_URL=HTTPS://Example.TEST:443/tracker/1247/?source=environment');
 		putenv('DATAMACHINE_TASK_REF=environment#1247');
 		$task = 'unsafe-lifecycle' === $mode ? array( 'task_url' => 'https://token:must-not-leak@example.test/tracker/1247' ) : array();
-		$result = (new Workspace())->worktree_add(
+		$result = (new Workspace())->worktree_add_request(dmc_test_allocation_request(
 			$repo,
 			"contention/quote'path;safe",
 			"refs/heads/base/quote'path;safe",
@@ -136,7 +137,7 @@ function lock_sqlite_worker(array $args): void {
 			array( 'purpose' => "review'purpose", 'owner_run_ref' => 'run;1247', 'cleanup_policy' => 'remove_on_success' ),
 			'isolated',
 			true
-		);
+		));
 		fwrite(STDOUT, json_encode(lock_sqlite_result($result)));
 		return;
 	}
