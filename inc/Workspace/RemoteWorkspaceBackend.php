@@ -466,7 +466,7 @@ class RemoteWorkspaceBackend {
 	 *
 	 * @return array<string,mixed>
 	 */
-	public function worktree_prune(): array {
+	public function worktree_prune( bool $dry_run = false ): array {
 		$state  = $this->state();
 		$pruned = array();
 		foreach ( $state['worktrees'] as $handle => $worktree ) {
@@ -475,18 +475,22 @@ class RemoteWorkspaceBackend {
 				continue;
 			}
 
-			unset($state['worktrees'][ $handle ]);
+			if ( ! $dry_run ) {
+				unset($state['worktrees'][ $handle ]);
+			}
 			$pruned[] = (string) $handle;
 		}
 
-		if ( array() !== $pruned ) {
+		if ( ! $dry_run && array() !== $pruned ) {
 			$this->save_state($state);
 		}
 
 		return array(
-			'success' => true,
-			'backend' => 'github_api',
-			'pruned'  => $pruned,
+			'success'     => true,
+			'backend'     => 'github_api',
+			'dry_run'     => $dry_run,
+			'pruned'      => $dry_run ? array() : $pruned,
+			'would_prune' => $dry_run ? $pruned : array(),
 		);
 	}
 

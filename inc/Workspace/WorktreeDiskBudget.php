@@ -386,6 +386,16 @@ final class WorktreeDiskBudget {
 				'command' => 'studio wp datamachine-code workspace hygiene --include-sizes --size-limit=100 --format=json',
 			),
 		);
+		if ( in_array( 'worktree_count_warning_threshold', $trigger_reasons, true ) ) {
+			$budget['recovery_actions'][] = array(
+				'action'  => 'preview_bounded_worktree_cleanup',
+				'command' => 'studio wp datamachine-code workspace worktree cleanup-eligible-drain --limit=25 --format=json',
+			);
+			$budget['recovery_actions'][] = array(
+				'action'  => 'preview_stale_git_registrations',
+				'command' => 'studio wp datamachine-code workspace worktree prune --dry-run --format=json',
+			);
+		}
 
 		return $budget;
 	}
@@ -649,6 +659,16 @@ final class WorktreeDiskBudget {
 		}
 		$reference = (string) ( $budget['evidence_reference'] ?? self::DIAGNOSTIC_ID );
 		$admission = ! empty( $budget['creation_allowed'] ) ? 'admission allowed' : 'admission blocked';
+		$preview   = '';
+		foreach ( (array) ( $budget['recovery_actions'] ?? array() ) as $action ) {
+			if ( 'preview_bounded_worktree_cleanup' === ( $action['action'] ?? '' ) ) {
+				$preview = ' Preview bounded worktree cleanup: ' . (string) ( $action['command'] ?? '' );
+				continue;
+			}
+			if ( 'preview_stale_git_registrations' === ( $action['action'] ?? '' ) ) {
+				$preview .= ' Preview stale Git registrations: ' . (string) ( $action['command'] ?? '' );
+			}
+		}
 
 		return sprintf(
 			'Capacity advisory [%s]: status=%s; %s; triggers=%s. Full evidence: %s',
@@ -657,7 +677,7 @@ final class WorktreeDiskBudget {
 			$admission,
 			implode(',', $codes),
 			(string) ( $budget['evidence_command'] ?? 'studio wp datamachine-code workspace hygiene --format=json' )
-		);
+		) . $preview;
 	}
 
 	/** @return array<int,array{code:string,severity:string,resource:string,threshold:string}> */

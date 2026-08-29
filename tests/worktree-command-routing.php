@@ -48,6 +48,7 @@ namespace {
 	$cleanup_eligible_drain_ability = new WorktreeCommandFakeAbility();
 	$handoff_resume_ability = new WorktreeCommandFakeAbility();
 	$attach_tracker_ability = new WorktreeCommandFakeAbility();
+	$prune_ability = new WorktreeCommandFakeAbility();
 	$GLOBALS['worktree_command_abilities'] = array(
 		'datamachine-code/workspace-worktree-abandoned-cleanup' => $ability,
 		'datamachine-code/workspace-worktree-active-no-signal-drain' => $active_drain_ability,
@@ -56,6 +57,7 @@ namespace {
 		'datamachine-code/workspace-worktree-cleanup-eligible-drain' => $cleanup_eligible_drain_ability,
 		'datamachine-code/workspace-worktree-handoff-resume' => $handoff_resume_ability,
 		'datamachine-code/workspace-worktree-attach-tracker' => $attach_tracker_ability,
+		'datamachine-code/workspace-worktree-prune' => $prune_ability,
 	);
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	try {
@@ -163,6 +165,15 @@ namespace {
 	worktree_command_routing_assert('data-machine-code@feat-1221' === ( $attach_tracker_ability->calls[0]['handle'] ?? null ), 'attach tracker lost the exact managed handle.');
 	worktree_command_routing_assert('https://github.com/Extra-Chill/data-machine-code/issues/1221' === ( $attach_tracker_ability->calls[0]['task_url'] ?? null ), 'attach tracker lost the task URL.');
 	worktree_command_routing_assert(true === ( $attach_tracker_ability->calls[0]['dry_run'] ?? false ), 'attach tracker lost the dry-run preview input.');
+
+	try {
+		$command->__worktree_operation('prune', array(), array( 'dry-run' => true, 'until-budget' => '10s', 'format' => 'json' ));
+		throw new \RuntimeException('prune command did not execute its ability.');
+	} catch ( \RuntimeException $error ) {
+		worktree_command_routing_assert('Recorded abandoned routing input.' === $error->getMessage(), 'prune --dry-run did not route to the owning ability.');
+	}
+	worktree_command_routing_assert(true === ( $prune_ability->calls[0]['dry_run'] ?? false ), 'prune lost the dry-run preview input.');
+	worktree_command_routing_assert('10s' === ( $prune_ability->calls[0]['until_budget'] ?? null ), 'prune lost the wall-clock budget input.');
 
 	echo "worktree-command-routing: ok\n";
 }

@@ -432,8 +432,12 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'prune'                 => array(
 				'shortdesc' => 'Prune stale Git worktree metadata.',
-				'longdesc'  => "Prunes stale Git worktree registry entries across managed primaries.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree prune --format=json",
-				'synopsis'  => array( $format ),
+				'longdesc'  => "Previews or prunes stale Git worktree registry entries across managed primaries. The dry run does not refresh or mutate DMC inventory.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree prune --dry-run --format=json",
+				'synopsis'  => array(
+					$flag( 'dry-run', 'Preview stale Git registrations without mutating Git or DMC inventory.' ),
+					$option( 'until-budget', 'Wall-clock budget for the primary scan; default 30s.' ),
+					$format,
+				),
 			),
 			'refresh-context'       => array(
 				'shortdesc' => 'Refresh a worktree\'s injected site context.',
@@ -4987,6 +4991,13 @@ class WorkspaceCommand extends BaseCommand {
 				$input['plan'] = $decoded;
 				break;
 
+			case 'prune':
+				$input['dry_run'] = ! empty($assoc_args['dry-run']);
+				if ( isset($assoc_args['until-budget']) ) {
+					$input['until_budget'] = $assoc_args['until-budget'];
+				}
+				break;
+
 			case 'handoff-revalidate':
 				$proof = json_decode( (string) ( $assoc_args['proof'] ?? '' ), true);
 				if ( empty($args[1]) || ! is_array($proof) ) {
@@ -5697,7 +5708,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * @param array  $assoc_args CLI assoc args.
 	 */
 	private function renderWorktreeResult( string $operation, array $result, array $assoc_args ): void {
-		if ( in_array( $operation, array( 'add', 'plan', 'handoff-resume', 'handoff-revalidate' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+		if ( in_array( $operation, array( 'add', 'plan', 'handoff-resume', 'handoff-revalidate', 'prune' ), true ) && 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
 			$this->renderer()->json( $result );
 			return;
 		}
@@ -5859,14 +5870,30 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'prune':
 				$pruned                = (array) ( $result['pruned'] ?? array() );
+				$would_prune            = (array) ( $result['would_prune'] ?? array() );
+				$skipped                = (array) ( $result['skipped'] ?? array() );
+				$partial                = ! empty( $result['partial'] );
 				$stale_inventory       = (array) ( $result['stale_inventory'] ?? array() );
 				$stale_marker_blockers = (array) ( $result['stale_marker_blockers'] ?? array() );
-				if ( empty( $pruned ) && empty( $stale_inventory ) && empty( $stale_marker_blockers ) ) {
-					WP_CLI::log( 'Nothing to prune.' );
+				if ( empty( $pruned ) && empty( $would_prune ) && empty( $skipped ) && empty( $stale_inventory ) && empty( $stale_marker_blockers ) && ! $partial ) {
+					WP_CLI::log( ! empty($result['dry_run']) ? 'Preview complete; no stale Git registrations found.' : 'Nothing to prune.' );
 					return;
+				}
+				if ( $partial ) {
+					WP_CLI::warning( 'Worktree prune stopped at its wall-clock budget; results are partial.' );
+				}
+				if ( ! empty( $would_prune ) ) {
+					WP_CLI::log( sprintf( 'Would prune stale Git registrations across: %s', implode( ', ', $would_prune ) ) );
+					WP_CLI::log( 'Preview only; rerun without --dry-run to apply.' );
 				}
 				if ( ! empty( $pruned ) ) {
 					WP_CLI::success( sprintf( 'Pruned worktree registry across: %s', implode( ', ', $pruned ) ) );
+				}
+				if ( ! empty( $skipped ) ) {
+					WP_CLI::warning( sprintf( 'Skipped %d primar%s; results are partial.', count( $skipped ), 1 === count( $skipped ) ? 'y' : 'ies' ) );
+					foreach ( $skipped as $skip ) {
+						WP_CLI::log( sprintf( '  - %s: %s', (string) ( $skip['repo'] ?? '' ), (string) ( $skip['reason'] ?? 'Git unavailable' ) ) );
+					}
 				}
 				if ( ! empty( $stale_inventory ) ) {
 					WP_CLI::success( sprintf( 'Removed %d stale worktree inventory artifact%s.', count( $stale_inventory ), 1 === count( $stale_inventory ) ? '' : 's' ) );
