@@ -44,6 +44,47 @@ function worktree_lifecycle_fixture_is_inspectable_repository( string $repositor
 	return false !== realpath($gitdir) && is_dir($gitdir);
 }
 
+/**
+ * Read one repository's worktree registry, tolerating concurrent churn.
+ *
+ * This guard inspects the current working directory, which on a developer
+ * machine or CI runner is a live repository other processes may be adding to
+ * or removing worktrees from. A single `git worktree list` can fail
+ * transiently against such a repository, which previously failed the whole
+ * suite for reasons unrelated to the code under test.
+ *
+ * Retries a bounded number of times, then fails closed with the evidence
+ * needed to act: the repository, the exit code, and git's own output.
+ *
+ * @return array<int,string>
+ */
+function worktree_lifecycle_fixture_inspect_registry( string $repository, int $attempts = 3 ): array {
+	$status = 0;
+	$output = array();
+
+	for ( $attempt = 1; $attempt <= max(1, $attempts); ++$attempt ) {
+		$output = array();
+		$status = 0;
+		exec('git -C ' . escapeshellarg($repository) . ' worktree list --porcelain 2>&1', $output, $status);
+		if ( 0 === $status ) {
+			return $output;
+		}
+		if ( $attempt < $attempts ) {
+			usleep(250000);
+		}
+	}
+
+	throw new RuntimeException(
+		sprintf(
+			'worktree-add-lifecycle could not inspect an inspectable managed worktree registry after %d attempts. repository=%s exit_code=%d git_output=%s',
+			max(1, $attempts),
+			$repository,
+			$status,
+			'' === trim(implode(' | ', $output)) ? '(empty)' : implode(' | ', $output)
+		)
+	);
+}
+
 /** @return array<int,string> */
 function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root ): array {
 	$current_directory = realpath(getcwd() ?: '');
@@ -68,12 +109,7 @@ function worktree_lifecycle_fixture_registered_worktrees( string $fixture_root )
 
 	$registered = array();
 	foreach ( array_unique($repositories) as $repository ) {
-		$output = array();
-		$status = 0;
-		exec('git -C ' . escapeshellarg($repository) . ' worktree list --porcelain 2>&1', $output, $status);
-		if ( 0 !== $status ) {
-			throw new RuntimeException('worktree-add-lifecycle could not inspect an inspectable managed worktree registry.');
-		}
+		$output = worktree_lifecycle_fixture_inspect_registry($repository);
 		foreach ( $output as $line ) {
 			if ( ! str_starts_with($line, 'worktree ') ) {
 				continue;
