@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.12] - 2026-08-29
+
+### Changed
+- Fold the ad-hoc loop budget onto WallClockBudget
+
 ## [0.72.11] - 2026-08-29
 
 ### Fixed
