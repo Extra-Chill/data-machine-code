@@ -1344,6 +1344,25 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** Prepare repo-local freshness and projected demand before global admission. */
 	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline, ?callable $progress_callback = null ): array|\WP_Error {
+		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
+		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
+		$proof        = $this->primary_freshness_proof_for_ref($primary_path, $repo, $target_ref);
+		if ( null !== $proof ) {
+			$this->worktree_add_progress($progress_callback, 'freshness_proof_reused');
+			$demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+			if ( $demand_plan instanceof \WP_Error ) {
+				return $demand_plan;
+			}
+			if ( ! class_exists(WorktreeDemandCalibration::class) ) {
+				require_once __DIR__ . '/WorktreeDemandCalibration.php';
+			}
+			return array(
+				'fetch'        => array( 'ok' => true, 'attempts' => 0, 'attempted_transports' => array( 'registered_remote' ), 'successful_transport' => 'registered_remote', 'transport_fallback_used' => false, 'proof_reused' => $proof ),
+				'exists_local' => $exists_local,
+				'target_ref'   => $target_ref,
+				'demand_plan'  => WorktreeDemandCalibration::forecast($repo, $demand_plan),
+			);
+		}
 		$this->worktree_add_progress($progress_callback, 'freshness_fetch');
 		$fetch = WorktreeStalenessProbe::fetch($primary_path, null, $operation_deadline, null, $from);
 		if ( ! $fetch['ok'] ) {
@@ -2097,7 +2116,10 @@ trait WorkspaceWorktreeLifecycle {
 		$post_create      = 'workspace_sqlite_lock_contention' === $result->get_error_code()
 			&& ! empty($data['creation_identity_persisted'])
 			&& ! empty($data['mutation_committed']);
-		if ( empty($data['retryable']) || ( ! $admission_blocked && ! $post_create ) ) {
+		$admission_timeout = 'worktree_operation_timeout' === $result->get_error_code()
+			&& str_ends_with((string) ( $data['phase'] ?? '' ), '_lock_wait')
+			&& false === ( $data['admission']['mutation_committed'] ?? null );
+		if ( empty($data['retryable']) || ( ! $admission_blocked && ! $post_create && ! $admission_timeout ) ) {
 			return $result;
 		}
 

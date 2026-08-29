@@ -5390,6 +5390,9 @@ class WorkspaceCommand extends BaseCommand {
 			if ( isset($event['elapsed_seconds']) ) {
 				$details[] = 'waited=' . (string) $event['elapsed_seconds'] . 's';
 			}
+			if ( isset($event['deadline_seconds']) ) {
+				$details[] = 'deadline=' . (string) $event['deadline_seconds'] . 's';
+			}
 			if ( isset($event['estimated_wait_seconds']) ) {
 				$details[] = 'eta=' . (string) $event['estimated_wait_seconds'] . 's';
 			} elseif ( isset($event['eta_status']) ) {

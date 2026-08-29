@@ -207,6 +207,7 @@ final class WorkspaceMutationLock {
 			'lock_key'             => 'worktree-' . $repo,
 			'queue_position'       => self::request_queue_position($lock_dir, $lock_path, $request_path),
 			'wait_timeout_seconds' => $timeout,
+			'deadline_seconds'     => $timeout,
 		));
 		if ( 0 < $timeout && ( microtime(true) - $started ) >= $timeout ) {
 			return self::timed_out_error($repo, $lock_path, $request_path, $timeout, $started, $handle, $progress_callback);
@@ -389,6 +390,7 @@ final class WorkspaceMutationLock {
 			'owner'                  => $data['owner'] ?? null,
 			'elapsed_seconds'        => round(max(0.0, microtime(true) - $started), 3),
 			'wait_timeout_seconds'   => $timeout,
+			'deadline_seconds'       => $timeout,
 			'retry_after_seconds'    => $data['retry_after_seconds'] ?? null,
 			'estimated_wait_seconds' => $data['estimated_wait_seconds'] ?? null,
 			'eta_status'             => $data['eta_status'] ?? null,

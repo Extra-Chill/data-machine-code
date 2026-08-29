@@ -27,19 +27,11 @@
 namespace DataMachineCode\Workspace;
 
 use DataMachineCode\Support\GitRunner;
-use DataMachineCode\Support\GitHubRemote;
-use DataMachineCode\Support\GitTransportPreflight;
 
 defined('ABSPATH') || exit;
 
 if ( ! class_exists(GitRunner::class) ) {
 	require_once dirname(__DIR__) . '/Support/GitRunner.php';
-}
-if ( ! class_exists(GitHubRemote::class) ) {
-	require_once dirname(__DIR__) . '/Support/GitHubRemote.php';
-}
-if ( ! class_exists(GitTransportPreflight::class) ) {
-	require_once dirname(__DIR__) . '/Support/GitTransportPreflight.php';
 }
 
 final class WorktreeStalenessProbe {
@@ -49,7 +41,6 @@ final class WorktreeStalenessProbe {
 	 * git probes, without allowing a remote to hold the workspace mutation lock.
 	 */
 	private const FETCH_TIMEOUT_SECONDS = 5;
-	private const FALLBACK_FETCH_TIMEOUT_SECONDS = 15;
 	private const FETCH_MAX_ATTEMPTS    = 2;
 
 
@@ -59,19 +50,18 @@ final class WorktreeStalenessProbe {
 	 *
 	 * @param  string        $repo_path Primary repo path (passed to `git -C`).
 	 * @param  callable|null $runner    Optional git runner, used by deterministic tests.
-	 * @param  callable|null $fallback_resolver Optional equivalent-transport resolver, used by deterministic tests.
+	 * @param  callable|null $fallback_resolver Deprecated compatibility seam. Freshness
+	 * verification always uses the registered remote and never changes transport.
 	 * @param  string|null   $remote_ref Requested `origin/*` base, used to avoid repository-wide wildcard fetches.
 	 * @return array{ok: bool, attempts: int, attempted_transports: string[], successful_transport?: string, transport_fallback_used?: bool, fallback_preflight_code?: string, error?: string, timed_out?: bool, timeout_seconds?: int, missing_remote_ref?: bool, remote_ref?: string}
 	 */
 	public static function fetch( string $repo_path, ?callable $runner = null, ?float $deadline = null, ?callable $fallback_resolver = null, ?string $remote_ref = null ): array {
 		$runner = $runner ?? static fn( string $path, string $args, int $timeout ): array|\WP_Error => GitRunner::run($path, $args, $timeout);
 		$attempted_transports = array();
-		$fallback             = null;
 		$fetch_args           = self::fetch_args($remote_ref);
 		for ( $attempt_index = 0; $attempt_index < self::FETCH_MAX_ATTEMPTS; ++$attempt_index ) {
 			$attempt       = $attempt_index + 1;
-			$is_fallback   = $attempt_index > 0 && is_array($fallback) && ! empty($fallback['args']);
-			$attempt_limit = $is_fallback ? self::FALLBACK_FETCH_TIMEOUT_SECONDS : self::FETCH_TIMEOUT_SECONDS;
+			$attempt_limit = self::FETCH_TIMEOUT_SECONDS;
 			$remaining     = null === $deadline ? $attempt_limit : (int) floor($deadline - microtime(true));
 			if ( $remaining <= 0 ) {
 				return array(
@@ -83,12 +73,8 @@ final class WorktreeStalenessProbe {
 					'error'                => 'The aggregate worktree operation deadline expired during remote freshness verification.',
 				);
 			}
-			$args      = $is_fallback
-				? (string) $fallback['args']
-				: $fetch_args;
-			$transport = $is_fallback
-				? (string) ( $fallback['transport'] ?? 'equivalent' )
-				: (string) ( $fallback['configured_transport'] ?? 'configured' );
+			$args      = $fetch_args;
+			$transport = 'configured';
 			$attempted_transports[] = $transport;
 			$attempt_timeout = min($attempt_limit, $remaining);
 			$result = $runner($repo_path, $args, $attempt_timeout);
@@ -98,11 +84,8 @@ final class WorktreeStalenessProbe {
 					'attempts'                => $attempt,
 					'attempted_transports'     => $attempted_transports,
 					'successful_transport'     => $transport,
-					'transport_fallback_used'  => $attempt_index > 0 && is_array($fallback) && ! empty($fallback['args']),
+					'transport_fallback_used'  => false,
 				);
-				if ( is_array($fallback) && ! empty($fallback['preflight_code']) ) {
-					$response['fallback_preflight_code'] = (string) $fallback['preflight_code'];
-				}
 				return $response;
 			}
 
@@ -110,22 +93,11 @@ final class WorktreeStalenessProbe {
 			$tail  = is_array($data) && isset($data['output']) ? trim( (string) $data['output']) : '';
 			$error = self::sanitize_remote_diagnostic('' !== $tail ? $tail : $result->get_error_message());
 			$code  = method_exists($result, 'get_error_code') ? $result->get_error_code() : '';
-			if ( 1 === $attempt && null === $fallback ) {
-				$fallback = null !== $fallback_resolver
-					? $fallback_resolver($repo_path, $remote_ref)
-					: self::equivalent_transport_fallback($repo_path, $remote_ref);
-				if ( is_array($fallback) && ! empty($fallback['configured_transport']) ) {
-					$attempted_transports[0] = (string) $fallback['configured_transport'];
-				}
-			}
 			if ( self::FETCH_MAX_ATTEMPTS === $attempt ) {
 				$transport_evidence = array(
 					'attempted_transports'    => $attempted_transports,
-					'transport_fallback_used' => is_array($fallback) && ! empty($fallback['args']),
+					'transport_fallback_used' => false,
 				);
-				if ( is_array($fallback) && ! empty($fallback['preflight_code']) ) {
-					$transport_evidence['fallback_preflight_code'] = (string) $fallback['preflight_code'];
-				}
 				if ( 'git_command_timeout' === $code ) {
 					return array_merge(array(
 						'ok'              => false,
@@ -161,32 +133,6 @@ final class WorktreeStalenessProbe {
 	private static function remote_ref_missing( string $error ): bool {
 		$error = strtolower($error);
 		return str_contains($error, "couldn't find remote ref") || str_contains($error, 'could not find remote ref');
-	}
-
-	/** Resolve an SSH retry for the same authorized GitHub repository. */
-	private static function equivalent_transport_fallback( string $repo_path, ?string $remote_ref = null ): ?array {
-		$remote = GitRunner::remote_url($repo_path);
-		return null === $remote ? null : self::equivalent_transport_fallback_for_remote($remote, null, $remote_ref);
-	}
-
-	/** Build a config-only fallback without mutating the repository remote. */
-	public static function equivalent_transport_fallback_for_remote( string $remote, ?array $preflight = null, ?string $remote_ref = null ): ?array {
-		if ( 1 !== preg_match('#^https://#i', $remote) ) {
-			return null;
-		}
-
-		$ssh = GitHubRemote::cloneUrl($remote, 'ssh');
-		if ( null === $ssh ) {
-			return null;
-		}
-
-		$preflight = $preflight ?? GitTransportPreflight::diagnose($ssh);
-		return array(
-			'configured_transport' => 'https',
-			'transport'            => 'ssh',
-			'args'                 => sprintf('-c %s %s', escapeshellarg('url.' . $ssh . '.insteadOf=' . $remote), self::fetch_args($remote_ref)),
-			'preflight_code'       => (string) ( $preflight['code'] ?? 'ssh_transport_unverified' ),
-		);
 	}
 
 	/** Limit freshness fetches to the requested remote branch when it is safe to do so. */
