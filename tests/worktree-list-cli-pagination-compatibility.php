@@ -22,6 +22,10 @@ namespace DataMachineCode\Workspace {
 	}
 }
 
+namespace WP_CLI\Utils {
+	function format_items( string $format, array $items, array $fields ): void {}
+}
+
 namespace {
 	if ( ! defined('ABSPATH') ) {
 		define('ABSPATH', __DIR__ . '/fixtures/');
@@ -96,6 +100,7 @@ namespace {
 		pagination_compat_assert(str_contains((string) ($diagnostic['data']['remediation'] ?? ''), '--repo=canonicalrepo'), 'Repository conflict diagnostic must remediate with the normalized canonical filter.');
 	}
 	$GLOBALS['dmc_worktree_list_ability']->inputs = array();
+	WP_CLI::$output = '';
 	invoke_worktree_list($command, array( 'format' => 'json' ));
 	pagination_compat_assert(true === ($GLOBALS['dmc_worktree_list_ability']->inputs[0]['all'] ?? false), 'Legacy JSON must request the exhaustive row stream.');
 	$legacy = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
