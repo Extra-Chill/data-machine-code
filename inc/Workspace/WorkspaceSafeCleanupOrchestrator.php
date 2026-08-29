@@ -157,7 +157,9 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( $budget->expired() ) {
 			return $this->budget_partial_result( $result, $run_id, 'lock_prune_start', $budget );
 		}
-		$lock_start = ( $this->lock_pruner )( $dry_run, $budget );
+		$stage_started = microtime(true);
+		$lock_start    = ( $this->lock_pruner )( $dry_run, $budget );
+		$this->record_stage_elapsed($result, 'lock_prune_start', $stage_started);
 		if ( is_wp_error( $lock_start ) ) {
 			return $this->progress_error( $run_id, $result, 'lock_prune_start', $lock_start );
 		}
@@ -188,7 +190,9 @@ class WorkspaceSafeCleanupOrchestrator {
 		} else {
 			$artifact_input['budget_seconds'] = max( 1, (int) floor( $budget->remaining_seconds() ) );
 		}
+		$stage_started  = microtime(true);
 		$artifacts      = $this->execute_ability( $artifact_cleanup, $artifact_input );
+		$this->record_stage_elapsed($result, 'artifact_cleanup', $stage_started);
 		if ( is_wp_error( $artifacts ) ) {
 			return $this->progress_error( $run_id, $result, 'artifact_cleanup', $artifacts );
 		}
@@ -224,7 +228,9 @@ class WorkspaceSafeCleanupOrchestrator {
 			$has_incomplete_child_drain  = false;
 			unset($result['continuation']['cleanup_eligible'], $result['continuation']['pending_stages']['cleanup_eligible']);
 
-			$eligible = $this->execute_ability( $cleanup_eligible, $common );
+			$stage_started = microtime(true);
+			$eligible      = $this->execute_ability( $cleanup_eligible, $common );
+			$this->record_stage_elapsed($result, 'cleanup_eligible_' . $cycle, $stage_started);
 			if ( is_wp_error( $eligible ) ) {
 				return $this->progress_error( $run_id, $result, 'cleanup_eligible', $eligible );
 			}
@@ -250,7 +256,9 @@ class WorkspaceSafeCleanupOrchestrator {
 				return $this->budget_partial_result( $result, $run_id, 'active_no_signal', $budget );
 			}
 			$common['until_budget'] = $remaining_budget;
-			$active = $this->execute_ability( $active_no_signal, $common );
+			$stage_started = microtime(true);
+			$active        = $this->execute_ability( $active_no_signal, $common );
+			$this->record_stage_elapsed($result, 'active_no_signal_' . $cycle, $stage_started);
 			if ( is_wp_error( $active ) ) {
 				return $this->progress_error( $run_id, $result, 'active_no_signal', $active );
 			}
@@ -288,7 +296,9 @@ class WorkspaceSafeCleanupOrchestrator {
 			return $this->budget_partial_result( $result, $run_id, 'inventory_prune_missing', $budget );
 		}
 		$inventory_input['until_budget'] = $remaining_budget;
-		$inventory = $this->execute_ability( $inventory_prune, $inventory_input );
+		$stage_started = microtime(true);
+		$inventory     = $this->execute_ability( $inventory_prune, $inventory_input );
+		$this->record_stage_elapsed($result, 'inventory_prune_missing', $stage_started);
 		if ( is_wp_error( $inventory ) ) {
 			return $this->progress_error( $run_id, $result, 'inventory_prune_missing', $inventory );
 		}
@@ -315,7 +325,9 @@ class WorkspaceSafeCleanupOrchestrator {
 		if ( $budget->expired() ) {
 			return $this->budget_partial_result( $result, $run_id, 'lock_prune_end', $budget );
 		}
-		$lock_end = ( $this->lock_pruner )( $dry_run, $budget );
+		$stage_started = microtime(true);
+		$lock_end      = ( $this->lock_pruner )( $dry_run, $budget );
+		$this->record_stage_elapsed($result, 'lock_prune_end', $stage_started);
 		if ( is_wp_error( $lock_end ) ) {
 			return $this->progress_error( $run_id, $result, 'lock_prune_end', $lock_end );
 		}
@@ -425,6 +437,31 @@ class WorkspaceSafeCleanupOrchestrator {
 		);
 
 		return ! is_wp_error( $inserted );
+	}
+
+	/**
+	 * Record how long one stage took, in run evidence.
+	 *
+	 * A budgeted run that overruns is only actionable if the operator can see
+	 * which stage spent the time. Without this, attributing a slow preview
+	 * means timing abilities by hand outside the product, which is both
+	 * unreproducible and easy to get wrong.
+	 *
+	 * @param array<string,mixed> $result Run result, mutated in place.
+	 */
+	private function record_stage_elapsed( array &$result, string $stage, float $started_at ): void {
+		$elapsed_ms = (int) round(( microtime(true) - $started_at ) * 1000);
+
+		$result['evidence']['stage_timings'][ $stage ] = $elapsed_ms;
+		$result['evidence']['stage_timings_total_ms']  = (int) ( $result['evidence']['stage_timings_total_ms'] ?? 0 ) + $elapsed_ms;
+
+		$slowest = $result['evidence']['slowest_stage'] ?? null;
+		if ( ! is_array($slowest) || $elapsed_ms > (int) ( $slowest['elapsed_ms'] ?? -1 ) ) {
+			$result['evidence']['slowest_stage'] = array(
+				'stage'      => $stage,
+				'elapsed_ms' => $elapsed_ms,
+			);
+		}
 	}
 
 	/** Return a durable resumable page instead of starting work outside the budget. */
