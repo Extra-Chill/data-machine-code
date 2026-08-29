@@ -92,6 +92,84 @@ final class WorktreeCleanupClassifier {
 	);
 
 	/**
+	 * Classify an inventory row for missing-path pruning.
+	 *
+	 * Physical path state is authoritative. A missing_path flag makes stale and
+	 * malformed rows visible for diagnosis, but is not required when the recorded
+	 * path is already absent. Ownership metadata does not protect a record whose
+	 * directory no longer exists; work-preservation evidence remains force-gated.
+	 *
+	 * @param array<string,mixed> $row            Inventory row.
+	 * @param string              $workspace_root Managed workspace root.
+	 * @param bool                $force          Whether safety evidence may be discarded.
+	 * @return array<string,mixed>
+	 */
+	public static function classify_inventory_prune_row( array $row, string $workspace_root, bool $force = false ): array {
+		$path       = trim( (string) ( $row['path'] ?? '' ) );
+		$was_marked = ! empty($row['missing_path']);
+
+		if ( ! self::is_managed_inventory_path($path, $workspace_root) ) {
+			return array(
+				'status' => $was_marked ? 'skip' : 'ignore',
+				'reason' => 'invalid_path',
+				'hint'   => 'The recorded path is not a contained local workspace path; correct or remove the inventory record through its owning metadata store.',
+			);
+		}
+
+		if ( is_dir($path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_dir
+			return array(
+				'status'       => $was_marked ? 'skip' : 'ignore',
+				'reason'       => 'path_present_on_disk',
+				'hint'         => 'The directory still exists. Use workspace worktree bounded-cleanup-eligible-apply for lifecycle-managed worktree cleanup.',
+				'next_command' => 'wp datamachine-code workspace worktree bounded-cleanup-eligible-apply --dry-run --limit=25 --format=json',
+			);
+		}
+
+		if ( ! $force && (int) ( $row['dirty_count'] ?? 0 ) > 0 ) {
+			return array(
+				'status'      => 'skip',
+				'reason'      => 'dirty_count',
+				'dirty_count' => (int) $row['dirty_count'],
+				'hint'        => 'Recorded dirty-worktree evidence is preserved. Re-run prune-missing with --force only after reviewing the row.',
+			);
+		}
+
+		if ( ! $force && (int) ( $row['unpushed_count'] ?? 0 ) > 0 ) {
+			return array(
+				'status'         => 'skip',
+				'reason'         => 'unpushed_count',
+				'unpushed_count' => (int) $row['unpushed_count'],
+				'hint'           => 'Recorded unpushed commits are preserved. Re-run prune-missing with --force only after reviewing the row.',
+			);
+		}
+
+		$pr_url = trim( (string) ( $row['pr_url'] ?? '' ) );
+		if ( ! $force && '' !== $pr_url ) {
+			return array(
+				'status' => 'skip',
+				'reason' => 'pr_url',
+				'pr_url' => $pr_url,
+				'hint'   => 'Open PR evidence is preserved. Re-run prune-missing with --force only after reviewing the row.',
+			);
+		}
+
+		return array(
+			'status' => 'candidate',
+			'reason' => 'path_missing_on_disk',
+		);
+	}
+
+	private static function is_managed_inventory_path( string $path, string $workspace_root ): bool {
+		if ( '' === $path || ! str_starts_with($path, '/') || str_contains($path, "\0") || '' === trim($workspace_root) ) {
+			return false;
+		}
+
+		$root   = realpath($workspace_root);
+		$parent = realpath(dirname($path));
+		return false !== $root && false !== $parent && str_starts_with($parent . '/', rtrim($root, '/') . '/');
+	}
+
+	/**
 	 * Classify one skipped reason code into a stable high-level cleanup bucket.
 	 */
 	public static function bucket_for_reason( string $reason_code ): string {
