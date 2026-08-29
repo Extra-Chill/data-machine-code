@@ -2139,7 +2139,7 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-inventory-prune-missing',
 				array(
 					'label'               => 'Prune Missing Worktree Inventory Rows',
-					'description'         => 'Delete DB-backed worktree inventory rows flagged missing_path whose on-disk path is still absent. Re-probes each candidate before deletion and protects rows with unpushed commits or an open PR unless force is set.',
+					'description'         => 'Delete DB-backed worktree inventory rows whose on-disk path is absent, even before a refresh flags them missing_path. Re-probes each candidate and protects recorded dirty or unpushed work and open PRs unless force is set.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -2150,7 +2150,7 @@ class WorkspaceAbilities {
 							),
 							'force'        => array(
 								'type'        => 'boolean',
-								'description' => 'Allow pruning rows with unpushed_count > 0 or a non-empty pr_url. Default false.',
+								'description' => 'Allow pruning rows with dirty_count or unpushed_count > 0 or a non-empty pr_url. Default false.',
 							),
 							'limit'        => array(
 								'type'        => 'integer',

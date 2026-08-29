@@ -3092,7 +3092,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * : (prune-missing) Skip the confirmation prompt before deleting rows.
 	 *
 	 * [--force]
-	 * : (prune-missing) Allow pruning rows with unpushed commits or an open PR.
+	 * : (prune-missing) Allow pruning rows with recorded dirty/unpushed work or an open PR.
 	 *
 	 * [--limit=<count>]
 	 * : (prune-missing) Maximum rows to inspect. Default 25, maximum 200.

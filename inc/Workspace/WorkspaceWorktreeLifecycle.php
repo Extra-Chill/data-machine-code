@@ -5412,8 +5412,9 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Prune DB-backed inventory rows flagged missing_path whose path is still absent.
 	 *
-	 * Re-probes each candidate on disk, protects rows with unpushed work or an
-	 * open PR unless forced, and deletes the confirmed-absent survivors.
+	 * Re-probes each candidate on disk, protects rows with recorded dirty or
+	 * unpushed work or an open PR unless forced, and deletes confirmed-absent
+	 * survivors regardless of stale ownership metadata.
 	 *
 	 * @param  array{dry_run?: bool, force?: bool, limit?: int, after_handle?: string, until_budget?: string} $opts Options.
 	 * @return array<string,mixed>|\WP_Error

@@ -11,6 +11,7 @@ use DataMachineCode\Support\WallClockBudget;
 
 use DataMachineCode\Support\JsonCodec;
 use DataMachineCode\Support\SecretRedactor;
+use DataMachineCode\Workspace\WorktreeCleanupClassifier;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
 defined('ABSPATH') || exit;
@@ -27,6 +28,9 @@ if ( ! class_exists(SecretRedactor::class) ) {
 
 if ( ! class_exists(SqliteBusyRetry::class) ) {
 	require_once __DIR__ . '/SqliteBusyRetry.php';
+}
+if ( ! class_exists(WorktreeCleanupClassifier::class) ) {
+	require_once dirname(__DIR__) . '/Workspace/WorktreeCleanupClassifier.php';
 }
 
 class WorktreeInventoryRepository {
@@ -302,10 +306,10 @@ class WorktreeInventoryRepository {
 	 * Safety guards:
 	 *   - Re-probes each candidate's path on disk; only deletes when the path is
 	 *     STILL absent (a stale missing_path flag alone is not trusted).
-	 *   - Refuses to delete rows with unpushed_count > 0 or a non-empty pr_url
-	 *     unless 'force' is true; such rows are reported as skipped.
-	 *   - Preserves rows with creator/owner provenance and malformed paths because
-	 *     their absent local path is not sufficient ownership evidence.
+	 *   - Refuses to delete rows with dirty/unpushed evidence or a non-empty
+	 *     pr_url unless 'force' is true; such rows are reported as skipped.
+	 *   - Treats a physically absent path as authoritative even when a prior
+	 *     inventory refresh has not yet set missing_path.
 	 *
 	 * @param  array{dry_run?: bool, force?: bool, limit?: int, after_handle?: string, until_budget?: string, lock_callback?: callable, workspace_root?: string} $opts Options.
 	 * @return array<string,mixed> Result with deleted/skipped lists and summary.
@@ -317,12 +321,13 @@ class WorktreeInventoryRepository {
 		$after_handle = isset($opts['after_handle']) ? trim( (string) $opts['after_handle'] ) : '';
 		$deadline     = $this->prune_deadline($opts['until_budget'] ?? null);
 
-		$rows        = $this->missing_path_rows($limit + 1, $after_handle);
-		$has_more    = count($rows) > $limit;
-		$rows        = array_slice($rows, 0, $limit);
-		$deleted     = array();
-		$skipped     = array();
-		$last_handle = $after_handle;
+		$workspace_root = is_string($opts['workspace_root'] ?? null) ? (string) $opts['workspace_root'] : '';
+		$rows           = $this->inventory_prune_rows($limit + 1, $after_handle, $workspace_root, $force);
+		$has_more       = count($rows) > $limit;
+		$rows           = array_slice($rows, 0, $limit);
+		$deleted        = array();
+		$skipped        = array();
+		$last_handle    = $after_handle;
 
 		foreach ( $rows as $row ) {
 			if ( null !== $deadline && microtime(true) >= $deadline ) {
@@ -333,58 +338,11 @@ class WorktreeInventoryRepository {
 			$last_handle = $handle;
 			$path        = trim( (string) ( $row['path'] ?? '' ) );
 
-			if ( ! $this->is_prunable_path($path, $opts['workspace_root'] ?? null) ) {
-				$skipped[] = array(
-					'handle' => $handle,
-					'path'   => $path,
-					'reason' => 'invalid_path',
-				);
+			$classification = WorktreeCleanupClassifier::classify_inventory_prune_row($row, $workspace_root, $force);
+			if ( 'candidate' !== $classification['status'] ) {
+				unset($classification['status']);
+				$skipped[] = array_merge(array( 'handle' => $handle, 'path' => $path ), $classification);
 				continue;
-			}
-
-			if ( $this->has_owner_managed_provenance($row) ) {
-				$skipped[] = array(
-					'handle' => $handle,
-					'path'   => $path,
-					'reason' => 'owner_managed',
-				);
-				continue;
-			}
-
-			// Re-probe the disk: only reap when the path is STILL absent.
-			if ( is_dir($path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_dir
-				$skipped[] = array(
-					'handle' => $handle,
-					'path'   => $path,
-					'reason' => 'path_present_on_disk',
-				);
-				continue;
-			}
-
-			// Protect rows carrying unpushed work or an open PR unless forced.
-			if ( ! $force ) {
-				$unpushed = isset($row['unpushed_count']) ? (int) $row['unpushed_count'] : 0;
-				$pr_url   = isset($row['pr_url']) ? trim( (string) $row['pr_url'] ) : '';
-
-				if ( $unpushed > 0 ) {
-					$skipped[] = array(
-						'handle'         => $handle,
-						'path'           => $path,
-						'reason'         => 'unpushed_count',
-						'unpushed_count' => $unpushed,
-					);
-					continue;
-				}
-
-				if ( '' !== $pr_url ) {
-					$skipped[] = array(
-						'handle' => $handle,
-						'path'   => $path,
-						'reason' => 'pr_url',
-						'pr_url' => $pr_url,
-					);
-					continue;
-				}
 			}
 
 			if ( $dry_run ) {
@@ -398,35 +356,17 @@ class WorktreeInventoryRepository {
 
 			$mutation        = function () use ( $handle, $path, $opts, $force ): array {
 				$current = $this->get($handle);
-				if ( ! is_array($current) || ! $this->is_prunable_path($path, $opts['workspace_root'] ?? null) ) {
+				if ( ! is_array($current) || $path !== trim( (string) ( $current['path'] ?? '' ) ) ) {
 					return array(
 						'deleted' => false,
 						'reason'  => 'conditional_delete_mismatch',
 					);
 				}
-				if ( $this->has_owner_managed_provenance($current) ) {
+				$current_classification = WorktreeCleanupClassifier::classify_inventory_prune_row($current, (string) ( $opts['workspace_root'] ?? '' ), $force);
+				if ( 'candidate' !== $current_classification['status'] ) {
 					return array(
 						'deleted' => false,
-						'reason'  => 'owner_managed',
-					);
-				}
-				if ( ! $force && (int) ( $current['unpushed_count'] ?? 0 ) > 0 ) {
-					return array(
-						'deleted' => false,
-						'reason'  => 'unpushed_count',
-					);
-				}
-				if ( ! $force && '' !== trim( (string) ( $current['pr_url'] ?? '' ) ) ) {
-					return array(
-						'deleted' => false,
-						'reason'  => 'pr_url',
-					);
-				}
-				// Recheck while holding the lifecycle mutation lock before conditional deletion.
-				if ( is_dir($path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_dir
-					return array(
-						'deleted' => false,
-						'reason'  => 'path_present_on_disk',
+						'reason'  => (string) ( $current_classification['reason'] ?? 'conditional_delete_mismatch' ),
 					);
 				}
 
@@ -490,49 +430,27 @@ class WorktreeInventoryRepository {
 	}
 
 	/**
-	 * Fetch all rows currently flagged missing_path.
+	 * Fetch rows classified for missing-path pruning.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function missing_path_rows( int $limit, string $after_handle ): array {
-		global $wpdb;
-
-		if ( ! isset($wpdb) || ! method_exists($wpdb, 'get_results') ) {
-			return array();
-		}
-
-		$table = self::table_name();
-		// phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
-		$sql = '' === $after_handle
-			? "SELECT * FROM {$table} WHERE missing_path = 1 ORDER BY handle ASC LIMIT " . (int) $limit
-			: $wpdb->prepare("SELECT * FROM {$table} WHERE missing_path = 1 AND handle > %s ORDER BY handle ASC LIMIT " . (int) $limit, $after_handle);
-		// phpcs:enable WordPress.DB.PreparedSQL
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Static string, no user input.
-		$rows = $wpdb->get_results($sql, ARRAY_A);
-		return is_array($rows) ? array_map(array( $this, 'decode_row' ), $rows) : array();
-	}
-
-	private function is_prunable_path( string $path, mixed $workspace_root ): bool {
-		if ( '' === $path || ! str_starts_with($path, '/') || str_contains($path, "\0") || ! is_string($workspace_root) || '' === trim($workspace_root) ) {
-			return false;
-		}
-		$root   = realpath($workspace_root);
-		$parent = realpath(dirname($path));
-		return false !== $root && false !== $parent && str_starts_with($parent . '/', rtrim($root, '/') . '/');
-	}
-
-	/** @param array<string,mixed> $row */
-	private function has_owner_managed_provenance( array $row ): bool {
-		$metadata = is_array($row['metadata'] ?? null) ? $row['metadata'] : array();
-		foreach ( array( 'origin_site', 'origin_agent', 'origin_session', 'owner_run_ref', 'cleanup_policy', 'task_url', 'task_ref' ) as $field ) {
-			$value = $row[ $field ] ?? $metadata[ $field ] ?? null;
-			if ( ! is_scalar($value) ? null !== $value : null !== WorktreeContextInjector::normalize_scalar_metadata_value($value) ) {
-				return true;
+	private function inventory_prune_rows( int $limit, string $after_handle, string $workspace_root, bool $force ): array {
+		$rows = array();
+		foreach ( $this->list() as $row ) {
+			if ( '' !== $after_handle && strcmp( (string) ( $row['handle'] ?? '' ), $after_handle) <= 0 ) {
+				continue;
+			}
+			$classification = WorktreeCleanupClassifier::classify_inventory_prune_row($row, $workspace_root, $force);
+			if ( 'ignore' === $classification['status'] ) {
+				continue;
+			}
+			$rows[] = $row;
+			if ( count($rows) >= $limit ) {
+				break;
 			}
 		}
 
-		return false;
+		return $rows;
 	}
 
 	private function delete_missing_if_current( string $handle, string $path, bool $force ): bool {
@@ -544,19 +462,12 @@ class WorktreeInventoryRepository {
 
 		$table = self::table_name();
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name derives from $wpdb->prefix; values are prepared.
-		$sql = "DELETE FROM {$table} WHERE handle = %s AND path = %s AND missing_path = 1 AND last_probe_status = %s"
-			. " AND TRIM(COALESCE(origin_site, '')) = ''"
-			. " AND TRIM(COALESCE(origin_agent, '')) = ''"
-			. " AND TRIM(COALESCE(origin_session, '')) = ''"
-			. " AND TRIM(COALESCE(owner_run_ref, '')) = ''"
-			. " AND TRIM(COALESCE(cleanup_policy, '')) = ''"
-			. " AND TRIM(COALESCE(task_url, '')) = ''"
-			. " AND TRIM(COALESCE(task_ref, '')) = ''";
+		$sql = "DELETE FROM {$table} WHERE handle = %s AND path = %s";
 		if ( ! $force ) {
-			$sql .= " AND COALESCE(unpushed_count, 0) <= 0 AND TRIM(COALESCE(pr_url, '')) = ''";
+			$sql .= " AND COALESCE(dirty_count, 0) <= 0 AND COALESCE(unpushed_count, 0) <= 0 AND TRIM(COALESCE(pr_url, '')) = ''";
 		}
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- The dynamic template contains only the prefixed table name and static predicates.
-		$sql = $wpdb->prepare($sql, $handle, $path, 'missing_path');
+		$sql = $wpdb->prepare($sql, $handle, $path);
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Values were prepared immediately above.
 		$result = SqliteBusyRetry::run('worktree_inventory_delete_missing_if_current', fn() => $wpdb->query($sql));
 		if ( $result instanceof \WP_Error ) {

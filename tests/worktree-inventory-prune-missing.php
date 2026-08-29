@@ -26,7 +26,9 @@ if ( ! defined('ABSPATH') ) {
 
 require_once dirname(__DIR__) . '/inc/Support/JsonCodec.php';
 require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorktreeCleanupClassifier.php';
 require_once dirname(__DIR__) . '/inc/Storage/WorktreeInventoryRepository.php';
+require_once dirname(__DIR__) . '/inc/Workspace/WorkspaceHygieneReport.php';
 
 use DataMachineCode\Storage\WorktreeInventoryRepository;
 
@@ -71,12 +73,12 @@ final class Prune_Test_Wpdb {
 		if ( is_callable($this->before_query) ) {
 			( $this->before_query )($this, $sql);
 		}
-		if ( ! preg_match("/handle = '([^']*)' AND path = '([^']*)' AND missing_path = 1 AND last_probe_status = 'missing_path'/", $sql, $matches) ) {
+		if ( ! preg_match("/handle = '([^']*)' AND path = '([^']*)'/", $sql, $matches) ) {
 			return false;
 		}
 		$handle = stripslashes($matches[1]);
 		$path   = stripslashes($matches[2]);
-		if ( ! isset($this->rows[ $handle ]) || $path !== (string) $this->rows[ $handle ]['path'] || empty($this->rows[ $handle ]['missing_path']) || 'missing_path' !== (string) $this->rows[ $handle ]['last_probe_status'] ) {
+		if ( ! isset($this->rows[ $handle ]) || $path !== (string) $this->rows[ $handle ]['path'] ) {
 			return 0;
 		}
 		$row = $this->rows[ $handle ];
@@ -89,6 +91,9 @@ final class Prune_Test_Wpdb {
 			return 0;
 		}
 		if ( str_contains($sql, 'COALESCE(unpushed_count, 0) <= 0') && (int) ( $row['unpushed_count'] ?? 0 ) > 0 ) {
+			return 0;
+		}
+		if ( str_contains($sql, 'COALESCE(dirty_count, 0) <= 0') && (int) ( $row['dirty_count'] ?? 0 ) > 0 ) {
 			return 0;
 		}
 		unset($this->rows[ $handle ]);
@@ -204,7 +209,7 @@ $tests[] = static function (): void {
 
 	assert_true(! empty($result['success']), 'dry-run returns success');
 	assert_true(! empty($result['dry_run']), 'dry-run result flags dry_run');
-	assert_same(2, $result['summary']['deleted'], 'dry-run reports 2 would-delete candidates');
+	assert_same(3, $result['summary']['deleted'], 'dry-run discovers flagged and physically absent candidates');
 	// Rows must still be present (no mutation on dry-run).
 	assert_true(isset($wpdb->rows['homeboy']), 'dry-run did not delete homeboy');
 	assert_true(isset($wpdb->rows['homeboy-action']), 'dry-run did not delete homeboy-action');
@@ -236,7 +241,7 @@ $tests[] = static function (): void {
 };
 
 /*
- * Test 7: malformed and owner-managed rows are ambiguous and never pruned.
+ * Test 7: malformed paths remain protected, but ownership does not veto an absent path.
  */
 $tests[] = static function (): void {
 	$wpdb = new Prune_Test_Wpdb();
@@ -247,11 +252,11 @@ $tests[] = static function (): void {
 	));
 	$GLOBALS['wpdb'] = $wpdb;
 
-	$result  = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'force' => true, 'workspace_root' => sys_get_temp_dir() ));
+	$result  = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
 	$reasons = array_column($result['skipped'], 'reason', 'handle');
 	assert_same('invalid_path', $reasons['relative-path'] ?? null, 'malformed remote path is preserved');
-	assert_same('owner_managed', $reasons['owner-managed'] ?? null, 'owner-managed row is preserved even under force');
-	assert_true(isset($wpdb->rows['relative-path']) && isset($wpdb->rows['owner-managed']), 'ambiguous rows remain in inventory');
+	assert_same(null, $reasons['owner-managed'] ?? null, 'owner-managed absent row is not skipped');
+	assert_true(isset($wpdb->rows['relative-path']) && ! isset($wpdb->rows['owner-managed']), 'only the malformed row remains in inventory');
 	++$GLOBALS['passed'];
 };
 
@@ -344,6 +349,7 @@ $tests[] = static function (): void {
 	seed($wpdb, array(
 		make_row(array( 'handle' => 'unpushed', 'path' => $absent, 'unpushed_count' => 3 )),
 		make_row(array( 'handle' => 'has-pr', 'path' => $absent, 'pr_url' => 'https://github.com/o/r/pull/1' )),
+		make_row(array( 'handle' => 'dirty', 'path' => $absent, 'dirty_count' => 2 )),
 		make_row(array( 'handle' => 'clean-ghost', 'path' => $absent )),
 	));
 	$GLOBALS['wpdb'] = $wpdb;
@@ -352,7 +358,7 @@ $tests[] = static function (): void {
 	$result = $repo->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
 
 	assert_same(1, $result['summary']['deleted'], 'only the clean ghost is deleted');
-	assert_same(2, $result['summary']['skipped'], 'unpushed + PR rows are skipped');
+	assert_same(3, $result['summary']['skipped'], 'dirty, unpushed, and PR rows are skipped');
 
 	$reasons = array();
 	foreach ( $result['skipped'] as $skip ) {
@@ -360,9 +366,11 @@ $tests[] = static function (): void {
 	}
 	assert_same('unpushed_count', $reasons['unpushed'] ?? '', 'unpushed row skipped for unpushed_count');
 	assert_same('pr_url', $reasons['has-pr'] ?? '', 'PR row skipped for pr_url');
+	assert_same('dirty_count', $reasons['dirty'] ?? '', 'dirty row skipped for dirty_count');
 	assert_true(! isset($wpdb->rows['clean-ghost']), 'clean ghost deleted');
 	assert_true(isset($wpdb->rows['unpushed']), 'unpushed row preserved');
 	assert_true(isset($wpdb->rows['has-pr']), 'PR row preserved');
+	assert_true(isset($wpdb->rows['dirty']), 'dirty row preserved');
 	++$GLOBALS['passed'];
 };
 
@@ -377,21 +385,23 @@ $tests[] = static function (): void {
 	seed($wpdb, array(
 		make_row(array( 'handle' => 'unpushed', 'path' => $absent, 'unpushed_count' => 3 )),
 		make_row(array( 'handle' => 'has-pr', 'path' => $absent, 'pr_url' => 'https://github.com/o/r/pull/2' )),
+		make_row(array( 'handle' => 'dirty', 'path' => $absent, 'dirty_count' => 2 )),
 	));
 	$GLOBALS['wpdb'] = $wpdb;
 
 	$repo   = new WorktreeInventoryRepository();
 	$result = $repo->pruneMissing(array( 'force' => true, 'workspace_root' => sys_get_temp_dir() ));
 
-	assert_same(2, $result['summary']['deleted'], 'force deletes the protected rows');
+	assert_same(3, $result['summary']['deleted'], 'force deletes the protected rows');
 	assert_same(0, $result['summary']['skipped'], 'force leaves nothing skipped');
 	assert_true(! isset($wpdb->rows['unpushed']), 'unpushed row deleted under force');
 	assert_true(! isset($wpdb->rows['has-pr']), 'PR row deleted under force');
+	assert_true(! isset($wpdb->rows['dirty']), 'dirty row deleted under force');
 	++$GLOBALS['passed'];
 };
 
 /*
- * Test 5: rows flagged missing_path=0 are never even considered.
+ * Test 5: physical absence is authoritative without a missing_path flag.
  */
 $tests[] = static function (): void {
 	$wpdb = new Prune_Test_Wpdb();
@@ -399,8 +409,8 @@ $tests[] = static function (): void {
 	assert_true(! is_dir($absent), 'fixture absent path must be missing');
 
 	seed($wpdb, array(
-		// Present-on-disk row, not flagged missing — must be invisible to prune.
-		make_row(array( 'handle' => 'healthy', 'path' => $absent, 'missing_path' => 0 )),
+		// Physically absent row, not flagged missing, must still be discoverable.
+		make_row(array( 'handle' => 'unflagged-ghost', 'path' => $absent, 'missing_path' => 0 )),
 		make_row(array( 'handle' => 'ghost', 'path' => $absent, 'missing_path' => 1 )),
 	));
 	$GLOBALS['wpdb'] = $wpdb;
@@ -408,10 +418,50 @@ $tests[] = static function (): void {
 	$repo   = new WorktreeInventoryRepository();
 	$result = $repo->pruneMissing(array( 'workspace_root' => sys_get_temp_dir() ));
 
-	assert_same(1, $result['summary']['total'], 'only missing_path=1 rows are candidates');
-	assert_same(1, $result['summary']['deleted'], 'only the ghost is deleted');
-	assert_true(isset($wpdb->rows['healthy']), 'healthy row untouched');
+	assert_same(2, $result['summary']['total'], 'physical absence is detected without a prior missing_path flag');
+	assert_same(2, $result['summary']['deleted'], 'flagged and unflagged ghosts are deleted');
+	assert_true(! isset($wpdb->rows['unflagged-ghost']), 'unflagged ghost is pruned');
 	assert_true(! isset($wpdb->rows['ghost']), 'ghost row deleted');
+	++$GLOBALS['passed'];
+};
+
+/*
+ * Test 10: hygiene and prune-missing project the same physical-path candidates.
+ */
+$tests[] = static function (): void {
+	$wpdb   = new Prune_Test_Wpdb();
+	$root   = sys_get_temp_dir();
+	$absent = $root . '/dmc-prune-shared-classifier-' . getmypid();
+	$present = $root . '/dmc-prune-shared-present-' . getmypid();
+	@mkdir($present, 0777, true);
+	$rows = array(
+		make_row(array( 'handle' => 'owner-ghost', 'repo' => 'repo', 'path' => $absent, 'missing_path' => 0, 'origin_site' => 'managed-site' )),
+		make_row(array( 'handle' => 'protected-ghost', 'repo' => 'repo', 'path' => $absent, 'dirty_count' => 1 )),
+		make_row(array( 'handle' => 'present', 'repo' => 'repo', 'path' => $present, 'missing_path' => 0 )),
+	);
+	seed($wpdb, $rows);
+	$GLOBALS['wpdb'] = $wpdb;
+
+	$prune = ( new WorktreeInventoryRepository() )->pruneMissing(array( 'dry_run' => true, 'workspace_root' => $root ));
+	$hygiene = new class($root) {
+		use DataMachineCode\Workspace\WorkspaceHygieneReport;
+
+		private string $workspace_path;
+
+		public function __construct( string $workspace_path ) {
+			$this->workspace_path = $workspace_path;
+		}
+
+		public function inventory_prune_preview( array $rows ): array {
+			$method = new ReflectionMethod($this, 'build_inventory_prune_preview');
+			return $method->invoke($this, $rows);
+		}
+	};
+	$preview = $hygiene->inventory_prune_preview($rows);
+
+	assert_same(array_column($prune['deleted'], 'handle'), array_column($preview['candidates'], 'handle'), 'hygiene and prune-missing use the same candidate set');
+	assert_same(array_column($prune['skipped'], 'reason', 'handle'), array_column($preview['blocked'], 'reason', 'handle'), 'hygiene and prune-missing use the same blockers');
+	rmdir($present);
 	++$GLOBALS['passed'];
 };
 
