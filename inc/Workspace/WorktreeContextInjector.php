@@ -1993,7 +1993,8 @@ class WorktreeContextInjector {
 			static function () use ( $handle, $intent ): bool {
 				$all = get_option(self::METADATA_OPTION, array());
 				$all = is_array($all) ? $all : array();
-				if ( isset($all[ $handle ]) ) {
+				$record = $all[ $handle ] ?? null;
+				if ( is_array($record) && array( self::CREATION_INTENT_KEY ) === array_keys($record) && is_array($record[ self::CREATION_INTENT_KEY ] ?? null) ) {
 					return false;
 				}
 				$all[ $handle ] = array( self::CREATION_INTENT_KEY => $intent );
