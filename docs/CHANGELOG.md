@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.10] - 2026-08-29
+
+### Changed
+- Make the fixture guard survive concurrent worktree churn
+
 ## [0.72.9] - 2026-08-29
 
 ### Changed
