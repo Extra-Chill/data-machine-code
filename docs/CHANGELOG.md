@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.9] - 2026-08-29
+
+### Changed
+- Hand the declared budget to the active/no-signal inventory
+
 ## [0.72.8] - 2026-08-29
 
 ### Changed
