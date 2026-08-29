@@ -7,7 +7,11 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined('ABSPATH') || exit;
+
+require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 
 /**
  * Composes bounded workspace cleanup abilities into the abandoned cleanup flow.
@@ -709,20 +713,12 @@ class WorkspaceAbandonedCleanupOrchestrator {
 	}
 
 	private function parse_budget( string $duration ): int|\WP_Error {
-		if ( ! preg_match('/^(\d+)([smh])$/', trim($duration), $matches) ) {
-			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid until_budget duration. Use a compact value like 60s, 10m, or 1h.', array( 'status' => 400 ));
+		$seconds = WallClockBudget::parse_seconds($duration);
+		if ( null === $seconds ) {
+			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid until_budget duration. Use a compact positive value like 60s, 10m, or 1h.', array( 'status' => 400 ));
 		}
 
-		$value = (int) $matches[1];
-		if ( $value < 1 ) {
-			return new \WP_Error('invalid_worktree_abandoned_budget', 'Invalid until_budget duration. Duration must be greater than zero.', array( 'status' => 400 ));
-		}
-
-		return match ( $matches[2] ) {
-			'h' => $value * HOUR_IN_SECONDS,
-			'm' => $value * MINUTE_IN_SECONDS,
-			default => $value,
-		};
+		return $seconds;
 	}
 
 	private function apply_remaining_budget( array &$input, ?float $deadline ): void {
