@@ -7,9 +7,13 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 use DataMachineCode\Support\GitHubRemote;
 
 defined('ABSPATH') || exit;
+
+require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 
 trait WorkspaceMetadataReconciliation {
 
@@ -449,26 +453,40 @@ trait WorkspaceMetadataReconciliation {
 			return null;
 		}
 
+		// A nested loop may inherit a parent's start, so charge whatever the
+		// parent already spent against this budget before it begins.
 		$started = isset($opts['internal_budget_started']) ? (float) $opts['internal_budget_started'] : $started_at;
-		$reserve = min(5.0, max(0.1, $seconds * 0.1));
+		$elapsed = max(0.0, microtime(true) - $started);
 
 		return array(
 			'label'           => '' === $label ? $seconds . 's' : $label,
 			'seconds'         => $seconds,
 			'started_at'      => $started,
-			'reserve_seconds' => $reserve,
+			'reserve_seconds' => min(5.0, max(0.1, $seconds * 0.1)),
+			// Single shared, monotonic time source. The previous inline
+			// arithmetic used microtime(true), a wall clock that can jump
+			// backwards or forwards under NTP and suspend, which is exactly
+			// what a cleanup budget must not depend on.
+			'budget'          => WallClockBudget::from_seconds(max(0.001, (float) $seconds - $elapsed), '' === $label ? $seconds . 's' : $label),
 		);
 	}
 
 	/**
 	 * Determine whether an expensive loop should stop before another row starts.
 	 *
+	 * Stops while a reserve still remains so the caller can record evidence and
+	 * a continuation rather than being cut off mid-report.
+	 *
 	 * @param  array<string,mixed> $context Budget context.
 	 * @return bool
 	 */
 	private function is_worktree_loop_budget_exhausted( array $context ): bool {
-		$remaining = (float) ( $context['seconds'] ?? 0 ) - ( microtime(true) - (float) ( $context['started_at'] ?? microtime(true) ) );
-		return $remaining <= (float) ( $context['reserve_seconds'] ?? 1.0 );
+		$budget = $context['budget'] ?? null;
+		if ( ! $budget instanceof WallClockBudget ) {
+			return false;
+		}
+
+		return $budget->remaining_seconds() <= (float) ( $context['reserve_seconds'] ?? 1.0 );
 	}
 
 	/**
