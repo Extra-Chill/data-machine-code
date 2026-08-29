@@ -12,12 +12,14 @@ use DataMachineCode\Support\ExternalProcessPathProbe;
 use DataMachineCode\Support\ProcfsProcessPathProbe;
 use DataMachineCode\Support\ProcessPathProbeInterface;
 use DataMachineCode\Support\UnsupportedProcessPathProbe;
+use DataMachineCode\Support\WallClockBudget;
 
 defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/WorktreeContextInjector.php';
 require_once __DIR__ . '/WorktreeAgeFilter.php';
 require_once dirname(__DIR__) . '/Support/ProcessPathProbe.php';
+require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 
 trait WorkspaceArtifactCleanup {
 
@@ -130,6 +132,18 @@ trait WorkspaceArtifactCleanup {
 		$rank_by_size = $dry_run && null === $apply_plan && ! $exhaustive && in_array($sort, array( 'size', 'bytes' ), true);
 		$plan_limit   = $rank_by_size ? 0 : $limit;
 
+		$budget = null;
+		if ( isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ) {
+			$budget = WallClockBudget::from_duration(
+				trim( (string) $opts['until_budget'] ),
+				'30s',
+				'invalid_artifact_cleanup_budget'
+			);
+			if ( $budget instanceof \WP_Error ) {
+				return $budget;
+			}
+		}
+
 		$plan = $this->build_worktree_artifact_cleanup_plan(
 			$force,
 			array(
@@ -141,6 +155,7 @@ trait WorkspaceArtifactCleanup {
 				'safety_probes'                   => $safety_probes,
 				'older_than'                      => $older_than,
 				'scope'                           => $scope,
+				'budget'                          => $budget,
 			)
 		);
 		if ( $plan instanceof \WP_Error ) {
@@ -470,7 +485,23 @@ trait WorkspaceArtifactCleanup {
 		$candidates = array();
 		$skipped    = array();
 
+		// Per-worktree artifact detection is unbounded work. `limit` bounds how
+		// many worktrees are considered, not how long considering them takes,
+		// so a caller-supplied wall clock is the only thing that keeps a large
+		// workspace inside a declared budget.
+		$budget           = isset($opts['budget']) && $opts['budget'] instanceof WallClockBudget ? $opts['budget'] : null;
+		$scanned          = 0;
+		$budget_exhausted = false;
+
 		foreach ( $slice as $wt ) {
+			// Always scan at least one worktree so a budget that is already
+			// spent still makes forward progress instead of emitting a
+			// continuation that can never advance.
+			if ( null !== $budget && $scanned > 0 && $budget->expired() ) {
+				$budget_exhausted = true;
+				break;
+			}
+			++$scanned;
 			$handle                = (string) ( $wt['handle'] ?? '?' );
 			$repo                  = (string) ( $wt['repo'] ?? '' );
 			$wt_path               = (string) ( $wt['path'] ?? '' );
@@ -667,18 +698,30 @@ trait WorkspaceArtifactCleanup {
 			$candidates[] = $candidate;
 		}
 
+		// A budget-truncated scan stopped short of its own slice, so resume from
+		// where it actually stopped rather than from the end of the slice.
+		$scan_end   = $budget_exhausted ? $slice_start + $scanned : $slice_end;
+		$incomplete = $budget_exhausted || ( $bounded && $slice_end < $total );
+
 		$pagination = array(
 			'mode'          => $safety_probes ? ( $uses_git_listing ? 'exhaustive' : 'bounded_inventory_safety' ) : 'bounded_inventory',
 			'limit'         => $bounded ? $limit : 0,
 			'offset'        => $slice_start,
-			'scanned'       => count($slice),
+			'scanned'       => $scanned,
 			'total'         => $total,
-			'complete'      => ! $bounded || $slice_end >= $total,
-			'partial'       => $bounded && $slice_end < $total,
-			'next_offset'   => ( $bounded && $slice_end < $total ) ? $slice_end : null,
+			'complete'      => ! $incomplete,
+			'partial'       => $incomplete,
+			'next_offset'   => $incomplete && $scan_end < $total ? $scan_end : null,
 			'safety_probes' => $safety_probes,
 			'scope'         => $scope,
 		);
+		if ( $budget_exhausted ) {
+			$pagination['budget_exhausted'] = true;
+			$pagination['stop_reason']      = 'budget_exhausted';
+		}
+		if ( null !== $budget ) {
+			$pagination['wall_clock_budget'] = $budget->evidence();
+		}
 		if ( null !== $age_filter ) {
 			$pagination['age_filter'] = $age_filter;
 		}
