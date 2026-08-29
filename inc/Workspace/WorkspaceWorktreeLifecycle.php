@@ -2431,7 +2431,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($intent_stored) || ! $intent_stored ) {
 			return is_wp_error($intent_stored)
 				? $intent_stored
-				: new \WP_Error('worktree_creation_intent_conflict', sprintf('Refusing to create worktree "%s" because a creation intent already exists.', $wt_handle), array( 'status' => 409 ));
+				: $this->worktree_creation_intent_conflict($wt_handle, $wt_path, $repo, $branch);
 		}
 
 		$operation_deadline = (float) ( $preflight['operation_deadline'] ?? 0.0 );
@@ -3249,6 +3249,38 @@ trait WorkspaceWorktreeLifecycle {
 			'inject_context' => $inject_context,
 			'bootstrap'      => $bootstrap,
 			'intent'         => $intent,
+		);
+	}
+
+	/** Report the durable record that fenced a concurrent creation attempt. */
+	private function worktree_creation_intent_conflict( string $handle, string $expected_path, string $repo, string $branch ): \WP_Error {
+		$metadata      = WorktreeContextInjector::get_metadata_fresh($handle) ?? array();
+		$record_path   = is_string($metadata['path'] ?? null) && '' !== trim((string) $metadata['path']) ? (string) $metadata['path'] : $expected_path;
+		$lifecycle     = is_string($metadata['lifecycle_state'] ?? null) && '' !== trim((string) $metadata['lifecycle_state']) ? (string) $metadata['lifecycle_state'] : 'not recorded';
+		$reconciled_at = is_string($metadata['reconciled_at'] ?? null) && '' !== trim((string) $metadata['reconciled_at']) ? (string) $metadata['reconciled_at'] : 'not recorded';
+		$path_exists   = is_dir($record_path);
+		$recovery_verb = sprintf('workspace worktree add %s %s', $repo, $branch);
+
+		return new \WP_Error(
+			'worktree_creation_intent_conflict',
+			sprintf(
+				'Refusing to create worktree "%s": record kind creation_intent is fencing an in-flight creation. Evidence: lifecycle_state=%s; path=%s; path_exists=%s; reconciled_at=%s. Retry `%s` after the current creation finishes; that verb clears the journal by adopting or completing the exact worktree.',
+				$handle,
+				$lifecycle,
+				$record_path,
+				$path_exists ? 'yes' : 'no',
+				$reconciled_at,
+				$recovery_verb
+			),
+			array(
+				'status'          => 409,
+				'record_kind'     => 'creation_intent',
+				'lifecycle_state' => 'not recorded' === $lifecycle ? null : $lifecycle,
+				'path'            => $record_path,
+				'path_exists'     => $path_exists,
+				'reconciled_at'   => 'not recorded' === $reconciled_at ? null : $reconciled_at,
+				'recovery_verb'   => $recovery_verb,
+			)
 		);
 	}
 
@@ -4663,19 +4695,21 @@ trait WorkspaceWorktreeLifecycle {
 	 * @type   int  $limit          Bounded response page size when supplied.
 	 * @type   string $cursor       Continuation cursor for a bounded response.
 	 * @type   bool $all            Return every row when using bounded response options.
+	 * @type   bool   $include_unmanaged Include external and missing-metadata rows. Default true.
 	 * @type   string $task_ref      Exact task URL or reference predicate.
 	 * @type   string $owner_run_ref Exact owner-run predicate.
 	 * }
 	 * @return array{success: bool, worktrees: array, fields_skipped: array<int,string>, total?:int, returned?:int, next_cursor?:string|null, status_requested?:bool, disk_requested?:bool, summary?:array}|\WP_Error
 	 */
 	public function worktree_list( ?string $repo = null, ?string $state = null, array $opts = array() ): array|\WP_Error {
-		$include_status = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
-		$include_disk   = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : true;
-		$target_handle  = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
-		$task_ref       = $this->normalize_worktree_list_task_ref($opts['task_ref'] ?? null);
-		$owner_run_ref  = $this->normalize_worktree_list_owner_run_ref($opts['owner_run_ref'] ?? null);
-		$progress       = isset($opts['progress_callback']) && is_callable($opts['progress_callback']) ? $opts['progress_callback'] : null;
-		$repo           = null !== $repo && '' !== trim($repo) ? $this->sanitize_name($repo) : null;
+		$include_status    = array_key_exists('include_status', $opts) ? (bool) $opts['include_status'] : true;
+		$include_disk      = array_key_exists('include_disk', $opts) ? (bool) $opts['include_disk'] : true;
+		$include_unmanaged = array_key_exists('include_unmanaged', $opts) ? (bool) $opts['include_unmanaged'] : true;
+		$target_handle     = isset($opts['handle']) ? trim( (string) $opts['handle']) : '';
+		$task_ref          = $this->normalize_worktree_list_task_ref($opts['task_ref'] ?? null);
+		$owner_run_ref     = $this->normalize_worktree_list_owner_run_ref($opts['owner_run_ref'] ?? null);
+		$progress          = isset($opts['progress_callback']) && is_callable($opts['progress_callback']) ? $opts['progress_callback'] : null;
+		$repo              = null !== $repo && '' !== trim($repo) ? $this->sanitize_name($repo) : null;
 		if ( null !== $state && '' !== trim($state) ) {
 			$state = WorktreeContextInjector::normalize_state($state);
 			if ( null === $state ) {
@@ -4724,7 +4758,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($limit) ) {
 			return new \WP_Error('invalid_worktree_list_limit', 'Worktree list limit must be an integer between 1 and 200.', array( 'status' => 400 ));
 		}
-		$cursor = isset($opts['cursor']) ? $this->decode_worktree_list_cursor((string) $opts['cursor'], $repo, $state, $target_handle, $task_ref, $owner_run_ref) : null;
+		$cursor = isset($opts['cursor']) ? $this->decode_worktree_list_cursor((string) $opts['cursor'], $repo, $state, $target_handle, $task_ref, $owner_run_ref, $include_unmanaged) : null;
 		if ( is_wp_error($cursor) ) {
 			return $cursor;
 		}
@@ -4859,6 +4893,9 @@ trait WorkspaceWorktreeLifecycle {
 					$metadata_key = 'external:' . sha1($wt['path']);
 				}
 				$metadata        = null !== $metadata_key ? WorktreeContextInjector::get_metadata($metadata_key) : null;
+				if ( ! $include_unmanaged && ! $is_primary && ( ! $inside_ws || ! is_array($metadata) || array() === $metadata ) ) {
+					continue;
+				}
 				$created_at      = is_array($metadata) ? ( $metadata['created_at'] ?? null ) : null;
 				$lifecycle_state = is_array($metadata) ? WorktreeContextInjector::project_lifecycle_state($metadata) : null;
 				if ( ( null !== $state && $lifecycle_state !== $state ) || ! $this->worktree_list_matches_metadata_filters($metadata, $task_ref, $owner_run_ref) ) {
@@ -5004,7 +5041,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 		$next_cursor = null;
 		if ( $inventory_complete && $bounded && ! $all && $remaining > count($worktrees) && ! empty($worktrees) ) {
-			$next_cursor = $this->encode_worktree_list_cursor($this->worktree_list_row_key($worktrees[ count($worktrees) - 1 ]), $repo, $state, $target_handle, $task_ref, $owner_run_ref);
+			$next_cursor = $this->encode_worktree_list_cursor($this->worktree_list_row_key($worktrees[ count($worktrees) - 1 ]), $repo, $state, $target_handle, $task_ref, $owner_run_ref, $include_unmanaged);
 		}
 		if ( ! $inventory_complete ) {
 			$summary['observed'] = array_intersect_key($summary, array_flip(array( 'total', 'primary', 'worktree', 'external', 'dirty', 'unpushed', 'stale', 'active', 'stopped', 'unknown' )));
@@ -5324,17 +5361,19 @@ trait WorkspaceWorktreeLifecycle {
 		return (string) ( $row['handle'] ?? '' ) . "\0" . (string) ( $row['path'] ?? '' );
 	}
 
-	private function encode_worktree_list_cursor( string $after, ?string $repo, ?string $state, string $handle, ?string $task_ref = null, ?string $owner_run_ref = null ): string {
+	private function encode_worktree_list_cursor( string $after, ?string $repo, ?string $state, string $handle, ?string $task_ref = null, ?string $owner_run_ref = null, bool $include_unmanaged = true ): string {
 		$scope = array( 'repo' => $repo, 'state' => $state, 'handle' => $handle );
 		if ( null !== $task_ref ) { $scope['task_ref'] = $task_ref; }
 		if ( null !== $owner_run_ref ) { $scope['owner_run_ref'] = $owner_run_ref; }
+		if ( ! $include_unmanaged ) { $scope['include_unmanaged'] = false; }
 		return ListCursor::encode($after, $scope);
 	}
 
-	private function decode_worktree_list_cursor( string $cursor, ?string $repo, ?string $state, string $handle, ?string $task_ref = null, ?string $owner_run_ref = null ): string|\WP_Error {
+	private function decode_worktree_list_cursor( string $cursor, ?string $repo, ?string $state, string $handle, ?string $task_ref = null, ?string $owner_run_ref = null, bool $include_unmanaged = true ): string|\WP_Error {
 		$scope = array( 'repo' => $repo, 'state' => $state, 'handle' => $handle );
 		if ( null !== $task_ref ) { $scope['task_ref'] = $task_ref; }
 		if ( null !== $owner_run_ref ) { $scope['owner_run_ref'] = $owner_run_ref; }
+		if ( ! $include_unmanaged ) { $scope['include_unmanaged'] = false; }
 		return ListCursor::decode(
 			$cursor,
 			$scope,

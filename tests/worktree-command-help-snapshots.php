@@ -44,6 +44,7 @@ namespace {
 		}
 	};
 	$assert_synopsis('cleanup', array( 'dry-run', 'force', 'skip-github', 'inventory-only', 'include-repaired-metadata', 'limit', 'offset', 'until-budget', 'apply-plan', 'older-than', 'sort', 'format', 'verbose', 'only' ));
+	$assert_synopsis('list', array( 'repo', 'state', 'task-ref', 'owner-run-ref', 'limit', 'cursor', 'all', 'envelope', 'with-status', 'with-size', 'full', 'stale', 'include-unmanaged', 'verbose', 'format' ));
 	$assert_synopsis('prune', array( 'dry-run', 'until-budget', 'format' ));
 	$provider = $definitions['provider'];
 	worktree_help_assert('Resolve the standalone worktree provider executable.' === $provider['shortdesc'], 'Provider help snapshot changed.');

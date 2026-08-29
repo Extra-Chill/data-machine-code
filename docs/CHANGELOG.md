@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.15] - 2026-08-29
+
+### Fixed
+- Fix orphaned worktree handle recreation
+- Fix worktree list readability
+
 ## [0.72.14] - 2026-08-29
 
 ### Changed

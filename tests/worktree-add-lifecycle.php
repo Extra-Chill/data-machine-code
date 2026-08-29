@@ -334,6 +334,28 @@ try {
 	assert_true(is_wp_error($refresh_required) && 'freshness_refresh_required' === $refresh_required->get_error_code() && 'wp datamachine-code workspace git pull homeboy --allow-primary-refresh' === ( $refresh_required->get_error_data()['refresh_command'] ?? null ), 'plan without explicit freshness evidence did not return the typed exact refresh command');
 	$refreshed = $workspace->git_pull('homeboy', false, true);
 	assert_true(! is_wp_error($refreshed), is_wp_error($refreshed) ? $refreshed->get_error_message() : 'explicit primary refresh did not establish plan freshness evidence');
+	$orphaned = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'orphaned-lifecycle-recovery', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/orphaned-lifecycle' )));
+	assert_true(! is_wp_error($orphaned), is_wp_error($orphaned) ? $orphaned->get_error_message() : 'orphan recovery fixture creation failed');
+	$orphaned_handle   = 'homeboy@orphaned-lifecycle-recovery';
+	$orphaned_path     = (string) $orphaned['path'];
+	$orphaned_metadata = WorktreeContextInjector::get_metadata_fresh($orphaned_handle);
+	run_command('git worktree remove --force ' . escapeshellarg($orphaned_path), $primary_path);
+	assert_true(! is_dir($orphaned_path) && is_array($orphaned_metadata) && null === WorktreeContextInjector::get_creation_intent($orphaned_handle), 'orphan recovery fixture did not retain lifecycle metadata after its checkout disappeared');
+	$recreated = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'orphaned-lifecycle-recovery', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/orphaned-lifecycle' )));
+	assert_true(! is_wp_error($recreated) && is_dir($orphaned_path) && null === WorktreeContextInjector::get_creation_intent($orphaned_handle), is_wp_error($recreated) ? $recreated->get_error_message() : 'orphaned lifecycle metadata blocked recreation of its missing checkout');
+	$recreated_metadata = WorktreeContextInjector::get_metadata_fresh($orphaned_handle);
+	assert_true(is_array($recreated_metadata) && $orphaned_path === ( $recreated_metadata['path'] ?? null ) && 'active' === ( $recreated_metadata['lifecycle_state'] ?? null ), 'orphan recreation did not promote the new journal to active lifecycle metadata');
+
+	$concurrent_handle = 'homeboy@concurrent-creation-intent';
+	$concurrent_path   = $workspace_root . '/' . $concurrent_handle;
+	$concurrent_intent = interrupted_creation_intent('concurrent-creation-intent', trim(run_command('git rev-parse origin/main', $primary_path)), array( 'task_url' => 'https://example.test/issues/concurrent-intent' ));
+	assert_true(true === WorktreeContextInjector::store_creation_intent($concurrent_handle, $concurrent_intent), 'concurrent creation fixture could not persist its journal');
+	$concurrent = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'concurrent-creation-intent', 'origin/main', false, false, false, false, true, array( 'task_url' => 'https://example.test/issues/concurrent-intent' )));
+	$concurrent_evidence = is_wp_error($concurrent) ? (array) $concurrent->get_error_data() : array();
+	assert_true(is_wp_error($concurrent) && 'worktree_creation_intent_conflict' === $concurrent->get_error_code() && 409 === ( $concurrent_evidence['status'] ?? null ), 'genuine concurrent creation intent did not fence a second add');
+	assert_true('creation_intent' === ( $concurrent_evidence['record_kind'] ?? null ) && $concurrent_path === ( $concurrent_evidence['path'] ?? null ) && false === ( $concurrent_evidence['path_exists'] ?? null ) && isset($concurrent_evidence['recovery_verb']), 'creation intent conflict omitted truthful record-kind, path, or recovery evidence');
+	assert_true($concurrent_intent === WorktreeContextInjector::get_creation_intent($concurrent_handle) && ! is_dir($concurrent_path), 'conflicting add changed the concurrent journal or materialized a checkout');
+	WorktreeContextInjector::forget_creation_intent($concurrent_handle, $concurrent_intent);
 	$plan_fake_bin = $workspace_root . '/plan-fake-bin';
 	mkdir($plan_fake_bin, 0700);
 	$plan_git_log = $workspace_root . '/plan-git.log';
