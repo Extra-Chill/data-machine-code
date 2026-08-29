@@ -10,7 +10,7 @@ namespace DataMachineCode\Workspace {
 		public const VALID_STATES = array( 'active' );
 		public static function normalize_state( string $state ): ?string { return 'active' === strtolower(trim($state)) ? 'active' : null; }
 		public static function project_lifecycle_state( array $metadata ): ?string { return self::normalize_state((string) ( $metadata['lifecycle_state'] ?? '' )); }
-		public static function get_metadata( string $key ): ?array { $task = ! empty($GLOBALS['dmc_task_every_row']) || str_contains($key, 'branch-300') || str_contains($key, 'branch-301'); return array( 'lifecycle_state' => 'active' ) + ( $task ? array( 'task' => 'duplicate-task', 'origin_task' => array( 'task_url' => 'https://github.com/example/repo/issues/300', 'task_ref' => 'example/repo#300' ), 'owner_run_ref' => 'run-300' ) : array() ); }
+		public static function get_metadata( string $key ): ?array { if ( ! empty($GLOBALS['dmc_missing_metadata_row']) && str_contains($key, 'branch-000') ) { return null; } $task = ! empty($GLOBALS['dmc_task_every_row']) || str_contains($key, 'branch-300') || str_contains($key, 'branch-301'); return array( 'lifecycle_state' => 'active' ) + ( $task ? array( 'task' => 'duplicate-task', 'origin_task' => array( 'task_url' => 'https://github.com/example/repo/issues/300', 'task_ref' => 'example/repo#300' ), 'owner_run_ref' => 'run-300' ) : array() ); }
 		public static function classify_liveness( ?array $metadata ): array { return array( 'liveness' => 'unknown', 'reason' => 'metadata_missing', 'heartbeat_age_seconds' => null ); }
 		public static function summarize_owner( ?array $metadata ): array { return array( 'site' => 'unknown', 'agent' => 'unknown', 'user' => 'unknown' ); }
 		public static function summarize_session( ?array $metadata ): array { return array( 'primary_id' => null, 'ids' => array() ); }
@@ -122,6 +122,12 @@ namespace {
 		bounded_worktree_assert('repo@branch-330' === ($first['base_branch_worktrees'][0]['handle'] ?? null), 'Base branch diagnostics must include off-page worktrees.');
 		bounded_worktree_assert(0 === $harness->expensive_probes, 'Default worktree discovery must skip status, unpushed, disk, and freshness probes.');
 		bounded_worktree_assert($elapsed < 2.0, sprintf('Bounded worktree response exceeded deadline: %.3fs.', $elapsed));
+		$GLOBALS['dmc_missing_metadata_row'] = true;
+		$managed_only = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'include_unmanaged' => false, 'all' => true ));
+		$with_unmanaged = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'include_unmanaged' => true, 'all' => true ));
+		unset($GLOBALS['dmc_missing_metadata_row']);
+		bounded_worktree_assert(338 === $managed_only['total'] && ! in_array('repo@branch-000', array_column($managed_only['worktrees'], 'handle'), true), 'Managed-only inventory must exclude missing-metadata worktrees before pagination.');
+		bounded_worktree_assert(339 === $with_unmanaged['total'] && in_array('repo@branch-000', array_column($with_unmanaged['worktrees'], 'handle'), true), 'Explicit unmanaged inventory must restore missing-metadata worktrees.');
 
 		$second = $harness->worktree_list(null, null, array( 'include_status' => false, 'include_disk' => false, 'limit' => 50, 'cursor' => $legacy_cursor ));
 		bounded_worktree_assert('repo@branch-049' === ($second['worktrees'][0]['handle'] ?? null), 'Cursor continuation must resume after the stable first page.');

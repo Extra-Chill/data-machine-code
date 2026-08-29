@@ -2412,6 +2412,10 @@ class WorkspaceAbilities {
 								'type'        => 'boolean',
 								'description' => 'Run size and artifact `du` probes per worktree. Default false (cheap listing). Expensive on large workspaces.',
 							),
+							'include_unmanaged' => array(
+								'type'        => 'boolean',
+								'description' => 'Include external and missing-metadata worktrees. Defaults true for API compatibility.',
+							),
 							'limit'          => array(
 								'type'        => 'integer',
 								'minimum'     => 1,
@@ -4992,11 +4996,12 @@ class WorkspaceAbilities {
 			return new \WP_Error( 'invalid_worktree_list_pagination', 'Worktree list --all cannot be combined with --cursor.', array( 'status' => 400 ) );
 		}
 		$opts = array(
-			'include_status' => array_key_exists( 'include_status', $input ) ? (bool) $input['include_status'] : false,
-			'include_disk'   => array_key_exists( 'include_disk', $input ) ? (bool) $input['include_disk'] : false,
-			'handle'         => isset( $input['handle'] ) ? (string) $input['handle'] : '',
-			'limit'          => $limit,
-			'all'            => ! empty( $input['all'] ),
+			'include_status'    => array_key_exists( 'include_status', $input ) ? (bool) $input['include_status'] : false,
+			'include_disk'      => array_key_exists( 'include_disk', $input ) ? (bool) $input['include_disk'] : false,
+			'include_unmanaged' => array_key_exists( 'include_unmanaged', $input ) ? (bool) $input['include_unmanaged'] : true,
+			'handle'            => isset( $input['handle'] ) ? (string) $input['handle'] : '',
+			'limit'             => $limit,
+			'all'               => ! empty( $input['all'] ),
 		);
 		foreach ( array( 'task_ref', 'owner_run_ref' ) as $filter ) {
 			if ( isset( $input[ $filter ] ) ) {

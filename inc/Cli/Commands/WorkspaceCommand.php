@@ -393,7 +393,7 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'list'                  => array(
 				'shortdesc' => 'List managed worktrees from cheap inventory.',
-				'longdesc'  => "Returns a summary-first, 50-row cheap-inventory table by default. Filter one repository with `--repo=<repo>`. The positional `<repo>` form remains compatible; supplying both requires the same value. Legacy JSON, CSV, and YAML row streams remain exhaustive. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --repo=data-machine-code --format=json\n    wp datamachine-code workspace worktree list --repo=data-machine-code --format=json --envelope\n    wp datamachine-code workspace worktree list --all --full",
+				'longdesc'  => "Returns a headed, compact table of managed worktrees by default. Use `--include-unmanaged` to include external and missing-metadata rows, or `--verbose` for every human-facing column. Filter one repository with `--repo=<repo>`. The positional `<repo>` form remains compatible; supplying both requires the same value. JSON, CSV, and YAML row streams remain exhaustive and retain every field. Use --format=json --envelope for a bounded structured response and cursor. Add probe flags only for the details required.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree list --repo=data-machine-code\n    wp datamachine-code workspace worktree list --repo=data-machine-code --include-unmanaged --verbose\n    wp datamachine-code workspace worktree list --repo=data-machine-code --format=json --envelope",
 				'synopsis'  => array(
 					array(
 						'type'        => 'positional',
@@ -413,6 +413,8 @@ class WorkspaceCommand extends BaseCommand {
 					$flag( 'with-size', 'Probe disk use.' ),
 					$flag( 'full', 'Probe status and disk use.' ),
 					$flag( 'stale', 'Show stale rows; implies status.' ),
+					$flag( 'include-unmanaged', 'Include external and missing-metadata worktrees in human output.' ),
+					$flag( 'verbose', 'Show every human-facing worktree column.' ),
 					$format,
 				),
 			),
@@ -5073,6 +5075,7 @@ class WorkspaceCommand extends BaseCommand {
 
 			case 'list':
 				$format = (string) ( $assoc_args['format'] ?? 'table' );
+				$machine_format = in_array( $format, array( 'json', 'csv', 'yaml' ), true );
 				if ( in_array( $format, array( 'json', 'csv', 'yaml' ), true ) && ( isset( $assoc_args['limit'] ) || isset( $assoc_args['cursor'] ) ) && ( 'json' !== $format || empty( $assoc_args['envelope'] ) ) ) {
 					WP_CLI::error( 'Use --format=json --envelope with --limit or --cursor. Legacy JSON, CSV, and YAML row streams are exhaustive.' );
 					return;
@@ -5129,6 +5132,7 @@ class WorkspaceCommand extends BaseCommand {
 					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
 				}
 				$input['all'] = ! empty( $assoc_args['all'] ) || ( in_array( $format, array( 'json', 'csv', 'yaml' ), true ) && empty( $assoc_args['envelope'] ) );
+				$input['include_unmanaged'] = $machine_format || ! empty( $assoc_args['include-unmanaged'] );
 				// Cheap inventory by default — opt in to expensive probes via flags.
 				// `--full` is a shorthand for both, `--stale` requires status to detect dirty.
 				$want_status             = ! empty( $assoc_args['with-status'] )
@@ -5818,7 +5822,7 @@ class WorkspaceCommand extends BaseCommand {
 					},
 					$worktrees
 				);
-				$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'readiness_status', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+				$machine_fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'readiness', 'readiness_status', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
 				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) && ! empty( $assoc_args['envelope'] ) ) {
 					$result['worktrees'] = $items;
 					$this->renderer()->json( $result );
@@ -5828,8 +5832,9 @@ class WorkspaceCommand extends BaseCommand {
 					$this->renderer()->json( $items );
 					return;
 				}
-				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml' ), true ) ) {
-					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'safety', 'state', 'readiness', 'readiness_status', 'created_at', 'liveness', 'liveness_reason', 'last_seen_at', 'owner_full', 'session_full', 'task_full', 'pr', 'age_days', 'size_bytes', 'artifact_size_bytes', 'artifact_paths', 'stale', 'fields_skipped', 'metadata', 'path' );
+				if ( in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'yaml', 'csv' ), true ) ) {
+					$this->renderer()->items( $items, $machine_fields, $assoc_args );
+					return;
 				}
 				$skipped_global = (array) ( $result['fields_skipped'] ?? array() );
 				if ( 'list' === $operation && ! in_array( (string) ( $assoc_args['format'] ?? '' ), array( 'json', 'yaml', 'csv' ), true ) ) {
@@ -5849,7 +5854,41 @@ class WorkspaceCommand extends BaseCommand {
 						)
 					);
 				}
-				$this->format_items( $items, $fields, $assoc_args, 'handle' );
+				$display_value = static function ( mixed $value ): mixed {
+					return null === $value || '' === $value || 'unknown' === $value ? '-' : $value;
+				};
+				if ( 'get' === $operation || ! empty( $assoc_args['verbose'] ) ) {
+					$fields = array( 'handle', 'repo', 'kind', 'branch', 'head', 'dirty', 'state', 'readiness_status', 'liveness', 'last_seen_at', 'owner', 'agent', 'session', 'task', 'pr', 'age_days', 'size', 'artifacts', 'stale', 'path' );
+					$display_items = array_map(
+						static function ( array $item ) use ( $fields, $display_value ): array {
+							if ( (string) ( $item['handle'] ?? '' ) === (string) ( $item['path'] ?? '' ) ) {
+								$item['handle'] = '-';
+							}
+							foreach ( $fields as $field ) {
+								$item[ $field ] = $display_value( $item[ $field ] ?? null );
+							}
+							return $item;
+						},
+						$items
+					);
+				} else {
+					$fields = array( 'handle', 'branch', 'head', 'lifecycle', 'activity', 'task', 'path' );
+					$display_items = array_map(
+						static function ( array $item ) use ( $display_value ): array {
+							return array(
+								'handle'    => $display_value( $item['handle'] === $item['path'] ? null : $item['handle'] ),
+								'branch'    => $display_value( $item['branch'] ),
+								'head'      => $display_value( $item['head'] ),
+								'lifecycle' => $display_value( $item['state'] ),
+								'activity'  => $display_value( $item['liveness'] ),
+								'task'      => $display_value( $item['task'] ),
+								'path'      => $display_value( $item['path'] ),
+							);
+						},
+						$items
+					);
+				}
+				$this->renderer()->items( $display_items, $fields, array( 'format' => 'table' ) );
 				$duplicates            = (array) ( $result['duplicates'] ?? array() );
 				$base_branch_worktrees = (array) ( $result['base_branch_worktrees'] ?? array() );
 				$summary               = (array) ( $result['summary'] ?? array() );
