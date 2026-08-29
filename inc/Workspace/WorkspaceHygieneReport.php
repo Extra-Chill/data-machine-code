@@ -122,6 +122,10 @@ trait WorkspaceHygieneReport {
 				$cleanup['diagnostics']['inventory'] = $inventory_snapshot['diagnostics'] ?? $listing['diagnostics'] ?? null;
 			}
 		}
+		$inventory_rows_for_prune = null === $inventory_snapshot ? ( $inventory_database_rows ?? array() ) : $inventory_snapshot['database_rows'];
+		$inventory_prune         = $include_cleanup
+			? $this->build_inventory_prune_preview($inventory_rows_for_prune)
+			: array( 'included' => false );
 		$inventory_partial = ! empty($inventory_snapshot['partial']) || ! empty($listing['partial']);
 		$cleanup_partial   = ! empty($cleanup['partial']) || ! empty($cleanup['pagination']['partial']);
 		$locks_complete    = empty($locks['partial']) && 'budget_exhausted' !== ( $locks['state'] ?? null );
@@ -149,11 +153,11 @@ trait WorkspaceHygieneReport {
 			|| $cleanup_partial
 			|| ! empty($disk['partial'])
 			|| ( $include_sizes && empty($size_report['scan_complete']) );
-		$fast_stats = $this->build_workspace_fast_stats($worktrees, $cleanup, $size_report, $include_worktree_status);
+		$fast_stats = $this->build_workspace_fast_stats($worktrees, $cleanup, $size_report, $include_worktree_status, $inventory_prune);
 		if ( $inventory_partial || $cleanup_partial ) {
 			$fast_stats['partial']  = true;
 			$fast_stats['complete'] = false;
-			$fast_stats['observed'] = array_intersect_key($fast_stats, array_flip(array( 'total_candidates', 'cleanup_eligible_unprobed_count', 'known_worktree_count', 'known_primary_count', 'invalid_broken_orphan_count', 'unmanaged_skipped_count' )));
+			$fast_stats['observed'] = array_intersect_key($fast_stats, array_flip(array( 'total_candidates', 'cleanup_eligible_unprobed_count', 'missing_inventory_prune_candidate_count', 'known_worktree_count', 'known_primary_count', 'invalid_broken_orphan_count', 'unmanaged_skipped_count' )));
 		}
 
 		return array(
@@ -186,6 +190,7 @@ trait WorkspaceHygieneReport {
 			'top_repos_by_size'         => $this->top_repos_by_size( (array) ( $size_report['entries'] ?? array() ), 10),
 			'locks'                     => $locks,
 			'cleanup'                   => $cleanup_summary,
+			'inventory_prune'           => $inventory_prune,
 			'notes'                     => array_values(
 				array_filter(
 					array(
@@ -198,6 +203,50 @@ trait WorkspaceHygieneReport {
 					)
 				)
 			),
+		);
+	}
+
+	/**
+	 * Project the exact missing-inventory candidate set used by prune-missing.
+	 *
+	 * @param array<int,array<string,mixed>> $database_rows Persisted inventory rows.
+	 * @return array<string,mixed>
+	 */
+	private function build_inventory_prune_preview( array $database_rows ): array {
+		$candidates = array();
+		$blocked    = array();
+		foreach ( $database_rows as $row ) {
+			$classification = WorktreeCleanupClassifier::classify_inventory_prune_row($row, $this->workspace_path, false);
+			if ( 'ignore' === $classification['status'] ) {
+				continue;
+			}
+
+			$projected = array_merge(
+				array(
+					'handle' => (string) ( $row['handle'] ?? '' ),
+					'repo'   => (string) ( $row['repo'] ?? '' ),
+					'path'   => (string) ( $row['path'] ?? '' ),
+				),
+				$classification
+			);
+			unset($projected['status']);
+			if ( 'candidate' === $classification['status'] ) {
+				$candidates[] = $projected;
+			} else {
+				$blocked[] = $projected;
+			}
+		}
+
+		return array(
+			'included'        => true,
+			'dry_run'         => true,
+			'candidates'      => $candidates,
+			'blocked'         => $blocked,
+			'candidate_count' => count($candidates),
+			'blocked_count'   => count($blocked),
+			'review_command'  => 'wp datamachine-code workspace inventory prune-missing --dry-run --limit=200 --format=json',
+			'apply_command'   => 'wp datamachine-code workspace inventory prune-missing --yes --limit=200 --format=json',
+			'note'            => 'This metadata-only lane deletes records for paths already absent on disk; it does not reclaim directory bytes. Existing-directory cleanup and its reclaimable-byte estimate use cleanup.summary.apply_command.',
 		);
 	}
 
@@ -1308,23 +1357,24 @@ trait WorkspaceHygieneReport {
 	 * @param  bool                   $include_worktree_status Whether dirty probes ran.
 	 * @return array<string,mixed>
 	 */
-	private function build_workspace_fast_stats( array $worktrees, ?array $cleanup, array $size_report, bool $include_worktree_status ): array {
+	private function build_workspace_fast_stats( array $worktrees, ?array $cleanup, array $size_report, bool $include_worktree_status, array $inventory_prune = array() ): array {
 		$cleanup_candidates = (array) ( $cleanup['candidates'] ?? array() );
 		$cleanup_summary    = (array) ( $cleanup['summary'] ?? array() );
 
 		$counts = array(
-			'total_candidates'                => count($worktrees),
-			'cleanup_eligible_unprobed_count' => count($cleanup_candidates),
-			'valid_clean_count'               => 0,
-			'valid_dirty_count'               => 0,
-			'inventory_known_dirty_count'     => 0,
-			'inventory_known_blocker_count'   => 0,
-			'fresh_probed_blocker_count'      => 0,
-			'invalid_broken_orphan_count'     => 0,
-			'unmanaged_skipped_count'         => 0,
-			'dirty_probe_skipped_count'       => 0,
-			'known_worktree_count'            => 0,
-			'known_primary_count'             => 0,
+			'total_candidates'                        => count($worktrees),
+			'cleanup_eligible_unprobed_count'         => count($cleanup_candidates),
+			'missing_inventory_prune_candidate_count' => (int) ( $inventory_prune['candidate_count'] ?? 0 ),
+			'valid_clean_count'                       => 0,
+			'valid_dirty_count'                       => 0,
+			'inventory_known_dirty_count'             => 0,
+			'inventory_known_blocker_count'           => 0,
+			'fresh_probed_blocker_count'              => 0,
+			'invalid_broken_orphan_count'             => 0,
+			'unmanaged_skipped_count'                 => 0,
+			'dirty_probe_skipped_count'               => 0,
+			'known_worktree_count'                    => 0,
+			'known_primary_count'                     => 0,
 		);
 
 		foreach ( $worktrees as $row ) {
@@ -1398,6 +1448,8 @@ trait WorkspaceHygieneReport {
 			'counts'                            => $counts,
 			'estimated_reclaimable_bytes'       => $estimated_reclaimable,
 			'estimated_reclaimable_human'       => $this->format_bytes($estimated_reclaimable),
+			'estimated_reclaimable_command'     => $cleanup_summary['apply_command'] ?? null,
+			'estimated_reclaimable_note'        => 'Estimated bytes belong to existing worktree cleanup candidates. The apply command revalidates dirty, unpushed, primary/protected, and containment blockers before reclaiming them.',
 			'top_disk_consumers'                => array_slice( (array) ( $size_report['top_entries'] ?? array() ), 0, 10),
 			'progress'                          => array(
 				'size_scanned_entries' => (int) ( $size_report['scanned_entries'] ?? 0 ),

@@ -85,12 +85,12 @@ final class SafeCleanupInventoryWpdb {
 	}
 
 	public function query( string $sql ): int|false {
-		if ( ! preg_match( "/handle = '([^']*)' AND path = '([^']*)' AND missing_path = 1 AND last_probe_status = 'missing_path'/", $sql, $matches ) ) {
+		if ( ! preg_match( "/handle = '([^']*)' AND path = '([^']*)'/", $sql, $matches ) ) {
 			return false;
 		}
 		$handle = stripslashes( $matches[1] );
 		$path   = stripslashes( $matches[2] );
-		if ( ! isset( $this->rows[ $handle ] ) || $path !== (string) $this->rows[ $handle ]['path'] || empty( $this->rows[ $handle ]['missing_path'] ) || 'missing_path' !== $this->rows[ $handle ]['last_probe_status'] ) {
+		if ( ! isset( $this->rows[ $handle ] ) || $path !== (string) $this->rows[ $handle ]['path'] ) {
 			return 0;
 		}
 		unset( $this->rows[ $handle ] );
