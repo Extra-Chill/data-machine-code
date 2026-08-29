@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.11] - 2026-08-29
+
+### Fixed
+- Fix worktree transport admission visibility
+
 ## [0.72.10] - 2026-08-29
 
 ### Changed
