@@ -2386,7 +2386,7 @@ trait WorkspaceWorktreeLifecycle {
 		if ( is_wp_error($intent_stored) || ! $intent_stored ) {
 			return is_wp_error($intent_stored)
 				? $intent_stored
-				: new \WP_Error('worktree_creation_intent_conflict', sprintf('Refusing to create worktree "%s" because a creation intent already exists.', $wt_handle), array( 'status' => 409 ));
+				: $this->worktree_creation_intent_conflict($wt_handle, $wt_path, $repo, $branch);
 		}
 
 		$operation_deadline = (float) ( $preflight['operation_deadline'] ?? 0.0 );
@@ -3174,6 +3174,38 @@ trait WorkspaceWorktreeLifecycle {
 			'inject_context' => $inject_context,
 			'bootstrap'      => $bootstrap,
 			'intent'         => $intent,
+		);
+	}
+
+	/** Report the durable record that fenced a concurrent creation attempt. */
+	private function worktree_creation_intent_conflict( string $handle, string $expected_path, string $repo, string $branch ): \WP_Error {
+		$metadata      = WorktreeContextInjector::get_metadata_fresh($handle) ?? array();
+		$record_path   = is_string($metadata['path'] ?? null) && '' !== trim((string) $metadata['path']) ? (string) $metadata['path'] : $expected_path;
+		$lifecycle     = is_string($metadata['lifecycle_state'] ?? null) && '' !== trim((string) $metadata['lifecycle_state']) ? (string) $metadata['lifecycle_state'] : 'not recorded';
+		$reconciled_at = is_string($metadata['reconciled_at'] ?? null) && '' !== trim((string) $metadata['reconciled_at']) ? (string) $metadata['reconciled_at'] : 'not recorded';
+		$path_exists   = is_dir($record_path);
+		$recovery_verb = sprintf('workspace worktree add %s %s', $repo, $branch);
+
+		return new \WP_Error(
+			'worktree_creation_intent_conflict',
+			sprintf(
+				'Refusing to create worktree "%s": record kind creation_intent is fencing an in-flight creation. Evidence: lifecycle_state=%s; path=%s; path_exists=%s; reconciled_at=%s. Retry `%s` after the current creation finishes; that verb clears the journal by adopting or completing the exact worktree.',
+				$handle,
+				$lifecycle,
+				$record_path,
+				$path_exists ? 'yes' : 'no',
+				$reconciled_at,
+				$recovery_verb
+			),
+			array(
+				'status'          => 409,
+				'record_kind'     => 'creation_intent',
+				'lifecycle_state' => 'not recorded' === $lifecycle ? null : $lifecycle,
+				'path'            => $record_path,
+				'path_exists'     => $path_exists,
+				'reconciled_at'   => 'not recorded' === $reconciled_at ? null : $reconciled_at,
+				'recovery_verb'   => $recovery_verb,
+			)
 		);
 	}
 
