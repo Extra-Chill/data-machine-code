@@ -29,6 +29,12 @@ trait WorkspaceWorktreeLifecycle {
 	/** One deadline covers finalizer admission, probes, persistence, and readback. */
 	private const WORKTREE_FINALIZE_DEFAULT_BUDGET = '10s';
 
+	/** Maximum primaries inspected by a bounded worktree prune page. */
+	private const WORKTREE_PRUNE_MAX_LIMIT = 200;
+
+	/** Default wall-clock budget for a bounded worktree prune page. */
+	private const WORKTREE_PRUNE_DEFAULT_BUDGET = '30s';
+
 	/**
 	 * Produce a non-mutating, digest-addressed worktree allocation decision.
 	 *
@@ -5556,89 +5562,189 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
-	 * Prune stale worktree registry entries across all primaries.
+	 * Prune stale worktree registry entries across managed primaries.
 	 *
 	 * Git removes only registrations whose worktree path is absent. Expiring now
 	 * makes that reconciliation immediate without touching existing checkouts,
-	 * including dirty or unpushed worktrees.
+	 * including dirty or unpushed worktrees. Bounded pages preview first through
+	 * cheap porcelain probes and skip the full inventory refresh.
 	 *
-	 * @return array{success: bool, pruned: array, skipped?: array, next_commands?: array, inventory?: array, stale_inventory?: array, stale_marker_blockers?: array}|\WP_Error
+	 * @param array{dry_run?:bool,limit?:int,after_repo?:string,until_budget?:string} $opts Prune options.
+	 * @return array{success: bool, dry_run: bool, pruned: array, candidates: array, skipped?: array, next_commands?: array, inventory?: array, stale_inventory?: array, stale_marker_blockers?: array}|\WP_Error
 	 */
-	public function worktree_prune(): array|\WP_Error {
+	public function worktree_prune( array $opts = array() ): array|\WP_Error {
+		$dry_run         = ! empty( $opts['dry_run'] );
+		$limit           = array_key_exists( 'limit', $opts ) ? (int) $opts['limit'] : 0;
+		$after_repo      = isset( $opts['after_repo'] ) ? trim( (string) $opts['after_repo'] ) : '';
 		$pruned          = array();
+		$candidates      = array();
 		$skipped         = array();
 		$next_commands   = array();
 		$stale_rows      = array();
 		$marker_blocks   = array();
 		$marker_repaired = array();
+		$inspected       = 0;
+		$last_repo       = null;
+		$stopped_early   = false;
+		$budget          = null;
+		$refresh         = null;
 
-		if ( ! is_dir($this->workspace_path) ) {
-			return array(
-				'success' => true,
-				'pruned'  => $pruned,
-			);
+		if ( $limit < 0 || $limit > self::WORKTREE_PRUNE_MAX_LIMIT ) {
+			return new \WP_Error( 'invalid_worktree_prune_limit', 'Worktree prune limit must be an integer between 1 and 200, or omitted for an unbounded apply.', array( 'status' => 400 ) );
 		}
 
-		$entries = scandir($this->workspace_path);
-		foreach ( $entries as $entry ) {
-			if ( '.' === $entry || '..' === $entry || str_contains($entry, '@') ) {
-				continue;
+		if ( $dry_run || $limit > 0 || isset( $opts['until_budget'] ) || '' !== $after_repo ) {
+			$budget = WallClockBudget::from_duration( $opts['until_budget'] ?? self::WORKTREE_PRUNE_DEFAULT_BUDGET, self::WORKTREE_PRUNE_DEFAULT_BUDGET, 'invalid_worktree_prune_budget' );
+			if ( is_wp_error( $budget ) ) {
+				return $budget;
 			}
-			$primary_path = $this->workspace_path . '/' . $entry;
-			if ( ! GitCheckout::exists($primary_path) ) {
-				continue;
-			}
-			$result = WorkspaceMutationLock::with_repo(
-				$this->workspace_path,
-				$entry,
-				fn() => $this->run_git($primary_path, 'worktree prune -v --expire=now')
-			);
-			if ( is_wp_error($result) ) {
-				if ( 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
-					$skipped[]       = array(
-						'repo'         => $entry,
-						'primary_path' => $primary_path,
-						'reason'       => $result->get_error_message(),
-					);
-					$next_commands[] = sprintf('git -C %s worktree prune -v --expire=now', escapeshellarg($primary_path));
+		}
+
+		if ( is_dir( $this->workspace_path ) ) {
+			$entries  = scandir( $this->workspace_path );
+			$entries  = false === $entries ? array() : $entries;
+			sort( $entries );
+			$skipping = '' !== $after_repo;
+			foreach ( $entries as $entry ) {
+				if ( '.' === $entry || '..' === $entry || str_contains( $entry, '@' ) ) {
 					continue;
 				}
-				return $result;
+				$primary_path = $this->workspace_path . '/' . $entry;
+				if ( ! GitCheckout::exists( $primary_path ) ) {
+					continue;
+				}
+				if ( $skipping ) {
+					if ( $entry === $after_repo ) {
+						$skipping = false;
+					}
+					continue;
+				}
+				if ( null !== $budget && $budget->expired() ) {
+					$stopped_early = true;
+					break;
+				}
+				if ( $limit > 0 && $inspected >= $limit ) {
+					$stopped_early = true;
+					break;
+				}
+
+				$timeout = null !== $budget ? $budget->probe_timeout_seconds( self::WORKTREE_LIST_GIT_PROBE_TIMEOUT_SECONDS ) : 0;
+				$list    = WorkspaceMutationLock::with_repo(
+					$this->workspace_path,
+					$entry,
+					fn() => $this->run_git( $primary_path, 'worktree list --porcelain', $timeout )
+				);
+				if ( is_wp_error( $list ) ) {
+					if ( 'datamachine_workspace_git_unavailable' === $list->get_error_code() ) {
+						$skipped[]       = array(
+							'repo'         => $entry,
+							'primary_path' => $primary_path,
+							'reason'       => $list->get_error_message(),
+						);
+						$next_commands[] = sprintf( 'git -C %s worktree prune -v --expire=now', escapeshellarg( $primary_path ) );
+						++$inspected;
+						$last_repo = $entry;
+						continue;
+					}
+					return $list;
+				}
+
+				$registrations = GitCheckout::prunable_registrations_from_porcelain( (string) ( $list['output'] ?? '' ) );
+				foreach ( $registrations as $registration ) {
+					$candidates[] = array(
+						'repo'         => $entry,
+						'primary_path' => $primary_path,
+						'path'         => (string) ( $registration['path'] ?? '' ),
+						'reason'       => (string) ( $registration['reason'] ?? '' ),
+					);
+				}
+
+				if ( ! $dry_run && array() !== $registrations ) {
+					$result = WorkspaceMutationLock::with_repo(
+						$this->workspace_path,
+						$entry,
+						fn() => $this->run_git( $primary_path, GitCheckout::prune_git_args( false ), $timeout )
+					);
+					if ( is_wp_error( $result ) ) {
+						if ( 'datamachine_workspace_git_unavailable' === $result->get_error_code() ) {
+							$skipped[]       = array(
+								'repo'         => $entry,
+								'primary_path' => $primary_path,
+								'reason'       => $result->get_error_message(),
+							);
+							$next_commands[] = sprintf( 'git -C %s worktree prune -v --expire=now', escapeshellarg( $primary_path ) );
+							++$inspected;
+							$last_repo = $entry;
+							continue;
+						}
+						return $result;
+					}
+					$pruned[] = $entry;
+				} elseif ( $dry_run && array() !== $registrations ) {
+					$pruned[] = $entry;
+				}
+
+				++$inspected;
+				$last_repo = $entry;
 			}
-			// Git emits a verbose line for every removed registration. Preserve the
-			// existing `pruned` result as evidence of actual reconciliation instead
-			// of reporting every primary that was merely scanned.
-			if ( '' !== trim( (string) ( $result['output'] ?? '' )) ) {
-				$pruned[] = $entry;
+		}
+
+		$repair_inventory = ! $dry_run && 0 === $limit && '' === $after_repo && ! isset( $opts['until_budget'] );
+		if ( $repair_inventory ) {
+			$refresh = $this->worktree_inventory_refresh();
+			if ( $refresh instanceof \WP_Error ) {
+				return $refresh;
+			}
+
+			$inventory_diagnostics = $this->prune_stale_worktree_inventory_rows();
+			if ( $inventory_diagnostics instanceof \WP_Error ) {
+				return $inventory_diagnostics;
+			}
+
+			$stale_rows      = (array) ( $inventory_diagnostics['stale_inventory'] ?? array() );
+			$marker_blocks   = (array) ( $inventory_diagnostics['stale_marker_blockers'] ?? array() );
+			$marker_repaired = (array) ( $inventory_diagnostics['stale_marker_repaired'] ?? array() );
+			foreach ( (array) ( $inventory_diagnostics['next_commands'] ?? array() ) as $command ) {
+				$next_commands[] = (string) $command;
 			}
 		}
 
-		$refresh = $this->worktree_inventory_refresh();
-		if ( $refresh instanceof \WP_Error ) {
-			return $refresh;
-		}
-
-		$inventory_diagnostics = $this->prune_stale_worktree_inventory_rows();
-		if ( $inventory_diagnostics instanceof \WP_Error ) {
-			return $inventory_diagnostics;
-		}
-
-		$stale_rows      = (array) ( $inventory_diagnostics['stale_inventory'] ?? array() );
-		$marker_blocks   = (array) ( $inventory_diagnostics['stale_marker_blockers'] ?? array() );
-		$marker_repaired = (array) ( $inventory_diagnostics['stale_marker_repaired'] ?? array() );
-		foreach ( (array) ( $inventory_diagnostics['next_commands'] ?? array() ) as $command ) {
-			$next_commands[] = (string) $command;
+		if ( $dry_run ) {
+			$apply_flags = '--yes --format=json';
+			if ( $limit > 0 ) {
+				$apply_flags = sprintf( '--yes --limit=%d --format=json', $limit );
+			}
+			$next_commands[] = 'studio wp datamachine-code workspace worktree prune ' . $apply_flags;
+			$next_commands[] = 'studio wp datamachine-code workspace inventory prune-missing --dry-run --format=json';
+			if ( $stopped_early && is_string( $last_repo ) ) {
+				$continue_flags    = sprintf( '--dry-run --after-repo=%s --format=json', $last_repo );
+				if ( $limit > 0 ) {
+					$continue_flags = sprintf( '--dry-run --limit=%d --after-repo=%s --format=json', $limit, $last_repo );
+				}
+				array_unshift( $next_commands, 'studio wp datamachine-code workspace worktree prune ' . $continue_flags );
+			}
 		}
 
 		return array(
 			'success'               => true,
-			'pruned'                => $pruned,
+			'dry_run'               => $dry_run,
+			'pruned'                => $dry_run ? array() : $pruned,
+			'would_prune'           => $dry_run ? $pruned : array(),
+			'candidates'            => $candidates,
+			'scanned_primary_count' => $inspected,
 			'skipped'               => $skipped,
-			'next_commands'         => array_values(array_unique($next_commands)),
+			'next_commands'         => array_values( array_unique( $next_commands ) ),
 			'inventory'             => $refresh,
 			'stale_inventory'       => $stale_rows,
 			'stale_marker_blockers' => $marker_blocks,
 			'stale_marker_repaired' => $marker_repaired,
+			'partial'               => $stopped_early,
+			'continuation'          => array(
+				'available'  => $stopped_early && is_string( $last_repo ),
+				'after_repo' => $stopped_early ? $last_repo : null,
+				'reason'     => $stopped_early ? ( null !== $budget && $budget->expired() ? 'scan_budget_exhausted' : 'more_rows' ) : null,
+			),
+			'apply_command'         => $dry_run ? 'studio wp datamachine-code workspace worktree prune --yes --format=json' : null,
 		);
 	}
 

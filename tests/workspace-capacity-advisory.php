@@ -36,15 +36,22 @@ capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) === ($same_w
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) !== ($new_threshold['advisory_fingerprint'] ?? null), 'A changed active threshold must produce a new fingerprint.');
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) !== ($blocked['advisory_fingerprint'] ?? null), 'A blocking state change must produce a new fingerprint.');
 capacity_advisory_assert(str_starts_with((string) ($warning['evidence_reference'] ?? ''), 'workspace_capacity@'), 'Capacity evidence must expose a compact reference.');
-capacity_advisory_assert(2 === count((array) ($warning['recovery_actions'] ?? array())), 'Structured capacity evidence must retain bounded recovery actions.');
+capacity_advisory_assert(4 === count((array) ($warning['recovery_actions'] ?? array())), 'Worktree-count warnings must lead with preview-first recovery actions.');
+capacity_advisory_assert('preview_stale_git_registrations' === ($warning['recovery_actions'][0]['action'] ?? null), 'Worktree-count warnings must preview stale Git registrations first.');
+capacity_advisory_assert('studio wp datamachine-code workspace worktree prune --dry-run --format=json' === ($warning['preview_command'] ?? null), 'Worktree-count warnings must expose a prune dry-run preview command.');
 capacity_advisory_assert(50 * 1073741824 === ($warning['filesystem_free_bytes'] ?? null) && 5000000 === ($warning['filesystem_free_inodes'] ?? null), 'Advisory metadata must not replace full byte and inode evidence.');
 
 $line = WorktreeDiskBudget::format_advisory($warning);
 capacity_advisory_assert(1 === count(explode("\n", $line)), 'Default capacity advisory must fit on one line.');
 capacity_advisory_assert(str_contains($line, (string) $warning['evidence_reference']) && str_contains($line, 'admission allowed'), 'Compact advisory must expose its evidence reference and admission state.');
+capacity_advisory_assert(str_contains($line, 'Preview: studio wp datamachine-code workspace worktree prune --dry-run --format=json'), 'Compact worktree-count advisory must include the prune dry-run preview.');
 capacity_advisory_assert(str_contains(WorktreeDiskBudget::format_summary($blocked), 'Admission: blocked'), 'Blocking capacity must retain the complete immediate summary.');
 capacity_advisory_assert(str_contains(WorktreeDiskBudget::format_trigger_reasons($blocked)[0] ?? '', 'Creation is blocked unless --force is explicit.'), 'Blocking capacity must retain immediate remediation.');
 capacity_advisory_assert(in_array('filesystem_free_bytes_measurement_unavailable', $measurement_warning['trigger_reasons'] ?? array(), true), 'Failed capacity measurement must retain a compact typed advisory.');
 capacity_advisory_assert('' !== WorktreeDiskBudget::format_advisory($measurement_warning), 'Failed capacity measurement must remain visible in default human output.');
+
+$disk_only = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'worktree_count' => 10, 'free_bytes' => 12 * 1073741824 )));
+capacity_advisory_assert(2 === count((array) ($disk_only['recovery_actions'] ?? array())), 'Disk-only warnings must keep the compact evidence recovery actions.');
+capacity_advisory_assert(! str_contains(WorktreeDiskBudget::format_advisory($disk_only), 'worktree prune --dry-run'), 'Disk-only advisories must not advertise Git registration prune as the preview.');
 
 echo "workspace-capacity-advisory: ok\n";

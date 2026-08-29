@@ -464,14 +464,26 @@ class RemoteWorkspaceBackend {
 	/**
 	 * Prune remote worktree state whose primary repo registration disappeared.
 	 *
+	 * @param array{dry_run?:bool} $opts Prune options.
 	 * @return array<string,mixed>
 	 */
-	public function worktree_prune(): array {
-		$state  = $this->state();
-		$pruned = array();
+	public function worktree_prune( array $opts = array() ): array {
+		$dry_run    = ! empty( $opts['dry_run'] );
+		$state      = $this->state();
+		$pruned     = array();
+		$candidates = array();
 		foreach ( $state['worktrees'] as $handle => $worktree ) {
 			$repo_name = is_array($worktree) ? (string) ( $worktree['repo_name'] ?? '' ) : '';
 			if ( '' !== $repo_name && isset($state['repos'][ $repo_name ]) ) {
+				continue;
+			}
+
+			$candidates[] = array(
+				'handle' => (string) $handle,
+				'repo'   => $repo_name,
+			);
+			if ( $dry_run ) {
+				$pruned[] = (string) $handle;
 				continue;
 			}
 
@@ -479,14 +491,17 @@ class RemoteWorkspaceBackend {
 			$pruned[] = (string) $handle;
 		}
 
-		if ( array() !== $pruned ) {
+		if ( ! $dry_run && array() !== $candidates ) {
 			$this->save_state($state);
 		}
 
 		return array(
-			'success' => true,
-			'backend' => 'github_api',
-			'pruned'  => $pruned,
+			'success'     => true,
+			'backend'     => 'github_api',
+			'dry_run'     => $dry_run,
+			'pruned'      => $dry_run ? array() : $pruned,
+			'would_prune' => $dry_run ? $pruned : array(),
+			'candidates'  => $candidates,
 		);
 	}
 

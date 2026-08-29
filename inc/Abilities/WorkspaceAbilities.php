@@ -2588,20 +2588,51 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-prune',
 				array(
 					'label'               => 'Prune Workspace Worktrees',
-					'description'         => 'Run git worktree prune across all primary checkouts to drop stale registry entries.',
+					'description'         => 'Preview or prune stale Git worktree registry entries across managed primaries. Defaults to a bounded dry-run. Pass dry_run=false to apply. Does not delete live worktrees.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'properties' => array(),
+						'properties' => array(
+							'dry_run'      => array(
+								'type'        => 'boolean',
+								'description' => 'If true or omitted, preview stale registrations without pruning. Pass false to apply.',
+							),
+							'limit'        => array(
+								'type'        => 'integer',
+								'description' => 'Maximum primaries to inspect. Defaults to 25, maximum 200.',
+							),
+							'after_repo'   => array(
+								'type'        => 'string',
+								'description' => 'Last inspected primary for bounded keyset continuation.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Optional compact wall-clock budget such as 30s.',
+							),
+						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
-							'success' => array( 'type' => 'boolean' ),
-							'pruned'  => array(
+							'success'               => array( 'type' => 'boolean' ),
+							'dry_run'               => array( 'type' => 'boolean' ),
+							'pruned'                => array(
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
+							'would_prune'           => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'candidates'            => array( 'type' => 'array' ),
+							'scanned_primary_count' => array( 'type' => 'integer' ),
+							'next_commands'         => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'apply_command'         => array( 'type' => array( 'string', 'null' ) ),
+							'partial'               => array( 'type' => 'boolean' ),
+							'continuation'          => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreePrune' ),
@@ -5415,17 +5446,25 @@ class WorkspaceAbilities {
 	/**
 	 * Prune stale worktree registry entries.
 	 *
-	 * @param  array $input Unused.
+	 * @param  array $input Prune options.
 	 * @return array
 	 */
-	public static function worktreePrune( array $input ): array|\WP_Error {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+	public static function worktreePrune( array $input ): array|\WP_Error {
+		$opts = array(
+			'dry_run'      => ! array_key_exists( 'dry_run', $input ) || ! empty( $input['dry_run'] ),
+			'limit'        => isset( $input['limit'] ) ? (int) $input['limit'] : 25,
+			'until_budget' => isset( $input['until_budget'] ) && '' !== trim( (string) $input['until_budget'] ) ? trim( (string) $input['until_budget'] ) : '30s',
+		);
+		if ( isset( $input['after_repo'] ) && '' !== trim( (string) $input['after_repo'] ) ) {
+			$opts['after_repo'] = trim( (string) $input['after_repo'] );
+		}
 		if ( RemoteWorkspaceBackend::has_registered_state() && RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->worktree_prune();
+			$result = ( new RemoteWorkspaceBackend() )->worktree_prune( $opts );
 			return self::decorate_remote_workspace_result( 'worktree_prune', $result );
 		}
 
 		$workspace = new Workspace();
-		return $workspace->worktree_prune();
+		return $workspace->worktree_prune( $opts );
 	}
 
 	/**

@@ -376,6 +376,7 @@ final class WorktreeDiskBudget {
 		$budget['advisory_fingerprint'] = self::advisory_fingerprint( $budget );
 		$budget['evidence_reference']   = sprintf( '%s@%s', self::DIAGNOSTIC_ID, substr( $budget['advisory_fingerprint'], 0, 12 ) );
 		$budget['evidence_command']     = 'studio wp datamachine-code workspace hygiene --format=json';
+		$budget['preview_command']      = '';
 		$budget['recovery_actions']     = array(
 			array(
 				'action'  => 'inspect_full_capacity_evidence',
@@ -386,6 +387,22 @@ final class WorktreeDiskBudget {
 				'command' => 'studio wp datamachine-code workspace hygiene --include-sizes --size-limit=100 --format=json',
 			),
 		);
+		if ( in_array( 'worktree_count_warning_threshold', $trigger_reasons, true ) ) {
+			$budget['preview_command']  = 'studio wp datamachine-code workspace worktree prune --dry-run --format=json';
+			$budget['recovery_actions'] = array_merge(
+				array(
+					array(
+						'action'  => 'preview_stale_git_registrations',
+						'command' => $budget['preview_command'],
+					),
+					array(
+						'action'  => 'preview_missing_inventory_rows',
+						'command' => 'studio wp datamachine-code workspace inventory prune-missing --dry-run --format=json',
+					),
+				),
+				$budget['recovery_actions']
+			);
+		}
 
 		return $budget;
 	}
@@ -649,6 +666,19 @@ final class WorktreeDiskBudget {
 		}
 		$reference = (string) ( $budget['evidence_reference'] ?? self::DIAGNOSTIC_ID );
 		$admission = ! empty( $budget['creation_allowed'] ) ? 'admission allowed' : 'admission blocked';
+		$preview   = trim( (string) ( $budget['preview_command'] ?? '' ) );
+		$evidence  = (string) ( $budget['evidence_command'] ?? 'studio wp datamachine-code workspace hygiene --format=json' );
+		if ( '' !== $preview && $preview !== $evidence ) {
+			return sprintf(
+				'Capacity advisory [%s]: status=%s; %s; triggers=%s. Preview: %s. Full evidence: %s',
+				$reference,
+				(string) ( $budget['status'] ?? 'unknown' ),
+				$admission,
+				implode(',', $codes),
+				$preview,
+				$evidence
+			);
+		}
 
 		return sprintf(
 			'Capacity advisory [%s]: status=%s; %s; triggers=%s. Full evidence: %s',
@@ -656,7 +686,7 @@ final class WorktreeDiskBudget {
 			(string) ( $budget['status'] ?? 'unknown' ),
 			$admission,
 			implode(',', $codes),
-			(string) ( $budget['evidence_command'] ?? 'studio wp datamachine-code workspace hygiene --format=json' )
+			$evidence
 		);
 	}
 

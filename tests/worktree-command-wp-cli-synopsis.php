@@ -55,6 +55,9 @@ namespace {
 	$parse('remove', array( 'data-machine-code', 'fix/1070' ), array());
 	$parse('finalize', array( 'data-machine-code@fix-1070' ), array( 'pr' => 'https://github.com/Extra-Chill/data-machine-code/pull/1070' ));
 	$parse('locks', array(), array( 'prune-stale' => true, 'dry-run' => true, 'format' => 'json' ));
+	$prune_synopsis = $parse('prune', array(), array( 'dry-run' => true, 'format' => 'json' ));
+	worktree_wp_cli_synopsis_assert(str_contains($prune_synopsis, '[--dry-run]'), 'prune did not render --dry-run as optional.');
+	$parse('prune', array(), array( 'yes' => true, 'limit' => '25', 'after-repo' => 'data-machine-code', 'until-budget' => '30s', 'format' => 'json' ));
 	$list_synopsis = $parse('list', array(), array( 'task-ref' => 'https://github.com/Extra-Chill/data-machine-code/issues/1070', 'all' => true, 'format' => 'json' ));
 	worktree_wp_cli_synopsis_assert(str_starts_with($list_synopsis, '[<repo>]'), 'list did not render repo as an optional positional argument.');
 	$parse('abandoned', array(), array( 'apply' => true, 'limit' => '100', 'passes' => '2', 'until-budget' => '300s', 'format' => 'json' ));

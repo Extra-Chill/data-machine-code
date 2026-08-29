@@ -87,6 +87,7 @@ try {
 
 	$source = file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 	linked_primary_prune_assert(false !== $source && str_contains($source, 'GitCheckout::exists($primary_path)'), 'DMC worktree prune must recognize linked primary checkouts');
+	linked_primary_prune_assert(false !== $source && str_contains($source, 'worktree list --porcelain'), 'DMC worktree prune must preview stale registrations through cheap porcelain probes');
 	linked_primary_prune_assert(false !== $source && str_contains($source, 'worktree prune -v --expire=now'), 'DMC worktree prune must reconcile proven stale registrations immediately');
 
 	printf("worktree-prune-linked-primary: ok\n");

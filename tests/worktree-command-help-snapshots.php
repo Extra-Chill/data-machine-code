@@ -85,5 +85,10 @@ namespace {
 	worktree_help_assert(array_column($cleanup['synopsis'], 'name') === array( 'repo', 'dry-run', 'force', 'skip-github', 'inventory-only', 'include-repaired-metadata', 'limit', 'offset', 'until-budget', 'apply-plan', 'older-than', 'sort', 'format', 'verbose', 'only' ), 'Cleanup help option snapshot changed.');
 	worktree_help_assert(str_contains($cleanup['longdesc'], 'worktree cleanup --dry-run --format=json'), 'Cleanup help lacks a review example.');
 
+	$prune = $definitions['prune'];
+	worktree_help_assert(array_column($prune['synopsis'], 'name') === array( 'dry-run', 'yes', 'limit', 'after-repo', 'until-budget', 'format' ), 'Prune help option snapshot changed.');
+	worktree_help_assert(str_contains($prune['longdesc'], 'worktree prune --dry-run --format=json'), 'Prune help lacks a preview example.');
+	worktree_help_assert(str_contains($prune['longdesc'], 'worktree prune --yes --format=json'), 'Prune help lacks an apply example.');
+
 	echo "worktree-command-help-snapshots: ok\n";
 }

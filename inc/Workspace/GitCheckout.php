@@ -72,6 +72,39 @@ final class GitCheckout {
 		return null;
 	}
 
+	/**
+	 * Parse `git worktree list --porcelain` into registrations Git can prune.
+	 *
+	 * @return array<int,array{path:string,reason:string}>
+	 */
+	public static function prunable_registrations_from_porcelain( string $porcelain ): array {
+		$registrations = array();
+		$current_path  = '';
+		$lines         = preg_split( '/\r?\n/', $porcelain );
+		foreach ( false === $lines ? array() : $lines as $line ) {
+			if ( str_starts_with( $line, 'worktree ' ) ) {
+				$current_path = trim( substr( $line, strlen( 'worktree ' ) ) );
+				continue;
+			}
+			if ( ! str_starts_with( $line, 'prunable ' ) || '' === $current_path ) {
+				continue;
+			}
+			$registrations[] = array(
+				'path'   => $current_path,
+				'reason' => trim( substr( $line, strlen( 'prunable ' ) ) ),
+			);
+		}
+
+		return $registrations;
+	}
+
+	/** Git args that preview or immediately drop proven-stale worktree registrations. */
+	public static function prune_git_args( bool $dry_run ): string {
+		return $dry_run
+			? 'worktree prune --dry-run -v --expire=now'
+			: 'worktree prune -v --expire=now';
+	}
+
 	private static function path_contains( string $container, string $path ): bool {
 		$container = rtrim($container, '/') . '/';
 		$path      = rtrim($path, '/') . '/';

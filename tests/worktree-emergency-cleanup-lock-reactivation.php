@@ -70,7 +70,7 @@ namespace {
 		}
 
 		public function count_unpushed_commits( string $path ): int { return 0; }
-		public function worktree_prune(): array { return array( 'success' => true ); }
+		public function worktree_prune( array $opts = array() ): array { return array( 'success' => true ); }
 		public function summarize_top_worktree_rows( array $rows, string $field ): array { return array(); }
 	}
 

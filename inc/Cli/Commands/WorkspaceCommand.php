@@ -432,8 +432,15 @@ class WorkspaceCommand extends BaseCommand {
 			),
 			'prune'                 => array(
 				'shortdesc' => 'Prune stale Git worktree metadata.',
-				'longdesc'  => "Prunes stale Git worktree registry entries across managed primaries.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree prune --format=json",
-				'synopsis'  => array( $format ),
+				'longdesc'  => "Previews stale Git worktree registry entries across managed primaries. Apply with --yes. Existing checkouts are never deleted.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree prune --dry-run --format=json\n    wp datamachine-code workspace worktree prune --yes --format=json",
+				'synopsis'  => array(
+					$flag( 'dry-run', 'Preview stale Git registrations without pruning. Default when --yes is omitted.' ),
+					$flag( 'yes', 'Apply the reviewed prune.' ),
+					$option( 'limit', 'Maximum primaries to inspect. Default 25, maximum 200.' ),
+					$option( 'after-repo', 'Last inspected primary for bounded keyset continuation.' ),
+					$option( 'until-budget', 'Optional compact wall-clock budget such as 30s.' ),
+					$format,
+				),
 			),
 			'refresh-context'       => array(
 				'shortdesc' => 'Refresh a worktree\'s injected site context.',
@@ -4489,7 +4496,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Lifecycle state to record when finalizing a worktree.
 	 *
 	 * [--dry-run]
-	 * : Preview cleanup candidates without removing anything (cleanup and locks only).
+	 * : Preview without mutation (prune, cleanup, and locks). Prune defaults to dry-run unless --yes is passed.
 	 *
 	 * [--prune-stale]
 	 * : For `locks`, prune expired DB lock rows and old unlocked filesystem lock
@@ -4669,8 +4676,9 @@ class WorkspaceCommand extends BaseCommand {
 	 *     wp datamachine-code workspace worktree remove data-machine fix/foo --force
 	 *     wp datamachine-code workspace worktree remove data-machine@fix-foo --force
 	 *
-	 *     # Prune stale worktree registry entries across all primaries
-	 *     wp datamachine-code workspace worktree prune
+	 *     # Preview stale Git worktree registry entries, then apply the reviewed prune
+	 *     wp datamachine-code workspace worktree prune --dry-run --format=json
+	 *     wp datamachine-code workspace worktree prune --yes --format=json
 	 *
 	 *     # Inspect and safely prune stale workspace mutation locks
 	 *     wp datamachine-code workspace worktree locks --format=json
@@ -5137,6 +5145,19 @@ class WorkspaceCommand extends BaseCommand {
 				$input['handle']         = (string) $args[1];
 				$input['include_status'] = true;
 				$input['include_disk']   = false;
+				break;
+
+			case 'prune':
+				$input['dry_run'] = ! empty( $assoc_args['dry-run'] ) || empty( $assoc_args['yes'] );
+				if ( isset( $assoc_args['limit'] ) ) {
+					$input['limit'] = (int) $assoc_args['limit'];
+				}
+				if ( isset( $assoc_args['after-repo'] ) && '' !== trim( (string) $assoc_args['after-repo'] ) ) {
+					$input['after_repo'] = trim( (string) $assoc_args['after-repo'] );
+				}
+				if ( isset( $assoc_args['until-budget'] ) && '' !== trim( (string) $assoc_args['until-budget'] ) ) {
+					$input['until_budget'] = trim( (string) $assoc_args['until-budget'] );
+				}
 				break;
 
 			case 'remove':
@@ -5858,14 +5879,33 @@ class WorkspaceCommand extends BaseCommand {
 				return;
 
 			case 'prune':
-				$pruned                = (array) ( $result['pruned'] ?? array() );
-				$stale_inventory       = (array) ( $result['stale_inventory'] ?? array() );
-				$stale_marker_blockers = (array) ( $result['stale_marker_blockers'] ?? array() );
-				if ( empty( $pruned ) && empty( $stale_inventory ) && empty( $stale_marker_blockers ) ) {
-					WP_CLI::log( 'Nothing to prune.' );
+				if ( 'json' === (string) ( $assoc_args['format'] ?? '' ) ) {
+					$this->renderer()->json( $result );
 					return;
 				}
-				if ( ! empty( $pruned ) ) {
+				$dry_run               = ! empty( $result['dry_run'] );
+				$pruned                = (array) ( $result['pruned'] ?? array() );
+				$would_prune           = (array) ( $result['would_prune'] ?? array() );
+				$candidates            = (array) ( $result['candidates'] ?? array() );
+				$stale_inventory       = (array) ( $result['stale_inventory'] ?? array() );
+				$stale_marker_blockers = (array) ( $result['stale_marker_blockers'] ?? array() );
+				if ( empty( $pruned ) && empty( $would_prune ) && empty( $candidates ) && empty( $stale_inventory ) && empty( $stale_marker_blockers ) ) {
+					WP_CLI::log( 'Nothing to prune.' );
+					if ( ! empty( $result['continuation']['available'] ) && ! empty( $result['continuation']['after_repo'] ) ) {
+						WP_CLI::log( 'More primaries: rerun with --after-repo=' . (string) $result['continuation']['after_repo'] . ' --dry-run --format=json' );
+					}
+					return;
+				}
+				if ( $dry_run ) {
+					$repos = array() !== $would_prune ? $would_prune : array_values( array_unique( array_map( static fn( array $row ): string => (string) ( $row['repo'] ?? '' ), $candidates ) ) );
+					WP_CLI::log( sprintf( 'Would prune %d stale Git registration%s across: %s', count( $candidates ), 1 === count( $candidates ) ? '' : 's', implode( ', ', $repos ) ) );
+					foreach ( $candidates as $candidate ) {
+						WP_CLI::log( sprintf( '  - %s (%s)', (string) ( $candidate['path'] ?? '' ), (string) ( $candidate['reason'] ?? 'prunable' ) ) );
+					}
+					if ( ! empty( $result['apply_command'] ) ) {
+						WP_CLI::log( 'Apply: ' . (string) $result['apply_command'] );
+					}
+				} elseif ( ! empty( $pruned ) ) {
 					WP_CLI::success( sprintf( 'Pruned worktree registry across: %s', implode( ', ', $pruned ) ) );
 				}
 				if ( ! empty( $stale_inventory ) ) {
@@ -5876,6 +5916,9 @@ class WorkspaceCommand extends BaseCommand {
 					foreach ( $stale_marker_blockers as $blocker ) {
 						WP_CLI::log( sprintf( '  - %s at %s', (string) ( $blocker['handle'] ?? '' ), (string) ( $blocker['path'] ?? '' ) ) );
 					}
+				}
+				if ( ! empty( $result['continuation']['available'] ) && ! empty( $result['continuation']['after_repo'] ) ) {
+					WP_CLI::log( 'More primaries: rerun with --after-repo=' . (string) $result['continuation']['after_repo'] . ( $dry_run ? ' --dry-run' : ' --yes' ) . ' --format=json' );
 				}
 				return;
 
