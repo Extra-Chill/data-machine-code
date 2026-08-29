@@ -69,6 +69,10 @@ trait WorkspaceCleanupPlan {
 					'offset'                        => $inputs['offset'],
 					'sort'                          => $inputs['artifact_sort'],
 					'older_than'                    => $inputs['worktree_older_than'],
+					// Sorting by size deliberately scans the whole workspace
+					// (`plan_limit = 0`), so this branch is unbounded by `limit`
+					// alone and needs the wall clock the caller declared.
+					'until_budget'                  => $inputs['until_budget'],
 				)
 			);
 			if ( $artifact_plan instanceof \WP_Error ) {
