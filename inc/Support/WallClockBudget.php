@@ -24,18 +24,41 @@ final class WallClockBudget {
 		$this->deadline   = $this->started_at + $seconds;
 	}
 
-	/** Build a budget from a compact duration such as 30s, 10m, or 1h. */
-	public static function from_duration( mixed $duration, string $default, string $error_code = 'invalid_wall_clock_budget', ?callable $clock = null ): self|\WP_Error {
-		$label = is_scalar($duration) && '' !== trim((string) $duration) ? trim((string) $duration) : trim($default);
-		if ( ! preg_match('/^(\d+)([smh])$/', $label, $matches) || (int) $matches[1] < 1 ) {
-			return new \WP_Error($error_code, 'Invalid wall-clock budget. Use a compact value such as 30s, 10m, or 1h.', array( 'status' => 400 ));
+	/**
+	 * Seconds for a compact duration such as 30s, 10m, or 1h.
+	 *
+	 * The single definition of what a duration means. Callers that need their
+	 * own error code or a null-on-invalid contract wrap this rather than
+	 * restating the grammar, so `--until-budget`, `--older-than`, and
+	 * inventory pruning cannot drift apart.
+	 *
+	 * @return int|null Positive seconds, or null when malformed or non-positive.
+	 */
+	public static function parse_seconds( mixed $duration ): ?int {
+		$label = is_scalar($duration) ? trim((string) $duration) : '';
+		if ( '' === $label || ! preg_match('/^(\d+)([smh])$/', $label, $matches) ) {
+			return null;
 		}
 
-		$seconds = match ( $matches[2] ) {
-			'h' => (int) $matches[1] * 3600,
-			'm' => (int) $matches[1] * 60,
-			default => (int) $matches[1],
+		$value = (int) $matches[1];
+		if ( $value < 1 ) {
+			return null;
+		}
+
+		return $value * match ( $matches[2] ) {
+			'h' => 3600,
+			'm' => 60,
+			default => 1,
 		};
+	}
+
+	/** Build a budget from a compact duration such as 30s, 10m, or 1h. */
+	public static function from_duration( mixed $duration, string $default, string $error_code = 'invalid_wall_clock_budget', ?callable $clock = null ): self|\WP_Error {
+		$label   = is_scalar($duration) && '' !== trim((string) $duration) ? trim((string) $duration) : trim($default);
+		$seconds = self::parse_seconds($label);
+		if ( null === $seconds ) {
+			return new \WP_Error($error_code, 'Invalid wall-clock budget. Use a compact value such as 30s, 10m, or 1h.', array( 'status' => 400 ));
+		}
 
 		return new self($label, (float) $seconds, $clock);
 	}

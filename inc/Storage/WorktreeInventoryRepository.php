@@ -7,11 +7,15 @@
 
 namespace DataMachineCode\Storage;
 
+use DataMachineCode\Support\WallClockBudget;
+
 use DataMachineCode\Support\JsonCodec;
 use DataMachineCode\Support\SecretRedactor;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 
 defined('ABSPATH') || exit;
+
+require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 
 if ( ! class_exists(JsonCodec::class) ) {
 	require_once dirname(__DIR__) . '/Support/JsonCodec.php';
@@ -564,20 +568,10 @@ class WorktreeInventoryRepository {
 	}
 
 	private function prune_deadline( mixed $duration ): ?float {
-		$duration = trim( (string) $duration );
-		if ( '' === $duration || ! preg_match('/^(\d+)([smh])$/', $duration, $matches) ) {
+		$seconds = WallClockBudget::parse_seconds($duration);
+		if ( null === $seconds ) {
 			return null;
 		}
-		$seconds = (int) $matches[1];
-		if ( $seconds < 1 ) {
-			return null;
-		}
-
-		$seconds *= match ( $matches[2] ) {
-			'h' => 3600,
-			'm' => 60,
-			default => 1,
-		};
 		return microtime(true) + $seconds;
 	}
 

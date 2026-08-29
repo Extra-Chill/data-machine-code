@@ -417,22 +417,12 @@ trait WorkspaceMetadataReconciliation {
 	 * @return int|\WP_Error Seconds on success.
 	 */
 	private function parse_worktree_metadata_reconciliation_budget( string $duration ): int|\WP_Error {
-		if ( ! preg_match('/^(\d+)([smh])$/', trim($duration), $matches) ) {
-			return new \WP_Error('invalid_metadata_reconcile_budget', 'Invalid --until-budget duration. Use a compact value like 60s, 10m, or 1h.', array( 'status' => 400 ));
+		$seconds = WallClockBudget::parse_seconds($duration);
+		if ( null === $seconds ) {
+			return new \WP_Error('invalid_metadata_reconcile_budget', 'Invalid --until-budget duration. Use a compact positive value like 60s, 10m, or 1h.', array( 'status' => 400 ));
 		}
 
-		$value = (int) $matches[1];
-		if ( $value <= 0 ) {
-			return new \WP_Error('invalid_metadata_reconcile_budget', 'Invalid --until-budget duration. Duration must be greater than zero.', array( 'status' => 400 ));
-		}
-
-		$unit_seconds = array(
-			's' => 1,
-			'm' => 60,
-			'h' => 3600,
-		);
-
-		return $value * $unit_seconds[ $matches[2] ];
+		return $seconds;
 	}
 
 	/**
