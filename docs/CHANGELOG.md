@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.8] - 2026-08-29
+
+### Changed
+- Enforce the declared wall clock in the artifact scan
+
 ## [0.72.7] - 2026-08-28
 
 ### Changed
