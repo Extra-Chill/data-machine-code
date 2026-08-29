@@ -7,7 +7,11 @@
 
 namespace DataMachineCode\Workspace;
 
+use DataMachineCode\Support\WallClockBudget;
+
 defined('ABSPATH') || exit;
+
+require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 
 trait WorkspaceActiveNoSignalCleanup {
 
@@ -37,14 +41,22 @@ trait WorkspaceActiveNoSignalCleanup {
 		if ( $limit <= 0 ) {
 			return new \WP_Error('invalid_active_no_signal_limit', 'Active/no-signal report --limit must be greater than 0.', array( 'status' => 400 ));
 		}
+		// The row loop below is budgeted, but the workspace-wide inventory that
+		// feeds it runs first. Without handing the budget to that scan, a spent
+		// budget is only noticed after the expensive work is already paid for.
+		$budget = null;
 		if ( isset($opts['until_budget']) && '' !== trim( (string) $opts['until_budget']) ) {
-			$budget_seconds = $this->parse_worktree_metadata_reconciliation_budget(trim( (string) $opts['until_budget']));
-			if ( is_wp_error($budget_seconds) ) {
-				return $budget_seconds;
+			$budget = WallClockBudget::from_duration(
+				trim( (string) $opts['until_budget'] ),
+				'30s',
+				'invalid_active_no_signal_budget'
+			);
+			if ( is_wp_error($budget) ) {
+				return $budget;
 			}
 		}
 
-		$inventory = $this->worktree_cleanup_inventory_only('', '', false, null, 0, null === $scope ? '' : (string) $scope['argument']);
+		$inventory = $this->worktree_cleanup_inventory_only('', '', false, null, 0, null === $scope ? '' : (string) $scope['argument'], null, $budget);
 		if ( is_wp_error($inventory) ) {
 			return $inventory;
 		}
