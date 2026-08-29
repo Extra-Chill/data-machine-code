@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.17] - 2026-08-29
+
+### Fixed
+- Fix worktree staleness remediation
+
 ## [0.72.16] - 2026-08-29
 
 ### Fixed
