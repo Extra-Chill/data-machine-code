@@ -896,15 +896,18 @@ trait WorkspaceCoreUtilities {
 		}
 
 		$remote_refs = $this->primary_remote_refs_digest($repo_path);
-		if ( null === $remote_refs ) {
+		$ref_heads   = $this->primary_remote_ref_heads($repo_path);
+		if ( null === $remote_refs || null === $ref_heads ) {
 			return;
 		}
 
 		update_option(
 			$this->primary_freshness_option_name($handle),
 			array(
-				'version'            => 1,
+				'version'            => 2,
 				'remote_refs_digest' => $remote_refs,
+				'ref_heads'          => $ref_heads,
+				'observed_at'        => $this->primary_freshness_now(),
 			)
 		);
 	}
@@ -916,12 +919,32 @@ trait WorkspaceCoreUtilities {
 		}
 
 		$evidence = get_option($this->primary_freshness_option_name($handle));
-		if ( ! is_array($evidence) || 1 !== (int) ( $evidence['version'] ?? 0 ) || empty($evidence['remote_refs_digest']) ) {
+		if ( ! is_array($evidence) || ! in_array((int) ( $evidence['version'] ?? 0 ), array( 1, 2 ), true) || empty($evidence['remote_refs_digest']) ) {
 			return null;
 		}
 
 		$remote_refs = $this->primary_remote_refs_digest($repo_path);
 		return is_string($remote_refs) && hash_equals( (string) $evidence['remote_refs_digest'], $remote_refs ) ? $evidence : null;
+	}
+
+	/** Return a short-lived explicit-refresh proof for one exact remote ref. */
+	protected function primary_freshness_proof_for_ref( string $repo_path, string $handle, string $target_ref ): ?array {
+		$evidence = $this->primary_freshness_evidence($repo_path, $handle);
+		if ( null === $evidence || 2 !== (int) ( $evidence['version'] ?? 0 ) || ! str_starts_with($target_ref, 'origin/') ) {
+			return null;
+		}
+		$observed_at = strtotime((string) ( $evidence['observed_at'] ?? '' ));
+		$now         = strtotime($this->primary_freshness_now());
+		if ( false === $observed_at || false === $now || ( $now - $observed_at ) > 300 ) {
+			return null;
+		}
+		$ref_heads = (array) ( $evidence['ref_heads'] ?? array() );
+		$head      = (string) ( $ref_heads[ 'refs/remotes/' . $target_ref ] ?? '' );
+		$identity = $this->primary_freshness_identity($repo_path, $target_ref);
+		if ( '' === $head || null === $identity || ! hash_equals($head, (string) $identity['target_head']) ) {
+			return null;
+		}
+		return array( 'target_ref' => $target_ref, 'target_head' => $head, 'observed_at' => (string) $evidence['observed_at'] );
 	}
 
 	/** Build the immutable local identity a reviewed plan must retain through apply. */
@@ -944,6 +967,22 @@ trait WorkspaceCoreUtilities {
 	private function primary_remote_refs_digest( string $repo_path ): ?string {
 		$refs = $this->run_git($repo_path, "for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin", self::CLEANUP_GIT_PROBE_TIMEOUT);
 		return is_wp_error($refs) ? null : hash('sha256', (string) ( $refs['output'] ?? '' ));
+	}
+
+	/** Capture remote tracking heads so a refresh can authorize only the same ref. */
+	private function primary_remote_ref_heads( string $repo_path ): ?array {
+		$refs = $this->run_git($repo_path, "for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin", self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($refs) ) {
+			return null;
+		}
+		$heads = array();
+		foreach ( explode("\n", (string) ( $refs['output'] ?? '' )) as $line ) {
+			$parts = preg_split('/\s+/', trim($line), 2);
+			if ( 2 === count($parts) && '' !== $parts[0] && preg_match('/^[0-9a-f]{40,64}$/i', $parts[1]) ) {
+				$heads[ $parts[0] ] = $parts[1];
+			}
+		}
+		return $heads;
 	}
 
 	private function primary_freshness_option_name( string $handle ): string {
