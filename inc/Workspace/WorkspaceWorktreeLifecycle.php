@@ -163,8 +163,10 @@ trait WorkspaceWorktreeLifecycle {
 			'target_ref'  => $target_ref,
 			'target_head' => $identity['target_head'],
 		);
+		$demand_target_ref = $target_ref;
 		if ( ! $allow_stale && ! $rebase_base ) {
-			$guard = $this->assert_ref_current_with_default_branch($primary_path, $target_ref, $repo, $branch, $exists_local ? 'branch' : 'base');
+			$allow_stale_command = $this->worktree_add_retry_command(array_merge($input, array( 'allow_stale' => true )));
+			$guard               = $this->assert_ref_current_with_default_branch($primary_path, $target_ref, $repo, $branch, $exists_local ? 'branch' : 'base', $allow_stale_command);
 			if ( is_wp_error($guard) ) {
 				return $this->worktree_plan_result($input, $handle, $path, $slug, 'stale', array(
 					'freshness' => $freshness,
@@ -174,8 +176,12 @@ trait WorkspaceWorktreeLifecycle {
 					),
 				));
 			}
+			if ( is_array($guard) ) {
+				$freshness['default_branch_update'] = $guard;
+				$demand_target_ref                   = (string) $guard['default_branch_ref'];
+			}
 		}
-		$demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
+		$demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, $demand_target_ref, $bootstrap);
 		if ( $demand_plan instanceof \WP_Error ) {
 			return $demand_plan;
 		}
@@ -263,9 +269,9 @@ trait WorkspaceWorktreeLifecycle {
 				'changed_sections' => $this->worktree_plan_changed_sections($plan, $current),
 			));
 		}
-		$result = $this->worktree_add_request(WorktreeAllocationRequest::from_input($input + array(
+		$result = $this->worktree_add_request(WorktreeAllocationRequest::from_input(array_merge($input, array(
 			'expected_freshness_identity' => (array) ( $plan['freshness']['identity'] ?? array() ),
-		)));
+		))));
 		if ( is_wp_error($result) && 'stale_worktree_freshness' === $result->get_error_code() ) {
 			$error_data = (array) $result->get_error_data();
 			return new \WP_Error(
@@ -1231,7 +1237,7 @@ trait WorkspaceWorktreeLifecycle {
 		$preflight = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
 			$repo,
-			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline, $progress_callback),
+			fn() => $this->worktree_capacity_preflight($primary_path, $repo, $branch, $from, $bootstrap, $operation_deadline, $progress_callback, array() !== $expected_freshness_identity),
 			$capacity_timeout,
 			array( '_acquisition_deadline' => $operation_deadline ),
 			$progress_callback
@@ -1343,11 +1349,11 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/** Prepare repo-local freshness and projected demand before global admission. */
-	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline, ?callable $progress_callback = null ): array|\WP_Error {
+	private function worktree_capacity_preflight( string $primary_path, string $repo, string $branch, ?string $from, bool $bootstrap, float $operation_deadline, ?callable $progress_callback = null, bool $require_remote_refresh = false ): array|\WP_Error {
 		$exists_local = GitRunner::ref_exists($primary_path, 'refs/heads/' . $branch);
 		$target_ref   = $exists_local ? 'refs/heads/' . $branch : ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) );
 		$proof        = $this->primary_freshness_proof_for_ref($primary_path, $repo, $target_ref);
-		if ( null !== $proof ) {
+		if ( ! $require_remote_refresh && null !== $proof ) {
 			$this->worktree_add_progress($progress_callback, 'freshness_proof_reused');
 			$demand_plan = WorktreeBootstrapper::demand_plan_for_target($primary_path, $target_ref, $bootstrap);
 			if ( $demand_plan instanceof \WP_Error ) {
@@ -1894,12 +1900,20 @@ trait WorkspaceWorktreeLifecycle {
 					'operation_deadline'    => $operation_deadline,
 					'operation_timeout'     => $operation_timeout,
 					'operation_started'     => $operation_started,
+					'retry_request'         => $retry_request,
 				), $progress_callback), $repo_timeout, array( '_acquisition_deadline' => $operation_deadline ), $progress_callback);
 		$response = $this->worktree_operation_lock_result($response, 'repo_lock_wait', $operation_timeout, $operation_started);
 
 		if ( is_wp_error($response) ) {
 			return $response;
 		}
+		$restore_branch_head = isset($response['_restore_branch_head']) && '' !== (string) $response['_restore_branch_head']
+			? (string) $response['_restore_branch_head']
+			: null;
+		$expected_branch_head = isset($response['_expected_branch_head']) && '' !== (string) $response['_expected_branch_head']
+			? (string) $response['_expected_branch_head']
+			: null;
+		unset($response['_restore_branch_head'], $response['_expected_branch_head']);
 		$heartbeat_error = $this->worktree_capacity_lock_heartbeat($capacity_lock, 'worktree_create_complete', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $heartbeat_error ) {
 			return $heartbeat_error;
@@ -1930,11 +1944,11 @@ trait WorkspaceWorktreeLifecycle {
 		if ( array() !== $reuse_candidates ) {
 			$response['reuse_candidates'] = $reuse_candidates;
 		}
-		if ( ! empty($response['rebase_succeeded']) ) {
+		if ( ! empty($response['rebase_succeeded']) || ! empty($response['default_branch_fast_forward']['succeeded']) ) {
 			$this->worktree_add_progress($progress_callback, 'post_rebase_demand_planning');
 			$post_rebase_demand = WorktreeBootstrapper::demand_plan_for_target($wt_path, 'HEAD', $bootstrap);
 			if ( $post_rebase_demand instanceof \WP_Error ) {
-				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']), null, null, $restore_branch_head, $expected_branch_head);
 				return $post_rebase_demand;
 			}
 			$post_rebase_demand = WorktreeDemandCalibration::forecast($repo, $post_rebase_demand);
@@ -1956,7 +1970,7 @@ trait WorkspaceWorktreeLifecycle {
 			$response['post_rebase_capacity_reclaim'] = $post_rebase_capacity_reclaim['evidence'];
 			$response['disk_budget']                  = $post_rebase_budget;
 			if ( 'refused' === ( $post_rebase_budget['status'] ?? '' ) ) {
-				$rollback_evidence = $this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				$rollback_evidence = $this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']), null, null, $restore_branch_head, $expected_branch_head);
 				WorktreeContextInjector::forget_metadata($wt_handle);
 				return new \WP_Error(
 					'worktree_disk_budget_exceeded',
@@ -2027,7 +2041,7 @@ trait WorkspaceWorktreeLifecycle {
 
 		$deadline_error = $this->worktree_operation_deadline_error('metadata', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']), null, null, $restore_branch_head, $expected_branch_head);
 			WorktreeContextInjector::forget_metadata($wt_handle);
 			return $deadline_error;
 		}
@@ -2040,11 +2054,11 @@ trait WorkspaceWorktreeLifecycle {
 				if ( 'workspace_sqlite_lock_contention' === $inventory_error->get_error_code() ) {
 					return $this->worktree_post_create_registry_error($inventory_error, $wt_handle, $wt_path, 'inventory_metadata');
 				}
-				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']), null, null, $restore_branch_head, $expected_branch_head);
 				WorktreeContextInjector::forget_metadata($wt_handle);
 				return $inventory_error;
 			}
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']));
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, ! empty($response['created_branch']), null, null, $restore_branch_head, $expected_branch_head);
 			WorktreeContextInjector::forget_metadata($wt_handle);
 
 			return new \WP_Error(
@@ -2178,6 +2192,7 @@ trait WorkspaceWorktreeLifecycle {
 			'allow_unverified_freshness' => '--allow-unverified-freshness',
 			'rebase_base'                => '--rebase-base',
 			'force'                      => '--force',
+			'allow_percentage_byte_floor_exception' => '--allow-percentage-byte-floor',
 			'remediate_capacity'         => '--remediate-capacity',
 			'remediate_capacity_dry_run' => '--remediate-capacity-dry-run',
 		) as $key => $flag ) {
@@ -2346,32 +2361,62 @@ trait WorkspaceWorktreeLifecycle {
 		$exists_local   = ! empty($preflight['exists_local']);
 		$created_branch = false;
 		$resolved_base  = null;
+		$default_branch_update = null;
+		$default_branch_refusal = null;
+		$retry_request         = (array) ( $preflight['retry_request'] ?? array() );
+		$allow_stale_command   = array() === $retry_request
+			? null
+			: $this->worktree_add_retry_command(array_merge($retry_request, array( 'allow_stale' => true, 'rebase_base' => false )));
 
 		if ( $exists_local ) {
-			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
-				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $branch, $repo, $branch, 'branch');
+			if ( ! $allow_stale && ! $fetch_failed ) {
+				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $branch, $repo, $branch, 'branch', $allow_stale_command);
 				if ( is_wp_error($default_guard) ) {
-					return $default_guard;
+					if ( ! $rebase_base ) {
+						return $default_guard;
+					}
+					$default_branch_refusal = $default_guard;
 				}
+				$default_branch_update = is_array($default_guard) ? $default_guard : null;
 			}
 			$cmd = sprintf('worktree add %s %s', escapeshellarg($wt_path), escapeshellarg($branch));
 		} else {
 			$base          = (string) ( $preflight['target_ref'] ?? ( $from && '' !== trim($from) ? trim($from) : $this->resolve_default_base($primary_path) ) );
 			$resolved_base = $base;
-			if ( ! $allow_stale && ! $rebase_base && ! $fetch_failed ) {
-				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $resolved_base, $repo, $branch, 'base');
+			if ( ! $allow_stale && ! $fetch_failed ) {
+				$default_guard = $this->assert_ref_current_with_default_branch($primary_path, $resolved_base, $repo, $branch, 'base', $allow_stale_command);
 				if ( is_wp_error($default_guard) ) {
-					return $default_guard;
+					if ( ! $rebase_base ) {
+						return $default_guard;
+					}
+					$default_branch_refusal = $default_guard;
 				}
+				$default_branch_update = is_array($default_guard) ? $default_guard : null;
 			}
 			$cmd            = sprintf('worktree add -b %s %s %s', escapeshellarg($branch), escapeshellarg($wt_path), escapeshellarg($base));
 			$created_branch = true;
 		}
+		$original_branch_ref = $created_branch ? (string) $resolved_base : $branch;
+		$original_branch_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($original_branch_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		if ( is_wp_error($original_branch_head) ) {
+			return $original_branch_head;
+		}
+		$restore_branch_head = null !== $default_branch_update && ! $created_branch
+			? trim( (string) ( $original_branch_head['output'] ?? '' ))
+			: null;
 		$intent_base_ref  = $created_branch ? (string) $resolved_base : 'existing_local_branch';
-		$intent_base_head = $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg(( $created_branch ? (string) $resolved_base : $branch ) . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT);
+		$intent_head_ref  = null !== $default_branch_update
+			? (string) $default_branch_update['default_branch_ref']
+			: $original_branch_ref;
+		$intent_base_head = null !== $default_branch_update
+			? $this->run_git($primary_path, 'rev-parse --verify ' . escapeshellarg($intent_head_ref . '^{commit}'), self::CLEANUP_GIT_PROBE_TIMEOUT)
+			: $original_branch_head;
 		if ( is_wp_error($intent_base_head) ) {
 			return $intent_base_head;
 		}
+		$expected_branch_head = null !== $default_branch_update
+			? trim( (string) ( $intent_base_head['output'] ?? '' ))
+			: null;
 		$creation_intent = $this->worktree_creation_intent(
 			$repo,
 			$branch,
@@ -2401,22 +2446,45 @@ trait WorkspaceWorktreeLifecycle {
 		$result = $this->run_git($primary_path, $cmd, min(300, $add_remaining));
 		if ( is_wp_error($result) ) {
 			if ( $this->worktree_operation_remaining_seconds($operation_deadline) <= 0 ) {
-				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent, $restore_branch_head, $expected_branch_head);
 				return $this->worktree_operation_timeout('git_worktree_add', $operation_timeout, $operation_started, array( 'cleanup' => 'rollback_requested' ));
 			}
 			WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 			return $result;
 		}
+		if ( null !== $default_branch_update ) {
+			$fast_forward_remaining = $this->worktree_operation_remaining_seconds($operation_deadline);
+			if ( $fast_forward_remaining <= 0 ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent, $restore_branch_head, $expected_branch_head);
+				return $this->worktree_operation_timeout('default_branch_fast_forward', $operation_timeout, $operation_started, array( 'cleanup' => 'rollback_requested' ));
+			}
+			$fast_forward = $this->run_git(
+				$wt_path,
+				sprintf('merge --ff-only %s', escapeshellarg((string) $default_branch_update['default_branch_ref'])),
+				min(300, $fast_forward_remaining)
+			);
+			if ( is_wp_error($fast_forward) ) {
+				$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent, $restore_branch_head, $expected_branch_head);
+				return new \WP_Error(
+					'worktree_default_branch_fast_forward_failed',
+					'The branch was proven fast-forwardable during preflight, but the fast-forward failed after checkout. No worktree was retained; retry so freshness can be re-evaluated.',
+					array(
+						'status'                => 409,
+						'default_branch_update' => $default_branch_update,
+					)
+				);
+			}
+		}
 		$this->worktree_add_progress($progress_callback, 'post_create_validation');
 		$deadline_error = $this->worktree_operation_deadline_error('git_worktree_add', $operation_deadline, $operation_timeout, $operation_started);
 		if ( null !== $deadline_error ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent, $restore_branch_head, $expected_branch_head);
 			return $deadline_error;
 		}
 
 		$identity_configuration = $this->configure_repository_git_identity($wt_path);
 		if ( null !== $identity_configuration ) {
-			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent);
+			$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent, $restore_branch_head, $expected_branch_head);
 			return $identity_configuration;
 		}
 
@@ -2431,6 +2499,11 @@ trait WorkspaceWorktreeLifecycle {
 			'message'        => sprintf('Worktree "%s" added at %s (branch %s).', $wt_handle, $wt_path, $branch),
 			'freshness_transport' => $freshness_transport,
 		);
+		if ( null !== $default_branch_update ) {
+			$response['default_branch_fast_forward'] = array_merge($default_branch_update, array( 'succeeded' => true ));
+			$response['_restore_branch_head']         = $restore_branch_head;
+			$response['_expected_branch_head']        = $expected_branch_head;
+		}
 
 		if ( $fetch_failed ) {
 			$response['fetch_failed']   = true;
@@ -2523,12 +2596,14 @@ trait WorkspaceWorktreeLifecycle {
 				$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)));
 				WorktreeContextInjector::forget_creation_intent($wt_handle, $creation_intent);
 
-				return $this->worktree_behind_default_branch_error(
+				return $default_branch_refusal ?? $this->worktree_behind_default_branch_error(
 					(int) $response['default_branch_commits_behind'],
+					null,
 					(string) ( $response['default_branch_ref'] ?? 'origin/HEAD' ),
 					$repo,
 					$branch,
-					'branch'
+					'branch',
+					$allow_stale_command
 				);
 			}
 
@@ -2627,9 +2702,9 @@ trait WorkspaceWorktreeLifecycle {
 				return $this->worktree_post_create_registry_error($metadata_stored, $wt_handle, $wt_path, 'lifecycle_metadata');
 			}
 			if ( null !== WorktreeContextInjector::get_creation_intent($wt_handle) ) {
-				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent );
+				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch, $wt_handle, $creation_intent, $restore_branch_head, $expected_branch_head );
 			} else {
-				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch );
+				$this->rollback_rejected_worktree( $primary_path, $wt_path, $branch, $created_branch, null, null, $restore_branch_head, $expected_branch_head );
 				WorktreeContextInjector::forget_metadata($wt_handle);
 			}
 			return $metadata_stored;
@@ -2659,7 +2734,7 @@ trait WorkspaceWorktreeLifecycle {
 						if ( 'workspace_sqlite_lock_contention' === $metadata_stored->get_error_code() ) {
 							return $this->worktree_post_create_registry_error($metadata_stored, $wt_handle, $wt_path, 'context_metadata');
 						}
-						$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch);
+						$this->rollback_rejected_worktree($primary_path, $wt_path, $branch, $created_branch, null, null, $restore_branch_head, $expected_branch_head);
 						return $metadata_stored;
 					}
 					$response['metadata']         = WorktreeContextInjector::get_metadata($wt_handle);
@@ -6117,7 +6192,7 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
-	 * Refuse a branch/base that is behind the remote default branch.
+	 * Admit current and ancestry-proven fast-forwardable refs; refuse divergence.
 	 *
 	 * This is intentionally zero-tolerance. The older upstream staleness gate has
 	 * a threshold for large-drift cleanup, but default-branch freshness protects
@@ -6128,9 +6203,11 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param  string $repo         Repository name.
 	 * @param  string $branch       Requested worktree branch.
 	 * @param  string $ref_role     Human-readable role: branch or base.
-	 * @return true|\WP_Error True when current/unknown, WP_Error when behind.
+	 * @param  string|null $allow_stale_command Exact replay command for diverged refs.
+	 * @return true|array|\WP_Error True when current/unknown, update evidence when
+	 *                              fast-forwardable, or WP_Error when diverged.
 	 */
-	private function assert_ref_current_with_default_branch( string $primary_path, string $ref, string $repo, string $branch, string $ref_role ): true|\WP_Error {
+	private function assert_ref_current_with_default_branch( string $primary_path, string $ref, string $repo, string $branch, string $ref_role, ?string $allow_stale_command = null ): true|array|\WP_Error {
 		$default_ref = $this->resolve_remote_default_ref($primary_path);
 		if ( is_wp_error($default_ref) ) {
 			return $default_ref;
@@ -6144,7 +6221,16 @@ trait WorkspaceWorktreeLifecycle {
 			return true;
 		}
 
-		return $this->worktree_behind_default_branch_error($behind, $default_ref, $repo, $branch, $ref_role);
+		$ahead = WorktreeStalenessProbe::behind_count($primary_path, $default_ref, $ref);
+		if ( 0 === $ahead ) {
+			return array(
+				'status'             => 'fast_forwardable',
+				'commits'            => $behind,
+				'default_branch_ref' => $default_ref,
+			);
+		}
+
+		return $this->worktree_behind_default_branch_error($behind, is_int($ahead) ? $ahead : null, $default_ref, $repo, $branch, $ref_role, $allow_stale_command);
 	}
 
 	/**
@@ -6178,30 +6264,39 @@ trait WorkspaceWorktreeLifecycle {
 	 * Build the default-branch staleness error used by preflight and rollback gates.
 	 *
 	 * @param  int    $behind     Commits behind the remote default branch.
+	 * @param  int|null $ahead    Commits unique to the requested ref, or null when unknown.
 	 * @param  string $default_ref Remote default branch ref.
 	 * @param  string $repo       Repository name.
 	 * @param  string $branch     Requested worktree branch.
 	 * @param  string $ref_role   Human-readable role: branch or base.
 	 * @return \WP_Error
 	 */
-	private function worktree_behind_default_branch_error( int $behind, string $default_ref, string $repo, string $branch, string $ref_role ): \WP_Error {
+	private function worktree_behind_default_branch_error( int $behind, ?int $ahead, string $default_ref, string $repo, string $branch, string $ref_role, ?string $allow_stale_command = null ): \WP_Error {
+		$divergence = null === $ahead
+			? sprintf('is %d %s behind the remote default branch %s, and a safe fast-forward could not be proven', $behind, 1 === $behind ? 'commit' : 'commits', $default_ref)
+			: sprintf('is %d %s behind and %d %s ahead of the remote default branch %s; the histories have diverged', $behind, 1 === $behind ? 'commit' : 'commits', $ahead, 1 === $ahead ? 'commit' : 'commits', $default_ref);
+		$remediation = null === $allow_stale_command
+			? 'Re-run the same worktree add command with --allow-stale to create the requested branch unchanged for manual reconciliation.'
+			: sprintf('Create the requested branch unchanged for manual reconciliation with: `%s`', $allow_stale_command);
 		return new \WP_Error(
 			'worktree_behind_default_branch',
 			sprintf(
-				'Worktree %s for branch "%s" is %d commits behind the remote default branch %s. Refusing to create a stale worktree. Refresh or rebase the branch first, create from the remote default ref directly, or pass --allow-stale to explicitly opt in to a known-stale checkout.',
+				'Worktree %s for branch "%s" %s. Refusing to create a stale worktree. %s',
 				$ref_role,
 				$branch,
-				$behind,
-				$default_ref
+				$divergence,
+				$remediation
 			),
 			array(
 				'status'                        => 409,
 				'default_branch_commits_behind' => $behind,
+				'default_branch_commits_ahead'  => $ahead,
 				'default_branch_ref'            => $default_ref,
 				'repo'                          => $repo,
 				'branch'                        => $branch,
 				'ref_role'                      => $ref_role,
 				'allow_stale'                   => false,
+				'next_commands'                 => null === $allow_stale_command ? array() : array( $allow_stale_command ),
 			)
 		);
 	}
@@ -6215,13 +6310,16 @@ trait WorkspaceWorktreeLifecycle {
 	 * @param bool   $created_branch Whether the branch was created by this call.
 	 * @return array<string,mixed>
 	 */
-	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null ): array {
+	private function rollback_rejected_worktree( string $primary_path, string $wt_path, string $branch, bool $created_branch, ?string $handle = null, ?array $creation_intent = null, ?string $restore_branch_head = null, ?string $expected_branch_head = null ): array {
 		$before  = WorktreeDiskBudget::inspect($this->workspace_path);
 		$timeout = function_exists('apply_filters') ? (int) apply_filters('datamachine_code_worktree_rollback_timeout_seconds', 5) : 5;
 		$timeout = max(1, $timeout);
-		$this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)), $timeout);
+		$remove = $this->run_git($primary_path, sprintf('worktree remove --force %s', escapeshellarg($wt_path)), $timeout);
+		$branch_cleanup = null;
 		if ( $created_branch ) {
-			$this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), $timeout);
+			$branch_cleanup = $this->run_git($primary_path, sprintf('branch -D %s', escapeshellarg($branch)), $timeout);
+		} elseif ( null !== $restore_branch_head && '' !== $restore_branch_head && null !== $expected_branch_head && '' !== $expected_branch_head ) {
+			$branch_cleanup = $this->run_git($primary_path, sprintf('update-ref %s %s %s', escapeshellarg('refs/heads/' . $branch), escapeshellarg($restore_branch_head), escapeshellarg($expected_branch_head)), $timeout);
 		}
 		if ( null !== $handle && null !== $creation_intent ) {
 			WorktreeContextInjector::forget_creation_intent($handle, $creation_intent);
@@ -6236,7 +6334,9 @@ trait WorkspaceWorktreeLifecycle {
 				'filesystem_free_bytes'  => $after['filesystem_free_bytes'] ?? null,
 				'filesystem_free_inodes' => $after['filesystem_free_inodes'] ?? null,
 			),
-			'outcome' => 'rollback',
+			'outcome' => is_wp_error($remove) || is_wp_error($branch_cleanup) ? 'rollback_failed' : 'rollback',
+			'worktree_removal' => is_wp_error($remove) ? $remove->get_error_message() : 'succeeded',
+			'branch_cleanup'   => is_wp_error($branch_cleanup) ? $branch_cleanup->get_error_message() : ( null === $branch_cleanup ? 'not_required' : 'succeeded' ),
 		);
 	}
 

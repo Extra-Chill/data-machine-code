@@ -389,6 +389,40 @@ try {
 	assert_true($plan_filesystem === plan_filesystem_snapshot($workspace_root), 'worktree plan changed the workspace filesystem');
 	$applied_plan = $stable_plan_workspace->worktree_apply_plan($create_plan);
 	assert_true(! is_wp_error($applied_plan) && is_dir($workspace_root . '/homeboy@planned-create'), is_wp_error($applied_plan) ? $applied_plan->get_error_message() . ' ' . wp_json_encode($applied_plan->get_error_data()) : 'unchanged create plan did not apply');
+	run_command('git checkout main', $source_path);
+	run_command('git checkout -b stale-fast-forward && git push -u origin stale-fast-forward && git checkout main', $source_path);
+	file_put_contents($source_path . '/fast-forward-default.txt', "default advance\n");
+	run_command('git add fast-forward-default.txt && git commit -m fast-forward-default && git push', $source_path);
+	run_command('git fetch origin', $primary_path);
+	$fast_forwarded = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'stale-fast-forward', 'origin/stale-fast-forward', false, false, false, false, true));
+	assert_true(! is_wp_error($fast_forwarded), is_wp_error($fast_forwarded) ? $fast_forwarded->get_error_message() : 'stale fast-forwardable branch was refused');
+	assert_true('fast_forwardable' === ( $fast_forwarded['default_branch_fast_forward']['status'] ?? null ) && true === ( $fast_forwarded['default_branch_fast_forward']['succeeded'] ?? false ), 'stale fast-forwardable branch did not report its automatic update');
+	assert_true(isset($fast_forwarded['post_rebase_disk_budget']), 'automatic default-branch fast-forward skipped effective-target capacity admission');
+	assert_true(trim(run_command('git rev-parse HEAD', $fast_forwarded['path'])) === trim(run_command('git rev-parse origin/main', $primary_path)), 'stale fast-forwardable branch was not advanced to the remote default branch');
+	run_command('git branch stale-fast-forward-local origin/stale-fast-forward', $primary_path);
+	$local_fast_forwarded = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'stale-fast-forward-local', null, false, false, false, false, true));
+	assert_true(! is_wp_error($local_fast_forwarded), is_wp_error($local_fast_forwarded) ? $local_fast_forwarded->get_error_message() : 'existing stale fast-forwardable branch was refused');
+	assert_true(trim(run_command('git rev-parse HEAD', $local_fast_forwarded['path'])) === trim(run_command('git rev-parse origin/main', $primary_path)), 'existing stale branch was not automatically fast-forwarded');
+
+	run_command('git checkout -b stale-diverged', $source_path);
+	file_put_contents($source_path . '/diverged-branch.txt', "branch change\n");
+	run_command('git add diverged-branch.txt && git commit -m diverged-branch && git push -u origin stale-diverged && git checkout main', $source_path);
+	file_put_contents($source_path . '/diverged-default.txt', "default change\n");
+	run_command('git add diverged-default.txt && git commit -m diverged-default && git push', $source_path);
+	run_command('git fetch origin', $primary_path);
+	$diverged = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'stale-diverged', 'origin/stale-diverged', false, false, false, false, true));
+	$diverged_data = is_wp_error($diverged) ? (array) $diverged->get_error_data() : array();
+	$diverged_command = (string) ( $diverged_data['next_commands'][0] ?? '' );
+	assert_true(is_wp_error($diverged) && 'worktree_behind_default_branch' === $diverged->get_error_code(), 'stale diverged branch did not remain fail-closed');
+	assert_true(1 === ( $diverged_data['default_branch_commits_behind'] ?? null ) && 1 === ( $diverged_data['default_branch_commits_ahead'] ?? null ), 'diverged refusal did not distinguish its behind and ahead commits');
+	assert_true(str_contains($diverged->get_error_message(), 'the histories have diverged') && str_contains($diverged->get_error_message(), $diverged_command), 'diverged refusal did not explain the classification and exact remediation command');
+	assert_true(str_contains($diverged_command, 'workspace worktree add') && str_contains($diverged_command, '--allow-stale') && ! str_contains($diverged->get_error_message(), 'Refresh or rebase the branch first'), 'diverged refusal recommended an unavailable or ineffective remediation');
+	assert_true(! is_dir($workspace_root . '/homeboy@stale-diverged'), 'diverged refusal created a worktree before explicit opt-in');
+	$diverged_allowed = $workspace->worktree_add_request(dmc_test_allocation_request('homeboy', 'stale-diverged', 'origin/stale-diverged', false, false, true, false, true));
+	assert_true(! is_wp_error($diverged_allowed) && is_dir($workspace_root . '/homeboy@stale-diverged'), is_wp_error($diverged_allowed) ? $diverged_allowed->get_error_message() : 'the exact --allow-stale remediation path was not viable');
+	$refreshed_after_staleness_cases = $workspace->git_pull('homeboy', false, true);
+	assert_true(! is_wp_error($refreshed_after_staleness_cases), is_wp_error($refreshed_after_staleness_cases) ? $refreshed_after_staleness_cases->get_error_message() : 'staleness cases did not restore primary freshness evidence');
+
 	$capacity_planner = new class extends Workspace {
 		protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
 			return array( 'status' => 'refused', 'demand_plan' => $demand_plan );
