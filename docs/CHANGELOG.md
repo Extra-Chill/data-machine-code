@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.13] - 2026-08-29
+
+### Changed
+- Consolidate the compact-duration grammar onto WallClockBudget
+
 ## [0.72.12] - 2026-08-29
 
 ### Changed
