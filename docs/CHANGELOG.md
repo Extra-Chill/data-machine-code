@@ -2,6 +2,12 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.14] - 2026-08-29
+
+### Changed
+- Record per-stage elapsed timing in safe cleanup evidence
+- Add bounded worktree prune previews
+
 ## [0.72.13] - 2026-08-29
 
 ### Changed
