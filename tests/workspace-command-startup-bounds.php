@@ -262,7 +262,8 @@ namespace {
 	startup_bounds_assert($warning_elapsed < 3.0, sprintf('Warning targeted show exceeded its startup bound: %.3fs.', $warning_elapsed));
 	startup_bounds_assert(! str_contains($warning_output, '--force'), 'Warning targeted show suggested bypassing capacity protection.');
 	startup_bounds_assert(str_contains($warning_output, 'workspace hygiene --format=json'), 'Warning targeted show did not emit the generic hygiene next step.');
-	startup_bounds_assert(! str_contains($warning_output, 'workspace worktree cleanup'), 'Warning targeted show inferred cleanup work without observed lane state.');
+	startup_bounds_assert(str_contains($warning_output, 'cleanup-eligible-drain --limit=25') && str_contains($warning_output, 'worktree prune --dry-run'), 'Worktree-count warning did not expose bounded, preview-only remediation.');
+	startup_bounds_assert(! str_contains($warning_output, '--apply'), 'Worktree-count warning suggested applying cleanup before review.');
 	startup_bounds_assert(! str_contains($warning_output, 'workspace worktree locks'), 'Warning targeted show inferred stale locks without observed lane state.');
 
 	WP_CLI::$output = array();

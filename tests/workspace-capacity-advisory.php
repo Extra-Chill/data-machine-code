@@ -29,6 +29,7 @@ $warning      = WorktreeDiskBudget::evaluate($metrics);
 $same_warning = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'worktree_count' => 150 )));
 $new_threshold = WorktreeDiskBudget::evaluate($metrics, array( 'warn_worktree_count' => 110 ));
 $blocked       = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'free_bytes' => 5 * 1073741824 )));
+$byte_only_warning = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'free_bytes' => 5 * 1073741824, 'worktree_count' => 1 )));
 $measurement_warning = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'free_bytes' => null )));
 
 capacity_advisory_assert('workspace_capacity' === ($warning['diagnostic_id'] ?? null), 'Capacity evidence must expose a stable diagnostic ID.');
@@ -36,12 +37,18 @@ capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) === ($same_w
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) !== ($new_threshold['advisory_fingerprint'] ?? null), 'A changed active threshold must produce a new fingerprint.');
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) !== ($blocked['advisory_fingerprint'] ?? null), 'A blocking state change must produce a new fingerprint.');
 capacity_advisory_assert(str_starts_with((string) ($warning['evidence_reference'] ?? ''), 'workspace_capacity@'), 'Capacity evidence must expose a compact reference.');
-capacity_advisory_assert(2 === count((array) ($warning['recovery_actions'] ?? array())), 'Structured capacity evidence must retain bounded recovery actions.');
+capacity_advisory_assert(4 === count((array) ($warning['recovery_actions'] ?? array())), 'Worktree-count warnings must add bounded cleanup and registration previews.');
+capacity_advisory_assert('studio wp datamachine-code workspace worktree cleanup-eligible-drain --limit=25 --format=json' === ($warning['recovery_actions'][2]['command'] ?? null), 'Worktree-count warnings must point to bounded cleanup preview.');
+capacity_advisory_assert('studio wp datamachine-code workspace worktree prune --dry-run --format=json' === ($warning['recovery_actions'][3]['command'] ?? null), 'Worktree-count warnings must point to the non-mutating prune preview.');
+capacity_advisory_assert(2 === count((array) ($byte_only_warning['recovery_actions'] ?? array())), 'Byte-only capacity warnings must not suggest registration pruning.');
 capacity_advisory_assert(50 * 1073741824 === ($warning['filesystem_free_bytes'] ?? null) && 5000000 === ($warning['filesystem_free_inodes'] ?? null), 'Advisory metadata must not replace full byte and inode evidence.');
 
 $line = WorktreeDiskBudget::format_advisory($warning);
 capacity_advisory_assert(1 === count(explode("\n", $line)), 'Default capacity advisory must fit on one line.');
 capacity_advisory_assert(str_contains($line, (string) $warning['evidence_reference']) && str_contains($line, 'admission allowed'), 'Compact advisory must expose its evidence reference and admission state.');
+capacity_advisory_assert(str_contains($line, 'workspace worktree prune --dry-run --format=json'), 'Worktree-count advisory must expose its safe preview directly.');
+capacity_advisory_assert(str_contains($line, 'cleanup-eligible-drain --limit=25 --format=json'), 'Worktree-count advisory must expose bounded checkout cleanup preview directly.');
+capacity_advisory_assert(! str_contains(WorktreeDiskBudget::format_advisory($byte_only_warning), 'workspace worktree prune'), 'Byte-only advisory must not suggest registration pruning.');
 capacity_advisory_assert(str_contains(WorktreeDiskBudget::format_summary($blocked), 'Admission: blocked'), 'Blocking capacity must retain the complete immediate summary.');
 capacity_advisory_assert(str_contains(WorktreeDiskBudget::format_trigger_reasons($blocked)[0] ?? '', 'Creation is blocked unless --force is explicit.'), 'Blocking capacity must retain immediate remediation.');
 capacity_advisory_assert(in_array('filesystem_free_bytes_measurement_unavailable', $measurement_warning['trigger_reasons'] ?? array(), true), 'Failed capacity measurement must retain a compact typed advisory.');

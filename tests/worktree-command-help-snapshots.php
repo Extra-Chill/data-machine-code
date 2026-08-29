@@ -44,6 +44,7 @@ namespace {
 		}
 	};
 	$assert_synopsis('cleanup', array( 'dry-run', 'force', 'skip-github', 'inventory-only', 'include-repaired-metadata', 'limit', 'offset', 'until-budget', 'apply-plan', 'older-than', 'sort', 'format', 'verbose', 'only' ));
+	$assert_synopsis('prune', array( 'dry-run', 'until-budget', 'format' ));
 	$provider = $definitions['provider'];
 	worktree_help_assert('Resolve the standalone worktree provider executable.' === $provider['shortdesc'], 'Provider help snapshot changed.');
 	worktree_help_assert(array_column($provider['synopsis'], 'name') === array( 'format' ), 'Provider help option snapshot changed.');

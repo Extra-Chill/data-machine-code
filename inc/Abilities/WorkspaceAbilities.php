@@ -2588,20 +2588,44 @@ class WorkspaceAbilities {
 				'datamachine-code/workspace-worktree-prune',
 				array(
 					'label'               => 'Prune Workspace Worktrees',
-					'description'         => 'Run git worktree prune across all primary checkouts to drop stale registry entries.',
+					'description'         => 'Preview or run git worktree prune across all primary checkouts to drop stale registry entries.',
 					'category'            => 'datamachine-code-workspace',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'properties' => array(),
+						'properties' => array(
+							'dry_run' => array(
+								'type'        => 'boolean',
+								'description' => 'Preview stale Git registrations without mutating Git or DMC inventory.',
+							),
+							'until_budget' => array(
+								'type'        => 'string',
+								'description' => 'Wall-clock budget for the bounded primary scan (default 30s).',
+							),
+						),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
 						'properties' => array(
 							'success' => array( 'type' => 'boolean' ),
+							'dry_run' => array( 'type' => 'boolean' ),
 							'pruned'  => array(
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
+							'would_prune' => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'skipped' => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'object' ),
+							),
+							'next_commands' => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'string' ),
+							),
+							'partial' => array( 'type' => 'boolean' ),
+							'budget'  => array( 'type' => 'object' ),
 						),
 					),
 					'execute_callback'    => array( self::class, 'worktreePrune' ),
@@ -5415,17 +5439,18 @@ class WorkspaceAbilities {
 	/**
 	 * Prune stale worktree registry entries.
 	 *
-	 * @param  array $input Unused.
+	 * @param  array $input Input parameters.
 	 * @return array
 	 */
-	public static function worktreePrune( array $input ): array|\WP_Error {   // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+	public static function worktreePrune( array $input ): array|\WP_Error {
+		$dry_run = ! empty( $input['dry_run'] );
 		if ( RemoteWorkspaceBackend::has_registered_state() && RemoteWorkspaceBackend::should_handle() ) {
-			$result = ( new RemoteWorkspaceBackend() )->worktree_prune();
+			$result = ( new RemoteWorkspaceBackend() )->worktree_prune($dry_run);
 			return self::decorate_remote_workspace_result( 'worktree_prune', $result );
 		}
 
 		$workspace = new Workspace();
-		return $workspace->worktree_prune();
+		return $workspace->worktree_prune($dry_run, $input['until_budget'] ?? null);
 	}
 
 	/**
