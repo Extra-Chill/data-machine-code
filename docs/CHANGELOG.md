@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.74.0] - 2026-08-30
+
+### Added
+- refresh primaries without WordPress
+
 ## [0.73.1] - 2026-08-30
 
 ### Fixed
