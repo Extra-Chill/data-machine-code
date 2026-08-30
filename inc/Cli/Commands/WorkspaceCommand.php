@@ -29,6 +29,7 @@ use DataMachineCode\Workspace\Workspace;
 use DataMachineCode\Workspace\WorktreeContextInjector;
 use DataMachineCode\Workspace\WorkspaceMutationLock;
 use DataMachineCode\Workspace\StandaloneWorktreeProvider;
+use DataMachineCode\Workspace\WorktreeRetentionProvider;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -1585,6 +1586,23 @@ class WorkspaceCommand extends BaseCommand {
 			default:
 				WP_CLI::error( sprintf( 'Unknown cleanup operation: %s', $operation ) );
 				return;
+		}
+	}
+
+	/**
+	 * Serve the versioned Homeboy worktree-retention provider protocol.
+	 *
+	 * Reads one JSON request from stdin and writes one JSON response to stdout.
+	 *
+	 * @subcommand retention-provider
+	 */
+	public function retention_provider( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$provider = new WorktreeRetentionProvider();
+		$request  = stream_get_contents( STDIN );
+		$response = $provider->handle_json( false === $request ? '' : $request );
+		fwrite( STDOUT, $provider->encode_response( $response ) . "\n" );
+		if ( 'failed' === ( $response['state'] ?? '' ) ) {
+			WP_CLI::halt( 1 );
 		}
 	}
 
