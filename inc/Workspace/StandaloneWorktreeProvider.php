@@ -554,7 +554,7 @@ final class StandaloneWorktreeProvider {
 
 	private function remote_refs_digest( string $primary_path ): ?string {
 		$refs = $this->run_git($primary_path, array( 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes/origin' ));
-		return $refs['success'] ? hash('sha256', $refs['stdout']) : null;
+		return $refs['success'] ? hash('sha256', rtrim($refs['stdout'], "\r\n")) : null;
 	}
 
 	/**

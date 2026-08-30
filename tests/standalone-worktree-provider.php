@@ -145,7 +145,7 @@ try {
 	$refs = standalone_provider_run(array( 'git', '-C', $primary, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes/origin' ));
 	\DataMachineCode\Workspace\WorktreeFreshnessEvidence::store($primary, array(
 		'version'            => 2,
-		'remote_refs_digest' => hash('sha256', $refs['stdout']),
+		'remote_refs_digest' => hash('sha256', rtrim($refs['stdout'], "\r\n")),
 		'ref_heads'          => array(),
 		'observed_at'        => gmdate('c'),
 	));
