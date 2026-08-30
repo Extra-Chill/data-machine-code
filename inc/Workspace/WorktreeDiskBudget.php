@@ -362,7 +362,7 @@ final class WorktreeDiskBudget {
 			'creation_allowed'             => ! $refused,
 			'admission_exception'          => $admission_exception,
 			'warnings'                     => $warnings,
-			'emergency_triggered'          => array() !== $trigger_reasons,
+			'emergency_triggered'          => array() !== $has_blocking_trigger,
 			'trigger_reasons'              => $trigger_reasons,
 			'typed_trigger_reasons'        => $typed_trigger_reasons,
 			'cleanup_dry_run_command'      => 'studio wp datamachine-code workspace worktree cleanup --dry-run',
@@ -398,6 +398,46 @@ final class WorktreeDiskBudget {
 		}
 
 		return $budget;
+	}
+
+	/**
+	 * Project a compact status for routine list/show reads.
+	 *
+	 * Blocking and emergency payloads stay complete so immediate remediation remains available.
+	 *
+	 * @param  array<string,mixed> $budget Full capacity evidence.
+	 * @return array<string,mixed>
+	 */
+	public static function for_routine_read( array $budget ): array {
+		if ( ! empty( $budget['emergency_triggered'] ) || empty( $budget['creation_allowed'] ) || ! empty( $budget['force_override_required'] ) ) {
+			return $budget;
+		}
+
+		return self::compact_status( $budget );
+	}
+
+	/**
+	 * Compact status and evidence reference for routine workspace reads.
+	 *
+	 * @param  array<string,mixed> $budget Full or compact capacity evidence.
+	 * @return array<string,mixed>
+	 */
+	public static function compact_status( array $budget ): array {
+		return array(
+			'workspace_path'          => (string) ( $budget['workspace_path'] ?? '' ),
+			'worktree_count'          => isset( $budget['worktree_count'] ) && is_numeric( $budget['worktree_count'] ) ? (int) $budget['worktree_count'] : 0,
+			'status'                  => (string) ( $budget['status'] ?? 'unknown' ),
+			'creation_allowed'        => ! empty( $budget['creation_allowed'] ),
+			'force_override_required' => ! empty( $budget['force_override_required'] ),
+			'force_override_applied'  => ! empty( $budget['force_override_applied'] ),
+			'emergency_triggered'     => ! empty( $budget['emergency_triggered'] ),
+			'trigger_reasons'         => array_values( array_map( 'strval', (array) ( $budget['trigger_reasons'] ?? array() ) ) ),
+			'typed_trigger_reasons'   => array_values( (array) ( $budget['typed_trigger_reasons'] ?? array() ) ),
+			'diagnostic_id'           => (string) ( $budget['diagnostic_id'] ?? self::DIAGNOSTIC_ID ),
+			'advisory_fingerprint'    => isset( $budget['advisory_fingerprint'] ) ? (string) $budget['advisory_fingerprint'] : null,
+			'evidence_reference'      => isset( $budget['evidence_reference'] ) ? (string) $budget['evidence_reference'] : null,
+			'evidence_command'        => (string) ( $budget['evidence_command'] ?? 'studio wp datamachine-code workspace hygiene --format=json' ),
+		);
 	}
 
 	/** Build a state-level fingerprint so unchanged advisories can be suppressed safely. */

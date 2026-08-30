@@ -1036,7 +1036,7 @@ trait WorkspaceRepositoryLifecycle {
 					'remote'             => '' !== (string) ( $context_policy['repo'] ?? '' ) ? GitHubRemote::cloneUrl( (string) $context_policy['repo'] ) : null,
 					'commit'             => null,
 					'dirty'              => 0,
-					'workspace_capacity' => WorktreeDiskBudget::inspect($this->workspace_path),
+					'workspace_capacity' => WorktreeDiskBudget::for_routine_read(WorktreeDiskBudget::inspect($this->workspace_path)),
 					'workspace_policy'   => WorkspaceAliasResolver::policy_attestation($handle),
 				);
 			}
@@ -1076,7 +1076,7 @@ trait WorkspaceRepositoryLifecycle {
 		$remote_freshness_ms = (int) round(( microtime(true) - $remote_freshness_started ) * 1000);
 
 		$capacity_started = microtime(true);
-		$capacity         = WorktreeDiskBudget::inspect($this->workspace_path);
+		$capacity         = WorktreeDiskBudget::for_routine_read(WorktreeDiskBudget::inspect($this->workspace_path));
 		$capacity_ms      = (int) round(( microtime(true) - $capacity_started ) * 1000);
 		$result = array(
 			'success'            => true,

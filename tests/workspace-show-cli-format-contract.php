@@ -56,6 +56,7 @@ namespace {
 
 	define( 'ABSPATH', __DIR__ . '/fixtures/' );
 	require_once dirname( __DIR__ ) . '/inc/Cli/CliResponseRenderer.php';
+	require_once dirname( __DIR__ ) . '/inc/Cli/WorkspaceCompactOutput.php';
 	require_once dirname( __DIR__ ) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
 	use DataMachineCode\Abilities\WorkspaceAbilities;
@@ -118,9 +119,12 @@ namespace {
 		'status'                  => 'warning',
 		'creation_allowed'        => true,
 		'force_override_required' => false,
+		'emergency_triggered'     => false,
 		'trigger_reasons'         => array( 'worktree_count_warning_threshold' ),
 		'advisory'                => 'Capacity advisory [workspace_capacity@abc]: admission allowed.',
 		'summary'                 => 'full capacity summary',
+		'filesystem_free_bytes'   => 182 * 1073741824,
+		'warn_free_bytes'         => 20 * 1073741824,
 	);
 	$command->show( array( 'example' ), array() );
 	workspace_show_cli_assert('Dirty:    no' === WP_CLI::$logs[5] && 'Capacity advisory [workspace_capacity@abc]: admission allowed.' === WP_CLI::$logs[6] && 7 === count(WP_CLI::$logs), 'Default workspace show must lead with repository state and emit exactly one compact advisory.');
@@ -144,7 +148,17 @@ namespace {
 	WP_CLI::$logs = array();
 	$command->show( array( 'example' ), array( 'format' => 'json' ) );
 	$payload = json_decode( WP_CLI::$lines[0] ?? '', true );
-	workspace_show_cli_assert( WorkspaceAbilities::$result === $payload, 'Workspace show JSON did not retain the lossless ability result.' );
+	workspace_show_cli_assert(
+		'refused' === ($payload['workspace_capacity']['status'] ?? null)
+		&& false === ($payload['workspace_capacity']['creation_allowed'] ?? true)
+		&& ! isset($payload['workspace_capacity']['summary']),
+		'Workspace show JSON did not compact routine capacity evidence.'
+	);
+
+	WP_CLI::$lines = array();
+	$command->show( array( 'example' ), array( 'format' => 'json', 'full' => true ) );
+	$full_payload = json_decode( WP_CLI::$lines[0] ?? '', true );
+	workspace_show_cli_assert( WorkspaceAbilities::$result === $full_payload, 'Workspace show --full JSON did not retain the lossless ability result.' );
 
 	WP_CLI::$lines = array();
 	WorkspaceAbilities::$result = new WP_Error( 'workspace_not_found', 'Repository "missing" not found.', array( 'name' => 'missing' ) );
