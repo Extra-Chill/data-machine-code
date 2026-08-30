@@ -77,7 +77,14 @@ class CleanupRunService {
 			array(
 				'expected_status' => 'planning',
 				'status'          => 'planned',
-				'policy'          => $plan['safety_policy'] ?? array(),
+				'policy'          => array_merge(
+					(array) ( $plan['safety_policy'] ?? array() ),
+					array(
+						'plan_id'                => (string) ( $plan['plan_id'] ?? '' ),
+						'inventory_continuation' => (array) ( $plan['continuation'] ?? array() ),
+						'retention_blockers'      => (array) ( $plan['summary']['blockers'] ?? array() ),
+					)
+				),
 				'summary'         => $plan['summary'],
 			),
 			'planned'

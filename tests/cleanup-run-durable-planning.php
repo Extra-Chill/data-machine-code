@@ -17,8 +17,13 @@ declare(strict_types=1);
 			if ('success' === $this->outcome) {
 				return array(
 					'safety_policy' => array('applies_inline' => false),
+					'plan_id' => 'cleanup-plan-stable',
+					'continuation' => array('partial' => true, 'next_offset' => 25),
 					'rows' => array(),
-					'summary' => array('apply_command' => 'studio wp datamachine-code workspace cleanup apply <run-id>'),
+					'summary' => array(
+						'apply_command' => 'studio wp datamachine-code workspace cleanup apply <run-id>',
+						'blockers' => array('dirty_worktree' => array('count' => 2)),
+					),
 				);
 			}
 			return new \WP_Error('workspace_cleanup_plan_timeout', 'Workspace discovery exceeded its deadline.', array('status' => 504));
@@ -100,6 +105,9 @@ namespace {
 	$success_plan = $success_service->plan(array('mode' => 'artifacts'));
 	durable_planning_assert('planned', $success_repository->runs['cleanup-run-timeout']['status'] ?? null, 'Successful discovery must transition the run to planned.');
 	durable_planning_assert('cleanup-run-timeout', $success_plan['run_id'] ?? null, 'Successful planning must return its durable run ID.');
+	durable_planning_assert('cleanup-plan-stable', $success_repository->runs['cleanup-run-timeout']['policy']['plan_id'] ?? null, 'Stable plan identity must be persisted with the reviewed run.');
+	durable_planning_assert(25, $success_repository->runs['cleanup-run-timeout']['policy']['inventory_continuation']['next_offset'] ?? null, 'Inventory continuation must survive for provider status and resume.');
+	durable_planning_assert(2, $success_repository->runs['cleanup-run-timeout']['policy']['retention_blockers']['dirty_worktree']['count'] ?? null, 'Normalized retention blockers must survive apply summary replacement.');
 	$success_apply = $success_service->apply('cleanup-run-timeout');
 	durable_planning_assert('completed', $success_apply['state'] ?? null, 'A successfully planned empty run must transition through apply to completed.');
 
