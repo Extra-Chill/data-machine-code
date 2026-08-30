@@ -142,6 +142,12 @@ function datamachine_code_is_targeted_workspace_read_cli_request( ?array $argv =
 	return 'worktree' === $operation && 'get' === ( $tokens[ $workspace_index + 2 ] ?? '' );
 }
 
+// @phpstan-ignore-next-line WP_CLI is only guaranteed true in the analysis bootstrap.
+if ( defined('WP_CLI') && WP_CLI ) {
+	require_once __DIR__ . '/inc/Cli/CliJsonStdoutGuard.php';
+	\DataMachineCode\Cli\CliJsonStdoutGuard::install();
+}
+
 // PSR-4 Autoloading.
 require_once __DIR__ . '/vendor/autoload.php';
 
