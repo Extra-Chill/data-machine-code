@@ -84,11 +84,27 @@ namespace {
 	$default = $render();
 
 	assert_contains(
-		'All code changes happen in Data Machine Code worktrees. The controller workspace root is `unavailable; run datamachine-code workspace path to diagnose`.',
+		'Data Machine Code provides repository, primary-checkout, worktree, and GitHub workspace management.',
+		$default,
+		'DMC standalone capabilities missing'
+	);
+	assert_contains(
+		'When using Data Machine Code to manage code changes, work in a Data Machine Code worktree. The controller workspace root is `unavailable; run datamachine-code workspace path to diagnose`.',
 		$default,
 		'default workspace policy intro changed'
 	);
-	assert_contains('DMC owns authoritative repository, primary-checkout, worktree, and GitHub workspace state. Homeboy consumes DMC-managed worktrees', $default, 'DMC/Homeboy ownership boundary missing');
+	assert_not_contains('Homeboy', $default, 'DMC guidance must not couple to Homeboy');
+	assert_not_contains('All code changes happen', $default, 'DMC guidance must not claim universal routing authority');
+	assert_not_contains(
+		'Homeboy',
+		json_encode($sections['datamachine-code']['metadata'], JSON_THROW_ON_ERROR),
+		'DMC section metadata must not couple to Homeboy'
+	);
+	assert_contains(
+		'Data Machine Code workspace lifecycle, GitHub, and safety guidance.',
+		$sections['datamachine-code']['metadata']['description'],
+		'DMC section metadata must describe DMC only'
+	);
 	assert_contains(
 		'- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`).',
 		$default,
@@ -116,7 +132,7 @@ namespace {
 	);
 
 	$filtered = $render();
-	assert_contains('Use local project policy for `unavailable; run datamachine-code workspace path to diagnose`. DMC owns authoritative repository', $filtered, 'workspace policy intro filter was not applied');
+	assert_contains('Use local project policy for `unavailable; run datamachine-code workspace path to diagnose`.', $filtered, 'workspace policy intro filter was not applied');
 	assert_contains('- **Local policy:** caller-owned workspace rules.', $filtered, 'workspace policy section filter was not applied');
 	assert_not_contains('- **Primary is read-only.** Never edit `<workspace>/<repo>` (no `@slug`).', $filtered, 'default policy section remained after filter override');
 	assert_contains('**Default routing**', $filtered, 'DMC routing changed after policy filter');
