@@ -15,6 +15,9 @@ if ( ! class_exists(WorktreeFreshnessEvidence::class) ) {
 if ( ! class_exists(StandaloneFileLock::class) ) {
 	require_once __DIR__ . '/StandaloneFileLock.php';
 }
+if ( ! class_exists(WorktreeBranchHolder::class) ) {
+	require_once __DIR__ . '/WorktreeBranchHolder.php';
+}
 
 final class StandalonePrimaryRefresher {
 
@@ -564,21 +567,8 @@ final class StandalonePrimaryRefresher {
 		if ( ! $listing['success'] ) {
 			return array( 'path' => null, 'branch' => $branch, 'unverified' => true );
 		}
-		foreach ( preg_split('/\n\n+/', trim($listing['stdout'])) ?: array() as $block ) {
-			$path = null;
-			$ref  = null;
-			foreach ( explode("\n", $block) as $line ) {
-				if ( str_starts_with($line, 'worktree ') ) {
-					$path = substr($line, 9);
-				} elseif ( str_starts_with($line, 'branch ') ) {
-					$ref = substr($line, 7);
-				}
-			}
-			if ( null !== $path && $path !== $primary && $ref === 'refs/heads/' . $branch ) {
-				return array( 'path' => $path, 'handle' => basename($path), 'branch' => $branch );
-			}
-		}
-		return null;
+		$path = WorktreeBranchHolder::find($listing['stdout'], $primary, $branch);
+		return null === $path ? null : array( 'path' => $path, 'handle' => basename($path), 'branch' => $branch );
 	}
 
 	/** @return array{ahead:int,behind:int}|null */
