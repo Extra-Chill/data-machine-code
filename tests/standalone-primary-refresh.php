@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+define('DATAMACHINE_CODE_STANDALONE', true);
+require_once dirname(__DIR__) . '/vendor/autoload.php';
+
 function standalone_refresh_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
 		throw new RuntimeException($message);
@@ -104,7 +107,7 @@ try {
 	$refresh    = standalone_refresh_invoke($script, $fixture['workspace']);
 	$receipt    = $refresh['payload'];
 	standalone_refresh_assert(0 === $refresh['process']['status'] && 'refreshed' === ($receipt['status'] ?? null), 'Behind primary did not refresh: ' . $refresh['process']['stderr'] . var_export($receipt, true));
-	standalone_refresh_assert('datamachine-code/primary-refresh/v1' === ($receipt['schema'] ?? null), 'Refresh receipt schema mismatch.');
+	standalone_refresh_assert(\DataMachineCode\Workspace\StandalonePrimaryRefresher::SCHEMA === ($receipt['schema'] ?? null), 'Refresh receipt schema mismatch.');
 	standalone_refresh_assert($old_sha === ($receipt['old_sha'] ?? null) && $remote_sha === ($receipt['new_sha'] ?? null), 'Refresh receipt omitted old/new commit identity.');
 	standalone_refresh_assert('main' === ($receipt['branch'] ?? null) && 'origin/main' === ($receipt['upstream'] ?? null), 'Refresh receipt omitted branch/upstream identity.');
 	standalone_refresh_assert($remote_sha === ($receipt['fetched']['default_sha'] ?? null), 'Refresh receipt omitted fetched default-branch evidence.');

@@ -12,6 +12,9 @@ defined('ABSPATH') || defined('DATAMACHINE_CODE_STANDALONE') || exit;
 if ( ! class_exists(WorktreeFreshnessEvidence::class) ) {
 	require_once __DIR__ . '/WorktreeFreshnessEvidence.php';
 }
+if ( ! class_exists(StandaloneFileLock::class) ) {
+	require_once __DIR__ . '/StandaloneFileLock.php';
+}
 
 final class StandalonePrimaryRefresher {
 
@@ -64,8 +67,7 @@ final class StandalonePrimaryRefresher {
 		try {
 			return $this->refresh_locked($workspace_real, $real, $repo, $remote, $context, $started);
 		} finally {
-			flock($lock, LOCK_UN);
-			fclose($lock);
+			StandaloneFileLock::release($lock);
 		}
 	}
 
@@ -403,14 +405,7 @@ final class StandalonePrimaryRefresher {
 		}
 
 		$listed = $this->recovery_worktree($primary, $path, $ref);
-		if ( 'conflict' === $listed ) {
-			if ( $created ) {
-				$this->git($primary, array( 'branch', '-D', $branch ));
-			}
-			$partial['rolled_back'] = $created;
-			return array( 'success' => false, 'reason' => 'primary_divergence_recovery_path_conflict', 'recovery' => $partial );
-		}
-		if ( 'missing' === $listed && is_dir($path) ) {
+		if ( 'conflict' === $listed || ( 'missing' === $listed && is_dir($path) ) ) {
 			if ( $created ) {
 				$this->git($primary, array( 'branch', '-D', $branch ));
 			}
@@ -646,19 +641,7 @@ final class StandalonePrimaryRefresher {
 		if ( is_link($directory) || ( ! is_dir($directory) && ! @mkdir($directory, 0755, true) && ! is_dir($directory) ) ) {
 			return null;
 		}
-		$handle = @fopen($directory . '/worktree-' . $repo . '.lock', 'c');
-		if ( false === $handle ) {
-			return null;
-		}
-		$started = microtime(true);
-		do {
-			if ( flock($handle, LOCK_EX | LOCK_NB) ) {
-				return $handle;
-			}
-			usleep(100000);
-		} while ( microtime(true) - $started < self::LOCK_TIMEOUT );
-		fclose($handle);
-		return null;
+		return StandaloneFileLock::acquire($directory . '/worktree-' . $repo . '.lock', self::LOCK_TIMEOUT, 100000);
 	}
 
 	/** @return array{success:bool,stdout:string,stderr:string,timed_out:bool,exit_code:int} */

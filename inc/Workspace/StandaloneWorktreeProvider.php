@@ -30,6 +30,9 @@ if ( ! class_exists(WorktreeDiskBudget::class) ) {
 if ( ! class_exists(StandalonePrimaryRefresher::class) ) {
 	require_once __DIR__ . '/StandalonePrimaryRefresher.php';
 }
+if ( ! class_exists(StandaloneFileLock::class) ) {
+	require_once __DIR__ . '/StandaloneFileLock.php';
+}
 
 final class StandaloneWorktreeProvider {
 
@@ -876,25 +879,12 @@ final class StandaloneWorktreeProvider {
 		}
 		$key  = hash('sha256', $git_dir . ':' . $stat['dev'] . ':' . $stat['ino']);
 		$file = sys_get_temp_dir() . '/dmc-worktree-converge-' . $key . '.lock';
-		$lock = @fopen($file, 'c');
-		if ( false === $lock ) {
-			return null;
-		}
-		$started = microtime(true);
-		while ( ! flock($lock, LOCK_EX | LOCK_NB) ) {
-			if ( microtime(true) - $started >= self::LOCK_TIMEOUT ) {
-				fclose($lock);
-				return null;
-			}
-			usleep(10000);
-		}
-		return $lock;
+		return StandaloneFileLock::acquire($file, self::LOCK_TIMEOUT, 10000);
 	}
 
 	/** @param resource $lock */
 	private function release_convergence_lock( $lock ): void {
-		flock($lock, LOCK_UN);
-		fclose($lock);
+		StandaloneFileLock::release($lock);
 	}
 
 	/**
