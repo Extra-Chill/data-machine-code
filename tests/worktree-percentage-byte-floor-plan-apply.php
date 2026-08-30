@@ -18,6 +18,7 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/inc/Workspace/Workspace.php';
 
 use DataMachineCode\Workspace\Workspace;
+use DataMachineCode\Workspace\WorktreePlanEnvelope;
 
 function percentage_plan_apply_assert( bool $condition, string $message ): void {
 	if ( ! $condition ) {
@@ -42,6 +43,8 @@ $evidence = array( 'capacity' => $capacity, 'bootstrap_demand' => array( 'bytes'
 $workspace = new Workspace();
 $result = new ReflectionMethod(Workspace::class, 'worktree_plan_result');
 $planned = $result->invoke($workspace, $intent, 'repo@small-demand', '/tmp/repo@small-demand', 'small-demand', 'create', $evidence);
+$envelope = WorktreePlanEnvelope::build($intent, 'repo@small-demand', '/tmp/repo@small-demand', 'small-demand', 'create', $evidence);
+percentage_plan_apply_assert(($planned['digest'] ?? null) === ($envelope['digest'] ?? null), 'WordPress plan digest drifted from the shared envelope primitive.');
 percentage_plan_apply_assert('reviewed-capacity' !== ($planned['digest'] ?? null) && true === ($planned['apply_intent']['allow_percentage_byte_floor_exception'] ?? false), 'Production plan digest must retain reviewed exception intent.');
 
 foreach ( array(

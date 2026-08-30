@@ -13,7 +13,7 @@ use DataMachineCode\Support\CommandSpec;
 use DataMachineCode\Support\ProcessRunner;
 use DataMachineCode\Support\WallClockBudget;
 
-defined('ABSPATH') || exit;
+defined('ABSPATH') || defined('DATAMACHINE_CODE_STANDALONE') || exit;
 
 final class WorktreeDiskBudget {
 

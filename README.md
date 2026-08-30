@@ -234,6 +234,7 @@ WordPress bootstrap with the standalone provider executable:
 bin/dmc-worktree-provider identity /path/to/workspace repo@fix-foo
 bin/dmc-worktree-provider safety /path/to/workspace '<identity-token>'
 bin/dmc-worktree-provider converge /path/to/workspace '<identity-token>' '<full-base-sha>'
+bin/dmc-worktree-provider plan /path/to/workspace '{"repo":"repo","branch":"fix/foo","from":"origin/main","task_url":"https://github.com/org/repo/issues/1"}'
 ```
 
 Identity reads only the canonical direct-child path and linked-worktree `HEAD`.
@@ -241,6 +242,12 @@ Safety is a separate operation with bounded local Git probes; neither operation
 loads WordPress, reads the database, enumerates the workspace, fetches a remote,
 or performs network I/O. Consumers should persist the returned opaque identity
 token and pass it back unchanged when requesting safety evidence.
+
+`plan` is a non-mutating digest-addressed allocation decision with the same
+typed envelope as the WordPress worktree-plan ability: freshness, ownership,
+reuse, capacity, and bootstrap-demand evidence. It never fetches or mutates
+Git or workspace state. Apply remains the WordPress `workspace-worktree-apply-plan`
+ability after live revalidation.
 
 `converge` accepts only a full lowercase 40-character commit SHA already present
 locally. It resolves that input to Git's canonical commit OID and refuses any
