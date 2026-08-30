@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.73.0] - 2026-08-30
+
+### Added
+- expose Homeboy retention provider
+
 ## [0.72.20] - 2026-08-30
 
 ### Changed
