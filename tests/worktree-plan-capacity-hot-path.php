@@ -8,7 +8,11 @@ declare(strict_types=1);
 namespace DataMachineCode\Workspace {
 	final class WorktreeContextInjector {
 		public static function bootstrap_capacity_reservations(): array {
-			return array( 'bytes' => 0, 'inodes' => 0 );
+			return array( 'bytes' => 0, 'inodes' => 0, 'handles' => array(), 'by_handle' => array() );
+		}
+
+		public static function capacity_reservations( string $workspace_path = '' ): array {
+			return self::bootstrap_capacity_reservations();
 		}
 	}
 

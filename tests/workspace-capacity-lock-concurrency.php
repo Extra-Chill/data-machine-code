@@ -800,6 +800,11 @@ try {
 	};
 	$lifecycle_source = (string) file_get_contents(dirname(__DIR__) . '/inc/Workspace/WorkspaceWorktreeLifecycle.php');
 	capacity_lock_assert(str_contains($lifecycle_source, "'workspace-capacity-admission', \$reuse"), 'Bootstrap resume must acquire global capacity admission before its repository lock.');
+	$capacity_fn = strpos($lifecycle_source, 'function worktree_add_with_capacity_lock');
+	$reserve_at  = strpos($lifecycle_source, 'WorktreeContextInjector::reserve_capacity');
+	$release_at  = strpos($lifecycle_source, '$capacity_lock->release()');
+	$create_at   = strpos($lifecycle_source, '$this->worktree_add_locked(');
+	capacity_lock_assert(false !== $capacity_fn && false !== $reserve_at && false !== $release_at && false !== $create_at && $capacity_fn < $reserve_at && $reserve_at < $release_at && $release_at < $create_at, 'New worktree checkout must run only after demand is reserved and the global capacity lock is released.');
 	capacity_lock_assert(2400 === $policy::worktree_capacity_wait_timeout_seconds(true), 'Bootstrap admission wait must exceed the complete bounded operation lifecycle.');
 
 	$state = $workspace . '/capacity-state';

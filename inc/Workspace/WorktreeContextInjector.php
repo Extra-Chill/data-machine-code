@@ -271,6 +271,9 @@ class WorktreeContextInjector {
 	 */
 	public const METADATA_OPTION = 'datamachine_worktree_metadata';
 
+	/** Workspace-local demand reserved after admission and before checkout completes. */
+	public const CAPACITY_RESERVATION_DIR = 'capacity-reservations';
+
 	/** Journal-only record written before a Git worktree mutation. */
 	public const CREATION_INTENT_KEY = 'creation_intent';
 
@@ -1194,7 +1197,7 @@ class WorktreeContextInjector {
 	/** Return dependency demand reserved by materialized worktrees still bootstrapping. */
 	public static function bootstrap_capacity_reservations(): array {
 		if ( ! function_exists('get_option') ) {
-			return array( 'bytes' => 0, 'inodes' => 0, 'handles' => array() );
+			return array( 'bytes' => 0, 'inodes' => 0, 'handles' => array(), 'by_handle' => array() );
 		}
 		// Capacity admission must not reuse an earlier request's option snapshot
 		// after another process has committed a reservation.
@@ -1205,6 +1208,7 @@ class WorktreeContextInjector {
 		$bytes = 0;
 		$inodes = 0;
 		$handles = array();
+		$by_handle = array();
 		foreach ( is_array($all) ? $all : array() as $handle => $metadata ) {
 			$bootstrap = (array) ($metadata['provisioning']['bootstrap'] ?? array());
 			$reservation = is_array($bootstrap['capacity_reservation'] ?? null) ? $bootstrap['capacity_reservation'] : null;
@@ -1213,11 +1217,185 @@ class WorktreeContextInjector {
 			if ( ! is_array($reservation) || 'running' !== ($bootstrap['outcome'] ?? null) || ( 'stale' === $coordinator['state'] && 'stale' === $child['state'] ) ) {
 				continue;
 			}
-			$bytes += max(0, (int) ($reservation['bytes'] ?? 0));
-			$inodes += max(0, (int) ($reservation['inodes'] ?? 0));
+			$demand = array(
+				'bytes'  => max(0, (int) ($reservation['bytes'] ?? 0)),
+				'inodes' => max(0, (int) ($reservation['inodes'] ?? 0)),
+			);
+			$bytes += $demand['bytes'];
+			$inodes += $demand['inodes'];
 			$handles[] = (string) $handle;
+			$by_handle[ (string) $handle ] = $demand;
 		}
-		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles );
+		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles, 'by_handle' => $by_handle );
+	}
+
+	/**
+	 * Return live bootstrap plus admitted-but-not-yet-materialized demand.
+	 *
+	 * @return array{bytes:int,inodes:int,handles:array<int,string>,by_handle:array<string,array{bytes:int,inodes:int}>}
+	 */
+	public static function capacity_reservations( string $workspace_path = '' ): array {
+		return self::merge_capacity_reservations(
+			self::bootstrap_capacity_reservations(),
+			self::admission_capacity_reservations($workspace_path)
+		);
+	}
+
+	/**
+	 * Atomically reserve this handle's bounded demand so later admissions include it
+	 * after the global capacity lock is released.
+	 *
+	 * @param array<string,mixed> $demand
+	 */
+	public static function reserve_capacity( string $workspace_path, string $handle, array $demand ): bool|\WP_Error {
+		$dir = self::capacity_reservation_dir($workspace_path);
+		if ( '' === $dir || '' === $handle ) {
+			return new \WP_Error(
+				'workspace_capacity_reservation_invalid_target',
+				'Capacity reservation requires a workspace path and worktree handle.',
+				array( 'status' => 400 )
+			);
+		}
+		if ( ! is_dir($dir) ) {
+			$created = function_exists('wp_mkdir_p')
+				? wp_mkdir_p($dir)
+				: @mkdir($dir, 0755, true); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir,WordPress.PHP.NoSilencedErrors.Discouraged -- Atomic local reservation setup rechecks the directory.
+			if ( ! $created && ! is_dir($dir) ) {
+				return new \WP_Error(
+					'workspace_capacity_reservation_create_failed',
+					sprintf('Failed to create capacity reservation directory: %s', $dir),
+					array( 'status' => 500 )
+				);
+			}
+		}
+
+		$path    = $dir . '/' . self::capacity_reservation_filename($handle) . '.json';
+		$payload = array(
+			'handle'      => $handle,
+			'bytes'       => max(0, (int) ( $demand['bytes'] ?? 0 )),
+			'inodes'      => max(0, (int) ( $demand['inodes'] ?? 0 )),
+			'coordinator' => self::bootstrap_owner(),
+			'reserved_at' => gmdate('c'),
+		);
+		$json      = function_exists('wp_json_encode') ? wp_json_encode($payload) : json_encode($payload); // phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- Reservation files also run outside WordPress bootstrap.
+		$temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
+		if ( false === file_put_contents($temporary, false === $json ? '{}' : (string) $json, LOCK_EX) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			return new \WP_Error(
+				'workspace_capacity_reservation_persist_failed',
+				sprintf('Failed to persist capacity reservation for "%s".', $handle),
+				array( 'status' => 500 )
+			);
+		}
+		if ( ! rename($temporary, $path) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+			unlink($temporary); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			return new \WP_Error(
+				'workspace_capacity_reservation_persist_failed',
+				sprintf('Failed to commit capacity reservation for "%s".', $handle),
+				array( 'status' => 500 )
+			);
+		}
+
+		return true;
+	}
+
+	/** Drop an admitted reservation after checkout, bootstrap handoff, or failure. */
+	public static function release_capacity_reservation( string $workspace_path, string $handle ): void {
+		$path = self::capacity_reservation_path($workspace_path, $handle);
+		if ( '' !== $path && is_file($path) ) {
+			unlink($path); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+		}
+	}
+
+	/**
+	 * Return admitted demand that has not yet been converted to bootstrap reservation.
+	 *
+	 * @return array{bytes:int,inodes:int,handles:array<int,string>,by_handle:array<string,array{bytes:int,inodes:int}>}
+	 */
+	public static function admission_capacity_reservations( string $workspace_path ): array {
+		$dir = self::capacity_reservation_dir($workspace_path);
+		if ( '' === $dir || ! is_dir($dir) ) {
+			return array( 'bytes' => 0, 'inodes' => 0, 'handles' => array(), 'by_handle' => array() );
+		}
+		$files = glob($dir . '/*.json');
+		$bytes = 0;
+		$inodes = 0;
+		$handles = array();
+		$by_handle = array();
+		foreach ( false === $files ? array() : $files as $file ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents,WordPress.PHP.NoSilencedErrors.Discouraged -- A vanished reservation file is an expected concurrent release race.
+			$data = json_decode((string) @file_get_contents($file), true);
+			if ( ! is_array($data) ) {
+				continue;
+			}
+			$coordinator = self::bootstrap_owner_state($data['coordinator'] ?? null);
+			if ( 'stale' === ( $coordinator['state'] ?? '' ) ) {
+				continue;
+			}
+			$handle = (string) ( $data['handle'] ?? '' );
+			if ( '' === $handle ) {
+				continue;
+			}
+			$demand = array(
+				'bytes'  => max(0, (int) ( $data['bytes'] ?? 0 )),
+				'inodes' => max(0, (int) ( $data['inodes'] ?? 0 )),
+			);
+			$bytes += $demand['bytes'];
+			$inodes += $demand['inodes'];
+			$handles[] = $handle;
+			$by_handle[ $handle ] = $demand;
+		}
+
+		return array( 'bytes' => $bytes, 'inodes' => $inodes, 'handles' => $handles, 'by_handle' => $by_handle );
+	}
+
+	/**
+	 * @param array{bytes?:int,inodes?:int,handles?:array<int,string>,by_handle?:array<string,array{bytes:int,inodes:int}>} $left
+	 * @param array{bytes?:int,inodes?:int,handles?:array<int,string>,by_handle?:array<string,array{bytes:int,inodes:int}>} $right
+	 * @return array{bytes:int,inodes:int,handles:array<int,string>,by_handle:array<string,array{bytes:int,inodes:int}>}
+	 */
+	private static function merge_capacity_reservations( array $left, array $right ): array {
+		$by_handle = array();
+		foreach ( array( $left, $right ) as $set ) {
+			foreach ( (array) ( $set['by_handle'] ?? array() ) as $handle => $demand ) {
+				$handle = (string) $handle;
+				if ( '' === $handle || ! is_array($demand) ) {
+					continue;
+				}
+				$existing = $by_handle[ $handle ] ?? array( 'bytes' => 0, 'inodes' => 0 );
+				$by_handle[ $handle ] = array(
+					'bytes'  => max( (int) $existing['bytes'], max(0, (int) ( $demand['bytes'] ?? 0 )) ),
+					'inodes' => max( (int) $existing['inodes'], max(0, (int) ( $demand['inodes'] ?? 0 )) ),
+				);
+			}
+		}
+		$bytes = 0;
+		$inodes = 0;
+		foreach ( $by_handle as $demand ) {
+			$bytes += (int) $demand['bytes'];
+			$inodes += (int) $demand['inodes'];
+		}
+
+		return array(
+			'bytes'     => $bytes,
+			'inodes'    => $inodes,
+			'handles'   => array_keys($by_handle),
+			'by_handle' => $by_handle,
+		);
+	}
+
+	private static function capacity_reservation_dir( string $workspace_path ): string {
+		$workspace_path = rtrim($workspace_path, '/');
+		return '' === $workspace_path ? '' : $workspace_path . '/.locks/' . self::CAPACITY_RESERVATION_DIR;
+	}
+
+	private static function capacity_reservation_path( string $workspace_path, string $handle ): string {
+		$dir = self::capacity_reservation_dir($workspace_path);
+		return '' === $dir || '' === $handle ? '' : $dir . '/' . self::capacity_reservation_filename($handle) . '.json';
+	}
+
+	private static function capacity_reservation_filename( string $handle ): string {
+		$handle = preg_replace('/[^a-zA-Z0-9._@-]/', '', $handle);
+		return trim( (string) $handle, '-.');
 	}
 
 	/** Capture a PID and OS-issued process identity for bootstrap ownership. */
