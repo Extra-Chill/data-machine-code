@@ -2,6 +2,15 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.20] - 2026-08-30
+
+### Changed
+- Parallelize independent worktree admission
+- Compact routine capacity advisories
+- Protect JSON CLI stdout from diagnostics
+- Resolve standalone planner audit findings
+- Expose standalone worktree planning
+
 ## [0.72.19] - 2026-08-30
 
 ### Changed
