@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.74.1] - 2026-08-30
+
+### Changed
+- Decouple DMC guidance from Homeboy
+
 ## [0.74.0] - 2026-08-30
 
 ### Added
