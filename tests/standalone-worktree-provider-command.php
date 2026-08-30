@@ -32,6 +32,7 @@ namespace {
 	standalone_provider_command_assert(false !== $expected, 'Standalone provider fixture is missing its executable.');
 	standalone_provider_command_assert($expected === $executable, 'Provider command did not resolve the executable from the DMC source contract.');
 	standalone_provider_command_assert(is_file($executable), 'Provider command returned a non-file executable.');
+	standalone_provider_command_assert(is_executable($executable), 'Provider command returned a file without executable packaging permissions.');
 
 	$command = new \DataMachineCode\Cli\Commands\WorkspaceCommand();
 	$command->__worktree_operation('provider', array(), array( 'format' => 'json' ));
@@ -39,6 +40,10 @@ namespace {
 	standalone_provider_command_assert('datamachine-code/standalone-worktree-provider-command/v1' === ( $payload['schema'] ?? null ), 'Provider command emitted an unexpected schema.');
 	standalone_provider_command_assert($executable === ( $payload['executable'] ?? null ), 'Provider command did not emit its resolved executable.');
 	standalone_provider_command_assert(in_array('plan', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone planning.');
+	standalone_provider_command_assert(in_array('primary-refresh', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone primary refresh.');
+	standalone_provider_command_assert('datamachine-code/primary-refresh/v1' === ($payload['capabilities']['primary_refresh_schema'] ?? null), 'Provider command capabilities omitted the primary refresh schema.');
+	standalone_provider_command_assert(true === ($payload['capabilities']['primary_refresh_mutating'] ?? null), 'Provider command did not identify primary refresh as mutating.');
+	standalone_provider_command_assert('origin' === ($payload['capabilities']['primary_refresh_remote'] ?? null), 'Provider command did not bind refresh to the canonical freshness remote.');
 	standalone_provider_command_assert(\DataMachineCode\Workspace\WorktreePlanEnvelope::SCHEMA === ($payload['capabilities']['plan_schema'] ?? null), 'Provider command capabilities omitted the plan schema.');
 
 	echo "standalone-worktree-provider-command: ok\n";

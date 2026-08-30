@@ -141,7 +141,9 @@ try {
 	standalone_provider_assert(json_validate($refresh_required['stdout']), 'Plan emitted invalid JSON: ' . $refresh_required['stdout'] . $refresh_required['stderr']);
 	$refresh_required_payload = json_decode($refresh_required['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert(1 === $refresh_required['status'] && 'freshness_refresh_required' === ($refresh_required_payload['code'] ?? null), 'Plan without freshness evidence did not fail closed.');
-	standalone_provider_assert(str_contains((string) ($refresh_required_payload['refresh_command'] ?? ''), 'git pull fixture --allow-primary-refresh'), 'Plan without freshness omitted the exact refresh command.');
+	standalone_provider_assert(! str_contains((string) ($refresh_required_payload['refresh_command'] ?? ''), 'wp '), 'Plan without freshness retained a WordPress-only refresh command.');
+	standalone_provider_assert(array( 'primary-refresh', realpath($root), 'fixture' ) === ($refresh_required_payload['refresh_action']['arguments'] ?? null), 'Plan without freshness omitted the canonical standalone refresh arguments.');
+	standalone_provider_assert($script === ($refresh_required_payload['refresh_action']['executable'] ?? null), 'Plan without freshness did not select the installed provider executable.');
 	$refs = standalone_provider_run(array( 'git', '-C', $primary, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes/origin' ));
 	\DataMachineCode\Workspace\WorktreeFreshnessEvidence::store($primary, array(
 		'version'            => 2,
