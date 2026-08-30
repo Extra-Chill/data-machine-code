@@ -81,7 +81,7 @@ MD;
 				return <<<MD
 ## Data Machine Code
 
-{$workspace_policy_intro}DMC owns authoritative repository, primary-checkout, worktree, and GitHub workspace state. Homeboy consumes DMC-managed worktrees for agent execution, deterministic gates, promotion, evidence, and publication.
+Data Machine Code provides repository, primary-checkout, worktree, and GitHub workspace management. {$workspace_policy_intro}
 
 **Default routing**
 - Inspect workspace state: `{$wp} datamachine-code workspace list`, `{$wp} datamachine-code workspace show <repo>`, or `{$wp} datamachine-code workspace hygiene`
@@ -99,7 +99,7 @@ Use `{$wp} datamachine-code workspace --help` and `{$wp} datamachine-code worksp
 MD;
 			}, array(
 				'label'       => 'Data Machine Code',
-				'description' => 'Authoritative workspace routing, lifecycle, and safety guidance.',
+				'description' => 'Data Machine Code workspace lifecycle, GitHub, and safety guidance.',
 				'owner'       => 'data-machine-code',
 				'freshness'   => 'snapshot',
 				'conditions'  => 'Always registered when Data Machine Code and composable memory section registration are available.',
@@ -108,7 +108,7 @@ MD;
 	}
 
 	private static function render_workspace_policy_intro( string $workspace_path ): string {
-		$default = "All code changes happen in Data Machine Code worktrees. The controller workspace root is `{$workspace_path}`. ";
+		$default = "When using Data Machine Code to manage code changes, work in a Data Machine Code worktree. The controller workspace root is `{$workspace_path}`. ";
 
 		/**
 		 * Filters the site-owned workspace policy sentence rendered before DMC command facts.
