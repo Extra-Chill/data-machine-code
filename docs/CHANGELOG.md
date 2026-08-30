@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.19] - 2026-08-30
+
+### Changed
+- Avoid workspace scan during worktree planning
+
 ## [0.72.18] - 2026-08-30
 
 ### Fixed
