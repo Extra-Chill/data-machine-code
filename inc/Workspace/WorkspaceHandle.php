@@ -58,6 +58,15 @@ final class WorkspaceHandle {
 		return $this->dir_name;
 	}
 
+	public static function slugify_branch( string $branch ): string {
+		$branch = trim($branch);
+		if ( '' === $branch ) {
+			return '';
+		}
+
+		return self::sanitize_slug(str_replace('/', '-', $branch));
+	}
+
 	/**
 	 * @return array{repo: string, branch_slug: string|null, is_worktree: bool, dir_name: string}
 	 */

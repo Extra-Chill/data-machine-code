@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 define('DATAMACHINE_CODE_STANDALONE', true);
+if ( ! defined('ABSPATH') ) {
+	define('ABSPATH', __DIR__ . '/');
+}
 require dirname(__DIR__) . '/vendor/autoload.php';
 
 function standalone_provider_assert( bool $condition, string $message ): void {
@@ -83,6 +86,9 @@ try {
 	standalone_provider_assert(0 === $capabilities['status'], 'Provider capabilities failed.');
 	standalone_provider_assert(array( 'task_url', 'task_ref' ) === $capabilities_payload['tracker_fields'], 'Provider capabilities did not advertise both generic tracker fields.');
 	standalone_provider_assert(in_array('task', $capabilities_payload['operations'], true), 'Provider capabilities did not advertise standalone task resolution.');
+	standalone_provider_assert(in_array('plan', $capabilities_payload['operations'], true), 'Provider capabilities did not advertise standalone planning.');
+	standalone_provider_assert('datamachine-code/worktree-plan/v1' === ($capabilities_payload['plan_schema'] ?? null), 'Provider capabilities did not advertise the plan schema.');
+	standalone_provider_assert(false === ($capabilities_payload['plan_mutating'] ?? null), 'Provider capabilities advertised planning as mutating.');
 	standalone_provider_assert('datamachine-code/worktree-task-resolution/v1' === $capabilities_payload['task_resolution_schema'], 'Provider capabilities did not advertise the task resolution schema.');
 	standalone_provider_assert(200 === $capabilities_payload['task_resolution_limit'], 'Provider capabilities did not advertise the complete task candidate limit.');
 	standalone_provider_assert('datamachine-code/workspace-worktree-attach-tracker' === $capabilities_payload['attachment_operation'], 'Provider capabilities did not advertise the managed attachment operation.');
@@ -125,6 +131,76 @@ try {
 	standalone_provider_assert('https://github.com/Example/Fixture/issues/1' === ($task_payload['task_url'] ?? null), 'Task resolution did not canonicalize the requested URL.');
 	standalone_provider_assert(array( $handle ) === array_column($task_payload['candidates'] ?? array(), 'handle'), 'Task resolution did not return the exact tracked worktree.');
 	standalone_provider_assert(false === ($task_payload['candidates'][0]['safety']['dirty'] ?? null) && false === ($task_payload['candidates'][0]['safety']['unpushed'] ?? null) && false === ($task_payload['candidates'][0]['safety']['primary'] ?? null), 'Task resolution did not include fresh clean safety evidence.');
+	$plan_intent = array(
+		'repo'     => 'fixture',
+		'branch'   => 'fix/planned-create',
+		'from'     => 'origin/main',
+		'task_url' => 'https://github.com/Example/Fixture/issues/planned-create',
+	);
+	$refresh_required = standalone_provider_run(array( PHP_BINARY, $script, 'plan', $root, json_encode($plan_intent, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) ));
+	standalone_provider_assert(json_validate($refresh_required['stdout']), 'Plan emitted invalid JSON: ' . $refresh_required['stdout'] . $refresh_required['stderr']);
+	$refresh_required_payload = json_decode($refresh_required['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert(1 === $refresh_required['status'] && 'freshness_refresh_required' === ($refresh_required_payload['code'] ?? null), 'Plan without freshness evidence did not fail closed.');
+	standalone_provider_assert(str_contains((string) ($refresh_required_payload['refresh_command'] ?? ''), 'git pull fixture --allow-primary-refresh'), 'Plan without freshness omitted the exact refresh command.');
+	$refs = standalone_provider_run(array( 'git', '-C', $primary, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes/origin' ));
+	\DataMachineCode\Workspace\WorktreeFreshnessEvidence::store($primary, array(
+		'version'            => 2,
+		'remote_refs_digest' => hash('sha256', $refs['stdout']),
+		'ref_heads'          => array(),
+		'observed_at'        => gmdate('c'),
+	));
+	$plan_snapshot = array();
+	foreach ( new FilesystemIterator($root, FilesystemIterator::SKIP_DOTS) as $entry ) {
+		$plan_snapshot[] = $entry->getBasename();
+	}
+	sort($plan_snapshot);
+	$create_plan = standalone_provider_run(array( PHP_BINARY, $script, 'plan', $root, json_encode($plan_intent, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) ));
+	$create_plan_payload = json_decode($create_plan['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	$after_plan = array();
+	foreach ( new FilesystemIterator($root, FilesystemIterator::SKIP_DOTS) as $entry ) {
+		$after_plan[] = $entry->getBasename();
+	}
+	sort($after_plan);
+	standalone_provider_assert(0 === $create_plan['status'] && $create_plan['elapsed'] < 1.0, 'Standalone create plan was not bounded: ' . $create_plan['stderr']);
+	standalone_provider_assert('datamachine-code/worktree-plan/v1' === ($create_plan_payload['schema'] ?? null), 'Create plan schema mismatch.');
+	standalone_provider_assert('create' === ($create_plan_payload['disposition'] ?? null) && 64 === strlen((string) ($create_plan_payload['digest'] ?? '')), 'Create plan was not digest-addressed.');
+	standalone_provider_assert('fixture@fix-planned-create' === ($create_plan_payload['handle'] ?? null) && ! is_dir($root . '/fixture@fix-planned-create'), 'Create plan mutated the destination.');
+	standalone_provider_assert($plan_snapshot === $after_plan, 'Create plan mutated the workspace filesystem.');
+	standalone_provider_assert(true === ($create_plan_payload['freshness']['verified'] ?? null), 'Create plan omitted verified freshness evidence.');
+	standalone_provider_assert(isset($create_plan_payload['capacity']['status'], $create_plan_payload['bootstrap_demand']['bytes']), 'Create plan omitted capacity or bootstrap-demand evidence.');
+	$rebuilt = \DataMachineCode\Workspace\WorktreePlanEnvelope::build(
+		(array) $create_plan_payload['apply_intent'],
+		(string) $create_plan_payload['handle'],
+		(string) $create_plan_payload['path'],
+		(string) $create_plan_payload['slug'],
+		(string) $create_plan_payload['disposition'],
+		array(
+			'freshness'        => $create_plan_payload['freshness'],
+			'capacity'         => $create_plan_payload['capacity'],
+			'bootstrap_demand' => $create_plan_payload['bootstrap_demand'],
+			'reuse_candidates' => $create_plan_payload['reuse_candidates'],
+			'ownership'        => $create_plan_payload['ownership'],
+			'legacy_handoff'   => $create_plan_payload['legacy_handoff'],
+		)
+	);
+	standalone_provider_assert($rebuilt['digest'] === $create_plan_payload['digest'], 'Standalone plan digest drifted from the shared envelope primitive.');
+	$existing_plan = standalone_provider_run(array( PHP_BINARY, $script, 'plan', $root, json_encode(array(
+		'repo'     => 'fixture',
+		'branch'   => 'fix/example',
+		'from'     => 'origin/main',
+		'task_url' => 'https://github.com/Example/Fixture/issues/1',
+	), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) ));
+	$existing_plan_payload = json_decode($existing_plan['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert('unsafe' === ($existing_plan_payload['disposition'] ?? null), 'Existing destination without reuse contract was not fail-closed.');
+	$owner_plan = standalone_provider_run(array( PHP_BINARY, $script, 'plan', $root, json_encode(array(
+		'repo'     => 'fixture',
+		'branch'   => 'fix/planned-owner',
+		'from'     => 'origin/main',
+		'task_url' => 'https://github.com/Example/Fixture/issues/1',
+	), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) ));
+	$owner_plan_payload = json_decode($owner_plan['stdout'], true, 512, JSON_THROW_ON_ERROR);
+	standalone_provider_assert('owner_conflict' === ($owner_plan_payload['disposition'] ?? null), 'Same-task reuse candidates did not produce owner_conflict.');
+	standalone_provider_assert(array( $handle ) === array_column($owner_plan_payload['reuse_candidates'] ?? array(), 'handle'), 'Plan reuse candidates did not retain the tracked owner.');
 	file_put_contents($path . '/task-dirty.txt', "dirty\n");
 	$dirty_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, 'https://github.com/Example/Fixture/issues/1' ));
 	$dirty_task_payload = json_decode($dirty_task['stdout'], true, 512, JSON_THROW_ON_ERROR);
@@ -132,6 +208,7 @@ try {
 	unlink($path . '/task-dirty.txt');
 	$primary_metadata = array( 'path' => $primary, 'origin_task' => array( 'task_url' => 'https://github.com/Example/Fixture/issues/1' ) );
 	standalone_provider_assert(true === \DataMachineCode\Workspace\WorktreeContextInjector::store_standalone_worktree_tracker($primary_metadata), 'Could not create ambiguous primary task ownership.');
+	file_put_contents($primary . '/.git/datamachine-code-task.json', json_encode(array( 'task_url' => 'https://github.com/Example/Fixture/issues/1' ), JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 	$ambiguous_task = standalone_provider_run(array( PHP_BINARY, $script, 'task', $root, 'https://github.com/Example/Fixture/issues/1' ));
 	$ambiguous_task_payload = json_decode($ambiguous_task['stdout'], true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_assert(array( 'fixture', $handle ) === array_column($ambiguous_task_payload['candidates'] ?? array(), 'handle'), 'Task resolution hid ambiguous ownership.');

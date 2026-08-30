@@ -23,6 +23,7 @@ namespace {
 
 	define('ABSPATH', __DIR__ . '/');
 	require_once dirname(__DIR__) . '/inc/Workspace/WorktreeContextInjector.php';
+	require_once dirname(__DIR__) . '/inc/Workspace/WorktreePlanEnvelope.php';
 	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 
@@ -37,6 +38,8 @@ namespace {
 	$payload = json_decode(WP_CLI::$output, true, 512, JSON_THROW_ON_ERROR);
 	standalone_provider_command_assert('datamachine-code/standalone-worktree-provider-command/v1' === ( $payload['schema'] ?? null ), 'Provider command emitted an unexpected schema.');
 	standalone_provider_command_assert($executable === ( $payload['executable'] ?? null ), 'Provider command did not emit its resolved executable.');
+	standalone_provider_command_assert(in_array('plan', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone planning.');
+	standalone_provider_command_assert(\DataMachineCode\Workspace\WorktreePlanEnvelope::SCHEMA === ($payload['capabilities']['plan_schema'] ?? null), 'Provider command capabilities omitted the plan schema.');
 
 	echo "standalone-worktree-provider-command: ok\n";
 }

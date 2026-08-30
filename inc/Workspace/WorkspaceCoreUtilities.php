@@ -364,13 +364,7 @@ trait WorkspaceCoreUtilities {
 	 * @return string Slug (empty if branch is invalid).
 	 */
 	public function slugify_branch( string $branch ): string {
-		$branch = trim($branch);
-		if ( '' === $branch ) {
-			return '';
-		}
-
-		$slug = str_replace('/', '-', $branch);
-		return $this->sanitize_slug($slug);
+		return WorkspaceHandle::slugify_branch($branch);
 	}
 
 	/**
@@ -482,19 +476,6 @@ trait WorkspaceCoreUtilities {
 			'stored_identity' => array_filter($stored, fn( $value ) => '' !== $value),
 			'detached_branch' => '' === (string) ( $wt['branch'] ?? '' ) && in_array('branch', $hydrated, true),
 		);
-	}
-
-	/**
-	 * Sanitize a branch slug. Allows alphanumerics, dots, dashes, underscores.
-	 *
-	 * @param  string $slug Raw slug.
-	 * @return string
-	 */
-	private function sanitize_slug( string $slug ): string {
-		$slug = preg_replace('/[^a-zA-Z0-9._-]/', '', $slug);
-		// Collapse runs of dashes for readability.
-		$slug = preg_replace('/-{2,}/', '-', (string) $slug);
-		return trim( (string) $slug, '-.');
 	}
 
 	/**
@@ -891,40 +872,51 @@ trait WorkspaceCoreUtilities {
 
 	/** Store the local remote-ref identity observed by an explicit primary refresh. */
 	protected function remember_primary_freshness_evidence( string $repo_path, string $handle ): void {
-		if ( ! function_exists('update_option') ) {
-			return;
-		}
-
 		$remote_refs = $this->primary_remote_refs_digest($repo_path);
 		$ref_heads   = $this->primary_remote_ref_heads($repo_path);
 		if ( null === $remote_refs || null === $ref_heads ) {
 			return;
 		}
 
+		$evidence = array(
+			'version'            => 2,
+			'remote_refs_digest' => $remote_refs,
+			'ref_heads'          => $ref_heads,
+			'observed_at'        => $this->primary_freshness_now(),
+		);
+		if ( ! class_exists(WorktreeFreshnessEvidence::class) ) {
+			require_once __DIR__ . '/WorktreeFreshnessEvidence.php';
+		}
+		WorktreeFreshnessEvidence::store($repo_path, $evidence);
+
+		if ( ! function_exists('update_option') ) {
+			return;
+		}
+
 		update_option(
 			$this->primary_freshness_option_name($handle),
-			array(
-				'version'            => 2,
-				'remote_refs_digest' => $remote_refs,
-				'ref_heads'          => $ref_heads,
-				'observed_at'        => $this->primary_freshness_now(),
-			)
+			$evidence
 		);
 	}
 
 	/** Return an explicit-refresh record only while its remote refs remain unchanged. */
 	protected function primary_freshness_evidence( string $repo_path, string $handle ): ?array {
-		if ( ! function_exists('get_option') ) {
-			return null;
-		}
-
-		$evidence = get_option($this->primary_freshness_option_name($handle));
-		if ( ! is_array($evidence) || ! in_array((int) ( $evidence['version'] ?? 0 ), array( 1, 2 ), true) || empty($evidence['remote_refs_digest']) ) {
-			return null;
-		}
-
 		$remote_refs = $this->primary_remote_refs_digest($repo_path);
-		return is_string($remote_refs) && hash_equals( (string) $evidence['remote_refs_digest'], $remote_refs ) ? $evidence : null;
+		if ( ! is_string($remote_refs) ) {
+			return null;
+		}
+
+		if ( function_exists('get_option') ) {
+			$evidence = get_option($this->primary_freshness_option_name($handle));
+			if ( is_array($evidence) && in_array((int) ( $evidence['version'] ?? 0 ), array( 1, 2 ), true) && ! empty($evidence['remote_refs_digest']) && hash_equals( (string) $evidence['remote_refs_digest'], $remote_refs ) ) {
+				return $evidence;
+			}
+		}
+
+		if ( ! class_exists(WorktreeFreshnessEvidence::class) ) {
+			require_once __DIR__ . '/WorktreeFreshnessEvidence.php';
+		}
+		return WorktreeFreshnessEvidence::matching($repo_path, $remote_refs);
 	}
 
 	/** Return a short-lived explicit-refresh proof for one exact remote ref. */

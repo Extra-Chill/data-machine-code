@@ -20,6 +20,15 @@ if ( ! class_exists(MacOSLsofProcessPathProbe::class) ) {
 if ( ! class_exists(WallClockBudget::class) ) {
 	require_once dirname(__DIR__) . '/Support/WallClockBudget.php';
 }
+if ( ! class_exists(WorktreePlanEnvelope::class) ) {
+	require_once __DIR__ . '/WorktreePlanEnvelope.php';
+}
+if ( ! class_exists(WorktreePlanDecision::class) ) {
+	require_once __DIR__ . '/WorktreePlanDecision.php';
+}
+if ( ! class_exists(WorktreePlanPolicy::class) ) {
+	require_once __DIR__ . '/WorktreePlanPolicy.php';
+}
 
 trait WorkspaceWorktreeLifecycle {
 
@@ -91,11 +100,22 @@ trait WorkspaceWorktreeLifecycle {
 
 		$handle                              = $repo . '@' . $slug;
 		$path                                = $this->workspace_path . '/' . $handle;
-		$input                               = $this->capacity_add_intent($repo, $branch, $from, $inject_context, $bootstrap, $allow_stale, $rebase_base, $task, $intent, $reuse_policy);
-		$input['allow_unverified_freshness'] = $allow_unverified_freshness;
-		$input['require_task_tracker']       = $require_task_tracker;
-		$input['force']                      = $force;
-		$input['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
+		$input = WorktreePlanPolicy::apply_intent(
+			$repo,
+			$branch,
+			$from,
+			$inject_context,
+			$bootstrap,
+			$allow_stale,
+			$rebase_base,
+			$task,
+			$intent,
+			$reuse_policy,
+			$allow_unverified_freshness,
+			$require_task_tracker,
+			$force,
+			$allow_percentage_byte_floor_exception
+		);
 
 		if ( is_dir($path) ) {
 			$inspection = $this->worktree_get($handle, array(
@@ -112,7 +132,7 @@ trait WorkspaceWorktreeLifecycle {
 			$metadata      = is_array($existing['metadata'] ?? null) ? $existing['metadata'] : array();
 			$contract      = is_array($metadata['reuse_contract'] ?? null) ? $metadata['reuse_contract'] : array();
 			$stored_intent = WorktreeContextInjector::normalize_disposable_intent($contract + $metadata);
-			$exact         = ( $existing['branch'] ?? null ) === $branch
+			$exact          = ( $existing['branch'] ?? null ) === $branch
 				&& 0 === (int) ( $existing['dirty'] ?? 0 )
 				&& 0 === (int) ( $existing['unpushed'] ?? 0 )
 				&& array() !== $contract
@@ -121,14 +141,13 @@ trait WorkspaceWorktreeLifecycle {
 				&& (bool) ( $contract['bootstrap'] ?? null ) === $bootstrap
 				&& $this->worktree_reuse_task_identity($task) === $this->worktree_reuse_task_identity( (array) ( $existing['task'] ?? array() ))
 				&& $intent === $stored_intent;
-			$disposition   = $exact ? 'exact_reuse' : ( null !== WorktreeContextInjector::get_creation_intent($handle) && array() === $contract ? 'adoptable' : 'unsafe' );
-			if ( $exact && WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && empty($intent['owner_run_ref']) ) {
-				$disposition = 'owner_conflict';
-			}
 			$legacy_handoff = $this->legacy_handoff_plan($existing, $repo, $task, $intent, $inject_context, $bootstrap);
-			if ( 'legacy_handoff_required' === ( $legacy_handoff['status'] ?? null ) ) {
-				$disposition = 'legacy_handoff_required';
-			}
+			$disposition    = WorktreePlanDecision::existing(
+				$exact,
+				$exact && WorktreeContextInjector::LIVENESS_LIVE === ( $existing['liveness'] ?? null ) && empty($intent['owner_run_ref']),
+				null !== WorktreeContextInjector::get_creation_intent($handle) && array() === $contract,
+				$legacy_handoff
+			);
 			return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array(
 				'destination'    => $existing,
 				'ownership'      => $stored_intent,
@@ -191,19 +210,9 @@ trait WorkspaceWorktreeLifecycle {
 		$demand_plan = WorktreeDemandCalibration::forecast($repo, $demand_plan);
 		$demand_plan['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
 		$disk_budget = $this->inspect_worktree_capacity($repo, $branch, $force, $demand_plan);
-		$candidates  = $this->worktree_reuse_candidates($repo, $task);
-		$disposition = 'create';
-		if ( 'refused' === ( $disk_budget['status'] ?? '' ) ) {
-			$disposition = 'capacity_blocked';
-		} elseif ( array() !== $candidates && 'isolated' !== $reuse_policy ) {
-			$disposition = 'owner_conflict';
-		} elseif ( array() !== $candidates && ( null === WorktreeContextInjector::normalize_scalar_metadata_value($intent['purpose'] ?? null) || null === WorktreeContextInjector::normalize_scalar_metadata_value($intent['owner_run_ref'] ?? null) || WorktreeContextInjector::CLEANUP_POLICY_REMOVE_ON_SUCCESS !== ( $intent['cleanup_policy'] ?? null ) ) ) {
-			$disposition = 'unsafe';
-		}
+		$candidates     = $this->worktree_reuse_candidates($repo, $task);
 		$legacy_handoff = $this->legacy_handoff_plan_for_candidates($repo, $candidates, $task, $intent, $inject_context, $bootstrap);
-		if ( 'legacy_handoff_required' === ( $legacy_handoff['status'] ?? null ) ) {
-			$disposition = 'legacy_handoff_required';
-		}
+		$disposition    = WorktreePlanDecision::create($disk_budget, $candidates, $reuse_policy, $intent, $legacy_handoff);
 		return $this->worktree_plan_result($input, $handle, $path, $slug, $disposition, array(
 			'freshness'        => $freshness,
 			'capacity'         => $disk_budget,
@@ -978,125 +987,12 @@ trait WorkspaceWorktreeLifecycle {
 
 	/** @return array<string,mixed> */
 	private function worktree_plan_result( array $input, string $handle, string $path, string $slug, string $disposition, array $evidence ): array {
-		$plan           = array(
-			'version'      => 1,
-			'handle'       => $handle,
-			'path'         => $path,
-			'branch'       => $input['branch'],
-			'slug'         => $slug,
-			'disposition'  => $disposition,
-			'apply_intent' => $input,
-		) + $evidence;
-		$digest_plan    = array(
-			'version'          => $plan['version'],
-			'handle'           => $handle,
-			'path'             => $path,
-			'branch'           => $input['branch'],
-			'disposition'      => $disposition,
-			'apply_intent'     => $input,
-			'freshness'        => array(
-				'verified'    => $plan['freshness']['verified'] ?? null,
-				'identity'    => $plan['freshness']['identity'] ?? null,
-				'target_ref'  => $plan['freshness']['target_ref'] ?? null,
-				'target_head' => $plan['freshness']['target_head'] ?? null,
-			),
-			'capacity'         => $this->worktree_plan_capacity_identity((array) ( $plan['capacity'] ?? array() )),
-			'bootstrap_demand' => $plan['bootstrap_demand'] ?? null,
-			'destination'      => $plan['destination'] ?? null,
-			'ownership'        => $plan['ownership'] ?? null,
-			'reuse_candidates' => $plan['reuse_candidates'] ?? null,
-			'legacy_handoff'   => $plan['legacy_handoff'] ?? null,
-		);
-		$digest_json    = wp_json_encode($this->worktree_plan_sort($digest_plan));
-		$plan['digest'] = hash('sha256', is_string($digest_json) ? $digest_json : '');
-		$plan['apply']  = array(
-			'ability' => 'datamachine-code/workspace-worktree-apply-plan',
-			'intent'  => array(
-				'digest'       => $plan['digest'],
-				'apply_intent' => $input,
-			),
-		);
-		return $plan;
-	}
-
-	/** Bind the measured admission decision while tolerating bounded ambient capacity drift. */
-	private function worktree_plan_capacity_identity( array $capacity ): array {
-		$exception           = (array) ( $capacity['admission_exception'] ?? array() );
-		$projected_exception = (array) ( $exception['projected_post_create_capacity'] ?? array() );
-		$bind_measurements    = ! empty($exception['operator_intent']);
-		if ( $bind_measurements && array() !== $projected_exception ) {
-			$exception['projected_post_create_capacity'] = array(
-				'free_bytes'  => $this->worktree_plan_capacity_measurement($projected_exception['free_bytes'] ?? null, 64 * 1024 * 1024),
-				'free_inodes' => $this->worktree_plan_capacity_measurement($projected_exception['free_inodes'] ?? null, 1000000),
-			);
-		} else {
-			unset($exception['projected_post_create_capacity']);
-		}
-
-		$identity = array(
-			'status'                       => $capacity['status'] ?? null,
-			'creation_allowed'             => $capacity['creation_allowed'] ?? null,
-			'filesystem_total_bytes'       => $capacity['filesystem_total_bytes'] ?? null,
-			'refuse_free_bytes'            => $capacity['refuse_free_bytes'] ?? null,
-			'refuse_percent_bytes_floor'   => $capacity['refuse_percent_bytes_floor'] ?? null,
-			'effective_refuse_bytes'       => $capacity['effective_refuse_bytes'] ?? null,
-			'refuse_free_inodes'           => $capacity['refuse_free_inodes'] ?? null,
-			'refuse_percent_inode_floor'   => $capacity['refuse_percent_inode_floor'] ?? null,
-			'effective_refuse_inodes'      => $capacity['effective_refuse_inodes'] ?? null,
-			'trigger_reasons'              => $capacity['trigger_reasons'] ?? null,
-			'typed_trigger_reasons'        => $capacity['typed_trigger_reasons'] ?? null,
-			'admission_exception'          => $exception,
-			'force_override_required'      => $capacity['force_override_required'] ?? null,
-			'force_override_applied'       => $capacity['force_override_applied'] ?? null,
-			'worktree_count'               => $capacity['worktree_count'] ?? null,
-		);
-		if ( $bind_measurements ) {
-			$identity['filesystem_free_bytes']  = $this->worktree_plan_capacity_measurement($capacity['filesystem_free_bytes'] ?? null, 64 * 1024 * 1024);
-			$identity['projected_free_bytes']   = $this->worktree_plan_capacity_measurement($capacity['projected_free_bytes'] ?? null, 64 * 1024 * 1024);
-			$identity['filesystem_free_inodes'] = $this->worktree_plan_capacity_measurement($capacity['filesystem_free_inodes'] ?? null, 1000000);
-			$identity['projected_free_inodes']  = $this->worktree_plan_capacity_measurement($capacity['projected_free_inodes'] ?? null, 1000000);
-		}
-		return $identity;
-	}
-
-	private function worktree_plan_capacity_measurement( mixed $value, int $quantum ): mixed {
-		if ( ! is_numeric($value) ) {
-			return $value;
-		}
-		$value = (int) $value;
-		return abs($value) < $quantum ? $value : intdiv($value, $quantum);
+		return WorktreePlanEnvelope::build($input, $handle, $path, $slug, $disposition, $evidence);
 	}
 
 	/** Identify normalized evidence sections that invalidated a reviewed plan. */
 	private function worktree_plan_changed_sections( array $expected, array $actual ): array {
-		$sections = array(
-			'apply_intent'     => array( $expected['apply_intent'] ?? null, $actual['apply_intent'] ?? null ),
-			'freshness'        => array(
-				array_intersect_key((array) ( $expected['freshness'] ?? array() ), array_flip(array( 'verified', 'identity', 'target_ref', 'target_head' ))),
-				array_intersect_key((array) ( $actual['freshness'] ?? array() ), array_flip(array( 'verified', 'identity', 'target_ref', 'target_head' ))),
-			),
-			'capacity'         => array( $this->worktree_plan_capacity_identity((array) ( $expected['capacity'] ?? array() )), $this->worktree_plan_capacity_identity((array) ( $actual['capacity'] ?? array() )) ),
-			'bootstrap_demand' => array( $expected['bootstrap_demand'] ?? null, $actual['bootstrap_demand'] ?? null ),
-			'destination'      => array( $expected['destination'] ?? null, $actual['destination'] ?? null ),
-			'ownership'        => array( $expected['ownership'] ?? null, $actual['ownership'] ?? null ),
-			'reuse_candidates' => array( $expected['reuse_candidates'] ?? null, $actual['reuse_candidates'] ?? null ),
-			'legacy_handoff'   => array( $expected['legacy_handoff'] ?? null, $actual['legacy_handoff'] ?? null ),
-		);
-
-		return array_keys(array_filter($sections, static fn( array $pair ): bool => $pair[0] !== $pair[1]));
-	}
-
-	private function worktree_plan_sort( mixed $value ): mixed {
-		if ( ! is_array($value) ) {
-			return $value;
-		}
-		foreach ( $value as $key => $item ) {
-			$value[ $key ] = $this->worktree_plan_sort($item);
-		}
-		if ( array_keys($value) !== range(0, count($value) - 1) ) {
-			ksort($value);
-		}
-		return $value;
+		return WorktreePlanEnvelope::changed_sections($expected, $actual);
 	}
 
 

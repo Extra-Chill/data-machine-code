@@ -9,6 +9,25 @@ namespace DataMachineCode\Workspace;
 
 defined('ABSPATH') || defined('DATAMACHINE_CODE_STANDALONE') || exit;
 
+if ( ! class_exists(WorktreePlanEnvelope::class) ) {
+	require_once __DIR__ . '/WorktreePlanEnvelope.php';
+}
+if ( ! class_exists(WorktreePlanDecision::class) ) {
+	require_once __DIR__ . '/WorktreePlanDecision.php';
+}
+if ( ! class_exists(WorktreePlanPolicy::class) ) {
+	require_once __DIR__ . '/WorktreePlanPolicy.php';
+}
+if ( ! class_exists(WorktreeFreshnessEvidence::class) ) {
+	require_once __DIR__ . '/WorktreeFreshnessEvidence.php';
+}
+if ( ! class_exists(WorktreeTargetTreeDemand::class) ) {
+	require_once __DIR__ . '/WorktreeTargetTreeDemand.php';
+}
+if ( ! class_exists(WorktreeDiskBudget::class) ) {
+	require_once __DIR__ . '/WorktreeDiskBudget.php';
+}
+
 final class StandaloneWorktreeProvider {
 
 	private const IDENTITY_SCHEMA = 'datamachine-code/worktree-identity/v1';
@@ -26,9 +45,13 @@ final class StandaloneWorktreeProvider {
 	public function capabilities(): array {
 		return array(
 			'schema'                => self::CAPABILITIES_SCHEMA,
-			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge' ),
+			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge', 'plan' ),
 			'identity_schema'       => self::IDENTITY_SCHEMA,
 			'task_resolution_schema' => self::TASK_SCHEMA,
+			'plan_schema'           => WorktreePlanEnvelope::SCHEMA,
+			'plan_dispositions'     => array( 'create', 'exact_reuse', 'adoptable', 'legacy_handoff_required', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ),
+			'plan_apply_ability'    => WorktreePlanEnvelope::APPLY_ABILITY,
+			'plan_mutating'         => false,
 			'task_resolution_limit' => self::TASK_MAX_MATCHES,
 			'tracker_fields'        => array( 'task_url', 'task_ref' ),
 			'attachment_operation'  => 'datamachine-code/workspace-worktree-attach-tracker',
@@ -41,6 +64,104 @@ final class StandaloneWorktreeProvider {
 			'attachment_standalone' => false,
 			'authorization_bearing' => false,
 		);
+	}
+
+	/**
+	 * Produce a non-mutating, digest-addressed allocation plan without WordPress.
+	 *
+	 * @param array<string,mixed> $input
+	 * @return array<string,mixed>
+	 */
+	public function plan( string $workspace, array $input ): array {
+		$started        = microtime(true);
+		$workspace_real = realpath($workspace);
+		if ( false === $workspace_real || ! is_dir($workspace_real) ) {
+			return $this->error('workspace_not_found', 'The canonical workspace root does not exist.', $started);
+		}
+
+		$repo   = trim((string) ( $input['repo'] ?? '' ));
+		$branch = trim((string) ( $input['branch'] ?? '' ));
+		$parsed = WorkspaceHandle::parse($repo)->to_array();
+		if ( '' === $repo || $repo !== $parsed['dir_name'] || $parsed['is_worktree'] || '' === $branch ) {
+			return $this->error('invalid_worktree_intent', 'Repository name and branch are required.', $started);
+		}
+
+		$from                                  = array_key_exists('from', $input) ? (string) $input['from'] : null;
+		$inject_context                        = array_key_exists('inject_context', $input) ? (bool) $input['inject_context'] : true;
+		$bootstrap                             = array_key_exists('bootstrap', $input) ? (bool) $input['bootstrap'] : true;
+		$allow_stale                           = ! empty($input['allow_stale']);
+		$rebase_base                           = ! empty($input['rebase_base']);
+		$force                                 = ! empty($input['force']);
+		$allow_unverified_freshness            = ! empty($input['allow_unverified_freshness']);
+		$require_task_tracker                  = array_key_exists('require_task_tracker', $input) ? (bool) $input['require_task_tracker'] : true;
+		$allow_percentage_byte_floor_exception = ! empty($input['allow_percentage_byte_floor_exception']);
+		$reuse_policy                          = strtolower(trim(isset($input['reuse_policy']) ? (string) $input['reuse_policy'] : 'reuse_compatible'));
+		$task_input                            = is_array($input['task'] ?? null) ? $input['task'] : $input;
+		$task                                  = WorktreePlanPolicy::normalize_task(
+			array_filter(
+				array(
+					'task_url' => $task_input['task_url'] ?? null,
+					'task_ref' => $task_input['task_ref'] ?? null,
+				),
+				static fn( mixed $value ): bool => is_string($value) && '' !== trim($value)
+			)
+		);
+		$intent_input = is_array($input['intent'] ?? null) ? $input['intent'] : $input;
+		$intent       = array();
+		foreach ( array( 'purpose', 'owner_run_ref', 'cleanup_policy' ) as $key ) {
+			if ( array_key_exists($key, $intent_input) ) {
+				$intent[ $key ] = $intent_input[ $key ];
+			}
+		}
+
+		if ( ! in_array($reuse_policy, WorktreePlanPolicy::REUSE_POLICIES, true) ) {
+			return $this->error('invalid_worktree_reuse_policy', 'reuse_policy must be one of: ' . implode(', ', WorktreePlanPolicy::REUSE_POLICIES) . '.', $started);
+		}
+		if ( $force && $allow_percentage_byte_floor_exception ) {
+			return $this->error('worktree_capacity_policy_conflict', '--force bypasses capacity admission; use it separately from --allow-percentage-byte-floor.', $started);
+		}
+		if ( array_key_exists('cleanup_policy', $intent) && null === WorktreePlanPolicy::normalize_cleanup_policy($intent['cleanup_policy']) ) {
+			return $this->error('invalid_cleanup_policy', 'cleanup_policy must be one of: ' . implode(', ', WorktreePlanPolicy::CLEANUP_POLICIES) . '.', $started);
+		}
+		$intent = WorktreePlanPolicy::normalize_intent($intent);
+		if ( $require_task_tracker && array() === $task ) {
+			return $this->error('worktree_task_tracker_required', 'Refusing to plan a managed worktree without a valid task URL or task reference.', $started);
+		}
+
+		$slug = WorkspaceHandle::slugify_branch($branch);
+		if ( '' === $slug ) {
+			return $this->error('invalid_branch', sprintf('Branch "%s" produced an empty slug.', $branch), $started);
+		}
+
+		$primary_path = $workspace_real . DIRECTORY_SEPARATOR . $parsed['dir_name'];
+		if ( ! is_dir($primary_path) || ( ! is_dir($primary_path . '/.git') && ! is_file($primary_path . '/.git') ) ) {
+			return $this->error('primary_not_found', sprintf('Primary checkout for "%s" does not exist. Clone it first.', $repo), $started);
+		}
+
+		$handle = $repo . '@' . $slug;
+		$path   = $workspace_real . '/' . $handle;
+		$apply  = WorktreePlanPolicy::apply_intent(
+			$repo,
+			$branch,
+			$from,
+			$inject_context,
+			$bootstrap,
+			$allow_stale,
+			$rebase_base,
+			$task,
+			$intent,
+			$reuse_policy,
+			$allow_unverified_freshness,
+			$require_task_tracker,
+			$force,
+			$allow_percentage_byte_floor_exception
+		);
+
+		if ( is_dir($path) ) {
+			return $this->plan_existing_destination($workspace_real, $apply, $handle, $path, $slug, $branch, $started);
+		}
+
+		return $this->plan_create($workspace_real, $primary_path, $apply, $handle, $path, $slug, $repo, $branch, $from, $bootstrap, $allow_stale, $rebase_base, $force, $allow_percentage_byte_floor_exception, $reuse_policy, $task, $intent, $started);
 	}
 
 	/**
@@ -272,6 +393,351 @@ final class StandaloneWorktreeProvider {
 		} finally {
 			$this->release_convergence_lock($lock);
 		}
+	}
+
+	/**
+	 * @param array<string,mixed> $apply
+	 * @return array<string,mixed>
+	 */
+	private function plan_existing_destination(
+		string $workspace,
+		array $apply,
+		string $handle,
+		string $path,
+		string $slug,
+		string $branch,
+		float $started
+	): array {
+		$identity = $this->resolve_identity($workspace, $handle);
+		if ( 'owned' !== ( $identity['status'] ?? '' ) ) {
+			return $this->error('worktree_plan_unsafe', 'The planned destination exists but cannot be safely inspected.', $started);
+		}
+		$safety = $this->attest_safety($workspace, (string) $identity['token']);
+		if ( 'error' === ( $safety['status'] ?? '' ) || true !== ( $safety['fresh'] ?? false ) ) {
+			return $this->error('worktree_plan_unsafe', 'The planned destination exists but cannot be safely inspected.', $started);
+		}
+
+		$existing = array(
+			'handle'   => $identity['handle'],
+			'path'     => $identity['path'],
+			'branch'   => $identity['branch'],
+			'dirty'    => ! empty($safety['dirty']) ? 1 : 0,
+			'unpushed' => ! empty($safety['unpushed']) ? 1 : 0,
+			'task'     => array_filter(
+				array(
+					'task_url' => $identity['task_url'] ?? null,
+					'task_ref' => $identity['task_ref'] ?? null,
+				),
+				static fn( mixed $value ): bool => null !== $value
+			),
+			'metadata' => array(),
+			'liveness' => 'unknown',
+		);
+		$plan     = WorktreePlanEnvelope::build(
+			$apply,
+			$handle,
+			$path,
+			$slug,
+			WorktreePlanDecision::existing($identity['branch'] === $branch && 0 === (int) $existing['dirty'] && 0 === (int) $existing['unpushed'] && array() !== (array) ( $existing['metadata']['reuse_contract'] ?? array() ), false, false, null),
+			array(
+				'destination'    => $existing,
+				'ownership'      => array(),
+				'legacy_handoff' => null,
+			)
+		);
+		$plan['latency_ms'] = $this->elapsed_ms($started);
+		return $plan;
+	}
+
+	/**
+	 * @param array<string,mixed> $apply
+	 * @param array<string,mixed> $task
+	 * @param array<string,mixed> $intent
+	 * @return array<string,mixed>
+	 */
+	private function plan_create(
+		string $workspace,
+		string $primary_path,
+		array $apply,
+		string $handle,
+		string $path,
+		string $slug,
+		string $repo,
+		string $branch,
+		?string $from,
+		bool $bootstrap,
+		bool $allow_stale,
+		bool $rebase_base,
+		bool $force,
+		bool $allow_percentage_byte_floor_exception,
+		string $reuse_policy,
+		array $task,
+		array $intent,
+		float $started
+	): array {
+		$exists_local = $this->run_git($primary_path, array( 'show-ref', '--verify', '--quiet', 'refs/heads/' . $branch ));
+		$target_ref   = $exists_local['success'] ? 'refs/heads/' . $branch : ( is_string($from) && '' !== trim($from) ? trim($from) : $this->default_base($primary_path) );
+		$remote_refs  = $this->remote_refs_digest($primary_path);
+		$identity     = $this->freshness_identity($primary_path, $target_ref, $remote_refs);
+		$evidence     = is_string($remote_refs) ? WorktreeFreshnessEvidence::matching($primary_path, $remote_refs) : null;
+		if ( null === $evidence || null === $identity ) {
+			$refresh_command = sprintf('wp datamachine-code workspace git pull %s --allow-primary-refresh', $repo);
+			return array_merge(
+				$this->error(
+					'freshness_refresh_required',
+					sprintf('Refusing to plan worktree creation without verified freshness evidence. Refresh the primary explicitly with `%s`, then re-run this plan.', $refresh_command),
+					$started
+				),
+				array(
+					'refresh_command' => $refresh_command,
+					'freshness'       => array(
+						'status'     => 'refresh_required',
+						'verified'   => false,
+						'target_ref' => $target_ref,
+					),
+				)
+			);
+		}
+
+		$freshness = array(
+			'verified'    => true,
+			'evidence'    => $evidence,
+			'identity'    => $identity,
+			'target_ref'  => $target_ref,
+			'target_head' => $identity['target_head'],
+		);
+		$demand_target_ref = $target_ref;
+		if ( ! $allow_stale && ! $rebase_base ) {
+			$stale = $this->stale_against_default($primary_path, $target_ref);
+			if ( is_array($stale) && 'stale' === ( $stale['disposition'] ?? '' ) ) {
+				$plan = WorktreePlanEnvelope::build($apply, $handle, $path, $slug, 'stale', array(
+					'freshness' => $freshness,
+					'safety'    => array(
+						'code'    => 'worktree_behind_default_branch',
+						'message' => (string) ( $stale['message'] ?? 'The planned ref is behind the remote default branch.' ),
+					),
+				));
+				$plan['latency_ms'] = $this->elapsed_ms($started);
+				return $plan;
+			}
+			if ( is_array($stale) && 'fast_forwardable' === ( $stale['status'] ?? '' ) ) {
+				$freshness['default_branch_update'] = $stale;
+				$demand_target_ref                   = (string) $stale['default_branch_ref'];
+			}
+		}
+
+		$demand_plan = $this->bootstrap_demand($primary_path, $demand_target_ref, $bootstrap);
+		if ( isset($demand_plan['status']) && 'error' === $demand_plan['status'] ) {
+			$demand_plan['latency_ms'] = $this->elapsed_ms($started);
+			return $demand_plan;
+		}
+		$demand_plan['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
+		$capacity   = $this->capacity_budget($workspace, $repo, $branch, $force, $demand_plan);
+		$candidates = $this->reuse_candidates($workspace, $task);
+		$plan       = WorktreePlanEnvelope::build($apply, $handle, $path, $slug, WorktreePlanDecision::create($capacity, $candidates, $reuse_policy, $intent, null), array(
+			'freshness'        => $freshness,
+			'capacity'         => $capacity,
+			'bootstrap_demand' => $demand_plan,
+			'reuse_candidates' => $candidates,
+			'ownership'        => $intent,
+			'legacy_handoff'   => null,
+		));
+		$plan['latency_ms'] = $this->elapsed_ms($started);
+		return $plan;
+	}
+
+	private function default_base( string $primary_path ): string {
+		$result = $this->run_git($primary_path, array( 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD' ));
+		$ref    = $result['success'] ? trim($result['stdout']) : '';
+		return '' !== $ref ? $ref : 'HEAD';
+	}
+
+	private function remote_refs_digest( string $primary_path ): ?string {
+		$refs = $this->run_git($primary_path, array( 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes/origin' ));
+		return $refs['success'] ? hash('sha256', $refs['stdout']) : null;
+	}
+
+	/**
+	 * @return array{target_ref:string,target_head:string,remote_refs_digest:string}|null
+	 */
+	private function freshness_identity( string $primary_path, string $target_ref, ?string $remote_refs ): ?array {
+		$target = $this->run_git($primary_path, array( 'rev-parse', '--verify', $target_ref . '^{commit}' ));
+		$head   = $target['success'] ? trim($target['stdout']) : '';
+		if ( '' === $head || null === $remote_refs ) {
+			return null;
+		}
+		return array(
+			'target_ref'         => $target_ref,
+			'target_head'        => $head,
+			'remote_refs_digest' => $remote_refs,
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function stale_against_default( string $primary_path, string $ref ): ?array {
+		$default = $this->default_base($primary_path);
+		if ( 'HEAD' === $default ) {
+			return null;
+		}
+		$behind = $this->rev_count($primary_path, $ref . '..' . $default);
+		if ( null === $behind || 0 === $behind ) {
+			return null;
+		}
+		$ahead = $this->rev_count($primary_path, $default . '..' . $ref);
+		if ( 0 === $ahead ) {
+			return array(
+				'status'             => 'fast_forwardable',
+				'commits'            => $behind,
+				'default_branch_ref' => $default,
+			);
+		}
+		return array(
+			'disposition' => 'stale',
+			'message'     => sprintf('Worktree base for branch is %d commits behind the remote default branch %s. Refusing to create a stale worktree.', $behind, $default),
+		);
+	}
+
+	private function rev_count( string $path, string $range ): ?int {
+		$result = $this->run_git($path, array( 'rev-list', '--count', $range ));
+		$count  = trim($result['stdout']);
+		return $result['success'] && '' !== $count && ctype_digit($count) ? (int) $count : null;
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private function bootstrap_demand( string $primary_path, string $target_ref, bool $bootstrap ): array {
+		$commit = $this->run_git($primary_path, array( 'rev-parse', '--verify', $target_ref . '^{commit}' ));
+		$sha    = $commit['success'] ? trim($commit['stdout']) : '';
+		if ( 1 !== preg_match('/^[0-9a-f]{40,64}$/D', $sha) ) {
+			return $this->error('worktree_target_ref_invalid', sprintf('Could not resolve target ref "%s" before capacity admission.', $target_ref), microtime(true));
+		}
+		$blobless = $this->is_blobless_partial_clone($primary_path);
+		$tree     = $this->run_git($primary_path, array_merge(
+			array( 'ls-tree', '-r', '-t' ),
+			$blobless ? array() : array( '-l' ),
+			array( '-z', '--full-tree', $sha )
+		));
+		if ( ! $tree['success'] ) {
+			return $this->error('worktree_target_tree_unavailable', 'Target tree inspection did not return parseable output.', microtime(true));
+		}
+		return WorktreeTargetTreeDemand::assemble(
+			WorktreeTargetTreeDemand::parse($tree['stdout']),
+			$target_ref,
+			$sha,
+			$bootstrap,
+			$blobless,
+			WorktreeTargetTreeDemand::BLOBLESS_TRACKED_ENTRY_BYTES,
+			WorktreeTargetTreeDemand::DEFAULTS
+		);
+	}
+
+	private function is_blobless_partial_clone( string $primary_path ): bool {
+		$config = $this->run_git($primary_path, array( 'config', '--get-regexp', '^remote\..*\.(promisor|partialclonefilter)$' ));
+		if ( ! $config['success'] || '' === trim($config['stdout']) ) {
+			return false;
+		}
+		$remotes = array();
+		foreach ( preg_split('/\r?\n/', $config['stdout']) ?: array() as $line ) {
+			if ( 1 !== preg_match('/^remote\.([A-Za-z0-9._-]+)\.(promisor|partialclonefilter)\s+(.+)$/D', $line, $matches) ) {
+				continue;
+			}
+			$remotes[ $matches[1] ][ $matches[2] ] = strtolower(trim($matches[3]));
+		}
+		foreach ( $remotes as $remote ) {
+			if ( in_array($remote['promisor'] ?? '', array( 'true', 'yes', 'on', '1' ), true) && 'blob:none' === ( $remote['partialclonefilter'] ?? '' ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * @param array<string,mixed> $demand_plan
+	 * @return array<string,mixed>
+	 */
+	private function capacity_budget( string $workspace, string $repo, string $branch, bool $force, array $demand_plan ): array {
+		$free_bytes  = is_dir($workspace) ? disk_free_space($workspace) : false;
+		$total_bytes = is_dir($workspace) ? disk_total_space($workspace) : false;
+		$count       = 0;
+		$entries     = is_dir($workspace) ? scandir($workspace) : false;
+		if ( is_array($entries) ) {
+			foreach ( $entries as $entry ) {
+				if ( '.' !== $entry && '..' !== $entry && str_contains($entry, '@') ) {
+					++$count;
+				}
+			}
+		}
+		return WorktreeDiskBudget::evaluate(
+			array(
+				'workspace_path'            => $workspace,
+				'free_bytes'                => is_float($free_bytes) ? (int) $free_bytes : null,
+				'total_bytes'               => is_float($total_bytes) ? (int) $total_bytes : null,
+				'worktree_count'            => $count,
+				'total_inodes'              => null,
+				'free_inodes'               => null,
+				'inode_probe'               => 'unavailable',
+				'workspace_usage_probe'     => 'disabled',
+				'workspace_allocated_bytes' => null,
+			),
+			WorktreeDiskBudget::thresholds($repo, $branch),
+			$force,
+			$demand_plan
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $task
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function reuse_candidates( string $workspace, array $task ): array {
+		$task_identity = WorktreePlanPolicy::task_identity($task);
+		if ( '' === $task_identity ) {
+			return array();
+		}
+		$candidates = array();
+		$scanned    = 0;
+		foreach ( new \FilesystemIterator($workspace, \FilesystemIterator::SKIP_DOTS) as $entry ) {
+			if ( ++$scanned > self::TASK_MAX_ENTRIES ) {
+				break;
+			}
+			if ( ! $entry->isDir() || $entry->isLink() ) {
+				continue;
+			}
+			$identity = $this->resolve_identity($workspace, $entry->getBasename());
+			$candidate_task = array_filter(
+				array(
+					'task_url' => $identity['task_url'] ?? null,
+					'task_ref' => $identity['task_ref'] ?? null,
+				),
+				static fn( mixed $value ): bool => null !== $value
+			);
+			if ( 'owned' !== ( $identity['status'] ?? '' ) || $task_identity !== WorktreePlanPolicy::task_identity($candidate_task) ) {
+				continue;
+			}
+			if ( true === ( $identity['primary'] ?? false ) ) {
+				continue;
+			}
+			$safety = $this->attest_safety($workspace, (string) $identity['token']);
+			if ( 'error' === ( $safety['status'] ?? '' ) || true !== ( $safety['fresh'] ?? false ) ) {
+				continue;
+			}
+			$candidates[] = array(
+				'handle'   => $identity['handle'],
+				'path'     => $identity['path'],
+				'branch'   => $identity['branch'],
+				'dirty'    => ! empty($safety['dirty']) ? 1 : 0,
+				'unpushed' => ! empty($safety['unpushed']) ? 1 : 0,
+				'task'     => $candidate_task,
+			);
+			if ( count($candidates) >= WorktreePlanPolicy::SAME_TASK_CANDIDATE_LIMIT ) {
+				break;
+			}
+		}
+		usort($candidates, static fn( array $left, array $right ): int => strcmp((string) $left['handle'], (string) $right['handle']));
+		return $candidates;
 	}
 
 	/**

@@ -59,6 +59,9 @@ if ( ! class_exists(RuntimeCapabilities::class) ) {
 if ( ! class_exists(GitRunner::class) ) {
 	require_once dirname(__DIR__) . '/Support/GitRunner.php';
 }
+if ( ! class_exists(WorktreeTargetTreeDemand::class) ) {
+	require_once __DIR__ . '/WorktreeTargetTreeDemand.php';
+}
 
 final class WorktreeBootstrapper {
 	private const DEFAULT_TARGET_TREE_TIMEOUT_SECONDS = 300;
@@ -99,21 +102,6 @@ final class WorktreeBootstrapper {
 
 	/** Repository-owned opt-in contract for submodule dependency roots. */
 	private const SUBMODULE_BOOTSTRAP_CONFIG = '.datamachine/worktree-bootstrap.json';
-
-	/** Conservative capacity allowances used before dependency trees exist. */
-	private const DEFAULT_DEMAND = array(
-		'git_bytes'            => 16777216,
-		'git_inodes'           => 256,
-		'submodule_bytes'      => 1073741824,
-		'submodule_inodes'     => 250000,
-		'package_root_bytes'   => 2147483648,
-		'package_root_inodes'  => 1000000,
-		'composer_root_bytes'  => 1073741824,
-		'composer_root_inodes' => 250000,
-	);
-
-	/** Blobless trees omit blob sizes; reserve 64 KiB for every tracked tree entry. */
-	private const BLOBLESS_TRACKED_ENTRY_BYTES = 65536;
 
 	private const DEFAULT_COMMAND_TIMEOUT_SECONDS   = 600;
 	private const DEFAULT_TOTAL_TIMEOUT_SECONDS     = 1800;
@@ -250,7 +238,7 @@ final class WorktreeBootstrapper {
 	 */
 	public static function demand_plan( string $worktree_path, bool $bootstrap = true ): array {
 		$detected = self::detect($worktree_path);
-		$defaults = self::DEFAULT_DEMAND;
+		$defaults = WorktreeTargetTreeDemand::DEFAULTS;
 		$source   = 'conservative_defaults';
 
 		if ( function_exists('apply_filters') ) {
@@ -269,7 +257,7 @@ final class WorktreeBootstrapper {
 			}
 		}
 
-		foreach ( self::DEFAULT_DEMAND as $key => $fallback ) {
+		foreach ( WorktreeTargetTreeDemand::DEFAULTS as $key => $fallback ) {
 			$defaults[ $key ] = isset($defaults[ $key ]) && is_numeric($defaults[ $key ])
 				? max(0, (int) $defaults[ $key ])
 				: $fallback;
@@ -332,40 +320,16 @@ final class WorktreeBootstrapper {
 
 		$tree_plan            = self::parse_target_tree($tree_output);
 		$blobless_entry_bytes = self::blobless_tracked_entry_bytes($repo_path);
-		$tracked_bytes        = $blobless_partial_clone
-			? $tree_plan['tracked_entries'] * $blobless_entry_bytes
-			: $tree_plan['tracked_bytes'];
 		$defaults             = self::filtered_demand_defaults($tree_plan['detected'], $repo_path, $bootstrap);
-		$counts               = array(
-			'tracked_entries' => $tree_plan['tracked_entries'],
-			'submodules'      => $bootstrap ? count($tree_plan['detected']['submodule_roots']) : 0,
-			'package_roots'   => $bootstrap ? count($tree_plan['detected']['package_roots']) : 0,
-			'composer_roots'  => $bootstrap ? count($tree_plan['detected']['composer_roots']) : 0,
-		);
 
-		return array(
-			'bytes'                   => $tracked_bytes + $defaults['git_bytes'] + ( $counts['submodules'] * $defaults['submodule_bytes'] ) + ( $counts['package_roots'] * $defaults['package_root_bytes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_bytes'] ),
-			'inodes'                  => $counts['tracked_entries'] + $defaults['git_inodes'] + ( $counts['submodules'] * $defaults['submodule_inodes'] ) + ( $counts['package_roots'] * $defaults['package_root_inodes'] ) + ( $counts['composer_roots'] * $defaults['composer_root_inodes'] ),
-			'source'                  => 'target_git_tree_conservative',
-			'target_ref'              => $target_ref,
-			'target_commit'           => $commit,
-			'tracked_bytes'           => $tracked_bytes,
-			'tracked_bytes_source'    => $blobless_partial_clone ? 'conservative_blobless_entry_estimate' : 'exact_git_blob_sizes',
-			'tracked_bytes_per_entry' => $blobless_partial_clone ? $blobless_entry_bytes : null,
-			'git_safety_margin'       => array(
-				'bytes'  => $defaults['git_bytes'],
-				'inodes' => $defaults['git_inodes'],
-			),
-			'bootstrap'               => $bootstrap,
-			'detected'                => $tree_plan['detected'],
-			'counts'                  => $counts,
-			'allowances'              => $defaults,
-			'lockfile_identities'     => array(
-				'git_tree' => $commit,
-			),
-			'fallback_semantics'      => $blobless_partial_clone
-				? 'tracked target entries are measured from Git metadata; blobless partial clones reserve a conservative 64 KiB per tracked entry because exact blob sizes are unavailable; dependency installs use conservative allowances'
-				: 'tracked target entries and bytes are measured from Git; dependency installs use conservative allowances',
+		return WorktreeTargetTreeDemand::assemble(
+			$tree_plan,
+			$target_ref,
+			$commit,
+			$bootstrap,
+			$blobless_partial_clone,
+			$blobless_entry_bytes,
+			$defaults
 		);
 	}
 
@@ -409,7 +373,7 @@ final class WorktreeBootstrapper {
 
 	/** Resolve the conservative per-entry estimate used when blob sizes are absent. */
 	private static function blobless_tracked_entry_bytes( string $repo_path ): int {
-		$bytes = self::BLOBLESS_TRACKED_ENTRY_BYTES;
+		$bytes = WorktreeTargetTreeDemand::BLOBLESS_TRACKED_ENTRY_BYTES;
 		if ( function_exists('apply_filters') ) {
 			$bytes = (int) apply_filters('datamachine_code_worktree_blobless_tracked_entry_bytes', $bytes, $repo_path);
 		}
@@ -427,90 +391,18 @@ final class WorktreeBootstrapper {
 
 	/** Parse bounded NUL-delimited `git ls-tree -r -t` output, with optional blob sizes. */
 	public static function parse_target_tree( string $output ): array {
-		$tracked_entries = 0;
-		$tracked_bytes   = 0;
-		$package_roots   = array();
-		$composer_roots  = array();
-		$submodule_roots = array();
-		$lockfiles       = array( 'pnpm-lock.yaml', 'bun.lockb', 'bun.lock', 'yarn.lock', 'package-lock.json', 'npm-shrinkwrap.json' );
-
-		foreach ( explode("\0", $output) as $record ) {
-			if ( '' === $record || 1 !== preg_match('/^(\d{6})\s+(blob|tree|commit)\s+[0-9a-f]+(?:\s+(-|\d+))?\t(.*)$/sD', $record, $matches) ) {
-				continue;
-			}
-			++$tracked_entries;
-			$path = $matches[4];
-			if ( 'blob' === $matches[2] && is_numeric($matches[3]) ) {
-				$tracked_bytes += max(0, (int) $matches[3]);
-			}
-			if ( '160000' === $matches[1] ) {
-				$submodule_roots[ $path ] = array( 'relative' => $path );
-			}
-			$dirname = dirname($path);
-			if ( '.' !== $dirname && str_contains($dirname, '/') ) {
-				continue;
-			}
-			$basename = basename($path);
-			if ( in_array($basename, $lockfiles, true) ) {
-				$relative = '.' === $dirname ? '.' : $dirname;
-				$manager  = self::manager_for_lockfile($basename);
-				if ( ! isset($package_roots[ $relative ]) || self::package_manager_priority($manager) < self::package_manager_priority($package_roots[ $relative ]['manager']) ) {
-					$package_roots[ $relative ] = array(
-						'relative' => $relative,
-						'manager'  => $manager,
-					);
-				}
-			}
-			if ( 'composer.lock' === $basename ) {
-				$relative                    = '.' === $dirname ? '.' : $dirname;
-				$composer_roots[ $relative ] = array( 'relative' => $relative );
-			}
-		}
-
-		return array(
-			'tracked_entries' => $tracked_entries,
-			'tracked_bytes'   => $tracked_bytes,
-			'detected'        => array(
-				'submodules'            => array() !== $submodule_roots,
-				'submodule_roots'       => array_values($submodule_roots),
-				'packages'              => $package_roots['.']['manager'] ?? null,
-				'composer'              => isset($composer_roots['.']),
-				'package_roots'         => array_values($package_roots),
-				'skipped_package_roots' => array(),
-				'composer_roots'        => array_values($composer_roots),
-			),
-		);
-	}
-
-	private static function manager_for_lockfile( string $lockfile ): string {
-		return match ( $lockfile ) {
-			'pnpm-lock.yaml' => 'pnpm',
-			'bun.lockb', 'bun.lock' => 'bun',
-			'yarn.lock' => 'yarn',
-			default => 'npm',
-		};
-	}
-
-	/** Return the package manager's detection precedence, where lower wins. */
-	private static function package_manager_priority( string $manager ): int {
-		return match ( $manager ) {
-			'pnpm' => 0,
-			'bun'  => 1,
-			'yarn' => 2,
-			'npm'  => 3,
-			default => PHP_INT_MAX,
-		};
+		return WorktreeTargetTreeDemand::parse($output);
 	}
 
 	private static function filtered_demand_defaults( array $detected, string $path, bool $bootstrap ): array {
-		$defaults = self::DEFAULT_DEMAND;
+		$defaults = WorktreeTargetTreeDemand::DEFAULTS;
 		if ( function_exists('apply_filters') ) {
 			$filtered = apply_filters('datamachine_worktree_bootstrap_demand', $defaults, $detected, $path, $bootstrap);
 			if ( is_array($filtered) ) {
 				$defaults = array_merge($defaults, $filtered);
 			}
 		}
-		foreach ( self::DEFAULT_DEMAND as $key => $fallback ) {
+		foreach ( WorktreeTargetTreeDemand::DEFAULTS as $key => $fallback ) {
 			$defaults[ $key ] = isset($defaults[ $key ]) && is_numeric($defaults[ $key ]) ? max(0, (int) $defaults[ $key ]) : $fallback;
 		}
 		return $defaults;
