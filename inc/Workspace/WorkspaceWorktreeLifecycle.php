@@ -1231,8 +1231,8 @@ trait WorkspaceWorktreeLifecycle {
 
 		// Fetch and demand planning only touch this primary. Keep them out of the
 		// global capacity critical section so unrelated repositories can prepare in
-		// parallel; capacity-changing checkout remains globally fenced. Bootstrap
-		// demand is reserved durably before its child processes run without locks.
+		// parallel. Admission reserves bounded demand atomically, then releases the
+		// global lock so repository-scoped checkout can proceed independently.
 		$this->worktree_add_progress($progress_callback, 'repo_preflight');
 		$preflight = WorkspaceMutationLock::with_repo(
 			$this->workspace_path,
@@ -1473,10 +1473,10 @@ trait WorkspaceWorktreeLifecycle {
 	/**
 	 * Resolve the explicit global-capacity lock wait budget.
 	 *
-	 * Lock order is always global capacity first, then the repository lock. The
-	 * global lock remains held through checkout and durable bootstrap reservation.
-	 * Later admissions include that reservation while dependency children run
-	 * without inheriting this lock descriptor.
+	 * Lock order is global capacity admission first, then the repository lock.
+	 * The global lock serializes inspect-and-reserve only; checkout remains
+	 * repository-scoped. Later admissions include durable reservations while
+	 * dependency children run without inheriting this lock descriptor.
 	 */
 	public static function worktree_capacity_wait_timeout_seconds( bool $bootstrap = true ): int {
 		$timeout = self::worktree_capacity_operation_timeout_seconds($bootstrap) + 60;
@@ -1521,9 +1521,10 @@ trait WorkspaceWorktreeLifecycle {
 	}
 
 	/**
-	 * Inspect, create, and reserve bootstrap demand while holding the workspace-
-	 * wide capacity lock. A later admission includes the durable reservation while
-	 * the dependency process runs outside mutation lock boundaries.
+	 * Inspect and reserve demand under the workspace capacity lock, then create
+	 * the worktree under the repository lock. Later admissions include the durable
+	 * reservation while checkout and dependency processes run without holding the
+	 * global lock.
 	 */
 	private function worktree_add_with_capacity_lock(
 		string $repo,
@@ -1865,6 +1866,21 @@ trait WorkspaceWorktreeLifecycle {
 			);
 		}
 
+		$demand_plan['reservation_handle'] = $wt_handle;
+		$reserved                          = WorktreeContextInjector::reserve_capacity($this->workspace_path, $wt_handle, $demand_plan);
+		if ( is_wp_error($reserved) ) {
+			return $reserved;
+		}
+		if ( $capacity_lock instanceof WorkspaceMutationLock ) {
+			$released = $capacity_lock->release();
+			if ( is_wp_error($released) ) {
+				WorktreeContextInjector::release_capacity_reservation($this->workspace_path, $wt_handle);
+				return $released;
+			}
+			$capacity_lock = null;
+		}
+
+		try {
 		$repo_timeout = $this->worktree_operation_remaining_seconds($operation_deadline);
 		if ( $repo_timeout <= 0 ) {
 			return $this->worktree_operation_timeout('repo_lock_wait', $operation_timeout, $operation_started);
@@ -1955,6 +1971,7 @@ trait WorkspaceWorktreeLifecycle {
 			$measurement_plan   = $post_rebase_demand;
 			$post_rebase_demand = WorktreeBootstrapper::remaining_demand_after_materialization($post_rebase_demand);
 			$post_rebase_demand['allow_percentage_byte_floor_exception'] = $allow_percentage_byte_floor_exception;
+			$post_rebase_demand['reservation_handle'] = $wt_handle;
 			$this->worktree_add_progress($progress_callback, 'post_rebase_capacity_inspection');
 			$post_rebase_budget = $this->inspect_worktree_capacity($repo, $branch, $force, $post_rebase_demand);
 			$this->worktree_add_progress($progress_callback, 'post_rebase_artifact_reclamation');
@@ -1987,7 +2004,7 @@ trait WorkspaceWorktreeLifecycle {
 		}
 
 		if ( $bootstrap ) {
-			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array());
+			$bootstrap_before_capacity = $this->inspect_worktree_capacity($repo, $branch, false, array( 'reservation_handle' => $wt_handle ));
 			$remaining_seconds         = $this->worktree_operation_remaining_seconds($operation_deadline);
 			if ( $remaining_seconds <= 0 ) {
 				$recorded = $this->record_bootstrap_outcome($wt_handle, 'failed', array(), 'operation_timeout');
@@ -2003,7 +2020,7 @@ trait WorkspaceWorktreeLifecycle {
 				if ( is_wp_error($response) ) {
 					return $response;
 				}
-				$after_capacity                       = $this->inspect_worktree_capacity($repo, $branch, false, array());
+				$after_capacity                       = $this->inspect_worktree_capacity($repo, $branch, false, array( 'reservation_handle' => $wt_handle ));
 				$response['capacity_evidence']        = WorktreeDemandCalibration::record_bootstrap($repo, $measurement_plan, $bootstrap_before_capacity, $after_capacity, true);
 				$response['bootstrap_noop_completed'] = true;
 			} else {
@@ -2075,6 +2092,9 @@ trait WorkspaceWorktreeLifecycle {
 		$this->emit_workspace_changed('worktree_add', $repo, $wt_handle, $wt_path);
 
 		return $response;
+		} finally {
+			WorktreeContextInjector::release_capacity_reservation($this->workspace_path, $wt_handle);
+		}
 	}
 
 	/** Whether target-tree planning proves bootstrap has no dependency work. */
@@ -5769,7 +5789,19 @@ trait WorkspaceWorktreeLifecycle {
 	 * @return array<string,mixed>
 	 */
 	protected function inspect_worktree_capacity( string $repo, string $branch, bool $force, array $demand_plan ): array {
-		$reservations                         = WorktreeContextInjector::bootstrap_capacity_reservations();
+		$reservations = WorktreeContextInjector::capacity_reservations($this->workspace_path);
+		$exclude      = (string) ( $demand_plan['reservation_handle'] ?? '' );
+		if ( '' !== $exclude && isset($reservations['by_handle'][ $exclude ]) ) {
+			$reservations['bytes']   = max(0, (int) $reservations['bytes'] - (int) $reservations['by_handle'][ $exclude ]['bytes']);
+			$reservations['inodes']  = max(0, (int) $reservations['inodes'] - (int) $reservations['by_handle'][ $exclude ]['inodes']);
+			$reservations['handles'] = array_values(
+				array_filter(
+					(array) $reservations['handles'],
+					static fn( string $handle ): bool => $handle !== $exclude
+				)
+			);
+			unset($reservations['by_handle'][ $exclude ]);
+		}
 		$demand_plan['bytes']                 = max(0, (int) ( $demand_plan['bytes'] ?? 0 )) + (int) $reservations['bytes'];
 		$demand_plan['inodes']                = max(0, (int) ( $demand_plan['inodes'] ?? 0 )) + (int) $reservations['inodes'];
 		$demand_plan['capacity_reservations'] = $reservations;
