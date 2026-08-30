@@ -27,6 +27,12 @@ if ( ! class_exists(WorktreeTargetTreeDemand::class) ) {
 if ( ! class_exists(WorktreeDiskBudget::class) ) {
 	require_once __DIR__ . '/WorktreeDiskBudget.php';
 }
+if ( ! class_exists(StandalonePrimaryRefresher::class) ) {
+	require_once __DIR__ . '/StandalonePrimaryRefresher.php';
+}
+if ( ! class_exists(StandaloneFileLock::class) ) {
+	require_once __DIR__ . '/StandaloneFileLock.php';
+}
 
 final class StandaloneWorktreeProvider {
 
@@ -45,7 +51,7 @@ final class StandaloneWorktreeProvider {
 	public function capabilities(): array {
 		return array(
 			'schema'                => self::CAPABILITIES_SCHEMA,
-			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge', 'plan' ),
+			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge', 'plan', 'primary-refresh' ),
 			'identity_schema'       => self::IDENTITY_SCHEMA,
 			'task_resolution_schema' => self::TASK_SCHEMA,
 			'plan_schema'           => WorktreePlanEnvelope::SCHEMA,
@@ -63,7 +69,16 @@ final class StandaloneWorktreeProvider {
 			'attachment_apply_receipt'    => true,
 			'attachment_standalone' => false,
 			'authorization_bearing' => false,
+			'primary_refresh_schema' => StandalonePrimaryRefresher::SCHEMA,
+			'primary_refresh_statuses' => array( 'current', 'refreshed', 'refused', 'error' ),
+			'primary_refresh_mutating' => true,
+			'primary_refresh_remote' => 'origin',
 		);
+	}
+
+	/** @return array<string,mixed> */
+	public function refresh_primary( string $workspace, string $repo, string $remote = 'origin' ): array {
+		return ( new StandalonePrimaryRefresher() )->refresh($workspace, $repo, $remote);
 	}
 
 	/**
@@ -481,7 +496,8 @@ final class StandaloneWorktreeProvider {
 		$identity     = $this->freshness_identity($primary_path, $target_ref, $remote_refs);
 		$evidence     = is_string($remote_refs) ? WorktreeFreshnessEvidence::matching($primary_path, $remote_refs) : null;
 		if ( null === $evidence || null === $identity ) {
-			$refresh_command = sprintf('wp datamachine-code workspace git pull %s --allow-primary-refresh', $repo);
+			$refresh_action  = $this->primary_refresh_action($workspace, $repo);
+			$refresh_command = $refresh_action['command'];
 			return array_merge(
 				$this->error(
 					'freshness_refresh_required',
@@ -490,6 +506,7 @@ final class StandaloneWorktreeProvider {
 				),
 				array(
 					'refresh_command' => $refresh_command,
+					'refresh_action'  => $refresh_action,
 					'freshness'       => array(
 						'status'     => 'refresh_required',
 						'verified'   => false,
@@ -544,6 +561,22 @@ final class StandaloneWorktreeProvider {
 		));
 		$plan['latency_ms'] = $this->elapsed_ms($started);
 		return $plan;
+	}
+
+	/** @return array{executable:string,arguments:array<int,string>,command:string} */
+	private function primary_refresh_action( string $workspace, string $repo ): array {
+		$script     = realpath(dirname(__DIR__, 2) . '/bin/dmc-worktree-provider');
+		$executable = false === $script ? dirname(__DIR__, 2) . '/bin/dmc-worktree-provider' : $script;
+		$arguments = array( 'primary-refresh', $workspace, $repo );
+		if ( ! is_executable($executable) ) {
+			array_unshift($arguments, $executable);
+			$executable = PHP_BINARY;
+		}
+		return array(
+			'executable' => $executable,
+			'arguments'  => $arguments,
+			'command'    => implode(' ', array_map('escapeshellarg', array_merge(array( $executable ), $arguments))),
+		);
 	}
 
 	private function default_base( string $primary_path ): string {
@@ -846,25 +879,12 @@ final class StandaloneWorktreeProvider {
 		}
 		$key  = hash('sha256', $git_dir . ':' . $stat['dev'] . ':' . $stat['ino']);
 		$file = sys_get_temp_dir() . '/dmc-worktree-converge-' . $key . '.lock';
-		$lock = @fopen($file, 'c');
-		if ( false === $lock ) {
-			return null;
-		}
-		$started = microtime(true);
-		while ( ! flock($lock, LOCK_EX | LOCK_NB) ) {
-			if ( microtime(true) - $started >= self::LOCK_TIMEOUT ) {
-				fclose($lock);
-				return null;
-			}
-			usleep(10000);
-		}
-		return $lock;
+		return StandaloneFileLock::acquire($file, self::LOCK_TIMEOUT, 10000);
 	}
 
 	/** @param resource $lock */
 	private function release_convergence_lock( $lock ): void {
-		flock($lock, LOCK_UN);
-		fclose($lock);
+		StandaloneFileLock::release($lock);
 	}
 
 	/**

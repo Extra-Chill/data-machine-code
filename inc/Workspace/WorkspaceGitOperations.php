@@ -7,6 +7,10 @@
 
 namespace DataMachineCode\Workspace;
 
+if ( ! class_exists(WorktreeBranchHolder::class) ) {
+	require_once __DIR__ . '/WorktreeBranchHolder.php';
+}
+
 use DataMachineCode\Support\GitHubRemote;
 use DataMachineCode\Support\GitRunner;
 use DataMachineCode\Support\GitTransportPreflight;
@@ -2201,21 +2205,8 @@ trait WorkspaceGitOperations {
 			return new \WP_Error('detached_primary_worktree_listing_failed', 'Primary refresh is blocked: unable to verify whether another worktree holds the default branch.', array( 'status' => 409 ));
 		}
 
-		$blocks = preg_split('/\n\n+/', trim( (string) ( $listing['output'] ?? '' )));
-		if ( ! is_array($blocks) ) {
-			$blocks = array();
-		}
-		foreach ( $blocks as $block ) {
-			$path = null;
-			$ref  = null;
-			foreach ( explode("\n", $block) as $line ) {
-				if ( str_starts_with($line, 'worktree ') ) {
-					$path = substr($line, 9); }
-				if ( str_starts_with($line, 'branch ') ) {
-					$ref = substr($line, 7); }
-			}
-			if ( null === $path || $path === $repo_path || 'refs/heads/' . $branch !== $ref ) {
-				continue; }
+		$path = WorktreeBranchHolder::find( (string) ( $listing['output'] ?? '' ), $repo_path, $branch );
+		if ( null !== $path ) {
 			$basename = basename($path);
 			$handle   = str_starts_with($basename, $repo . '@') ? $basename : $path;
 			return array(
