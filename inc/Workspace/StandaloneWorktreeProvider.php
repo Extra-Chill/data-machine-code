@@ -34,7 +34,6 @@ final class StandaloneWorktreeProvider {
 	private const TASK_SCHEMA     = 'datamachine-code/worktree-task-resolution/v1';
 	private const SAFETY_SCHEMA   = 'datamachine-code/worktree-safety/v1';
 	private const CONVERGE_SCHEMA = 'datamachine-code/worktree-convergence/v1';
-	private const PLAN_SCHEMA     = 'datamachine-code/worktree-plan/v1';
 	private const CAPABILITIES_SCHEMA = 'datamachine-code/worktree-provider-capabilities/v1';
 	private const TOKEN_PREFIX    = 'dmc-worktree-v1.';
 	private const PROBE_TIMEOUT   = 2.0;
@@ -49,7 +48,7 @@ final class StandaloneWorktreeProvider {
 			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge', 'plan' ),
 			'identity_schema'       => self::IDENTITY_SCHEMA,
 			'task_resolution_schema' => self::TASK_SCHEMA,
-			'plan_schema'           => self::PLAN_SCHEMA,
+			'plan_schema'           => WorktreePlanEnvelope::SCHEMA,
 			'plan_dispositions'     => array( 'create', 'exact_reuse', 'adoptable', 'legacy_handoff_required', 'owner_conflict', 'unsafe', 'stale', 'capacity_blocked' ),
 			'plan_apply_ability'    => WorktreePlanEnvelope::APPLY_ABILITY,
 			'plan_mutating'         => false,
@@ -708,13 +707,14 @@ final class StandaloneWorktreeProvider {
 				continue;
 			}
 			$identity = $this->resolve_identity($workspace, $entry->getBasename());
-			if ( 'owned' !== ( $identity['status'] ?? '' ) || $task_identity !== WorktreePlanPolicy::task_identity(array_filter(
+			$candidate_task = array_filter(
 				array(
 					'task_url' => $identity['task_url'] ?? null,
 					'task_ref' => $identity['task_ref'] ?? null,
 				),
 				static fn( mixed $value ): bool => null !== $value
-			)) ) {
+			);
+			if ( 'owned' !== ( $identity['status'] ?? '' ) || $task_identity !== WorktreePlanPolicy::task_identity($candidate_task) ) {
 				continue;
 			}
 			if ( true === ( $identity['primary'] ?? false ) ) {
@@ -730,13 +730,7 @@ final class StandaloneWorktreeProvider {
 				'branch'   => $identity['branch'],
 				'dirty'    => ! empty($safety['dirty']) ? 1 : 0,
 				'unpushed' => ! empty($safety['unpushed']) ? 1 : 0,
-				'task'     => array_filter(
-					array(
-						'task_url' => $identity['task_url'] ?? null,
-						'task_ref' => $identity['task_ref'] ?? null,
-					),
-					static fn( mixed $value ): bool => null !== $value
-				),
+				'task'     => $candidate_task,
 			);
 			if ( count($candidates) >= WorktreePlanPolicy::SAME_TASK_CANDIDATE_LIMIT ) {
 				break;
