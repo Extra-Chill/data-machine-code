@@ -33,10 +33,26 @@ $byte_only_warning = WorktreeDiskBudget::evaluate(array_merge($metrics, array( '
 $measurement_warning = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'free_bytes' => null )));
 
 capacity_advisory_assert('workspace_capacity' === ($warning['diagnostic_id'] ?? null), 'Capacity evidence must expose a stable diagnostic ID.');
+capacity_advisory_assert(false === ($warning['emergency_triggered'] ?? true), 'Healthy disk with advisory worktree count must not set emergency_triggered.');
+capacity_advisory_assert('advisory' === ($warning['typed_trigger_reasons'][0]['severity'] ?? null), 'Worktree-count pressure must stay typed advisory.');
+capacity_advisory_assert(true === ($blocked['emergency_triggered'] ?? false), 'Refusal floors must reserve emergency_triggered for blocking thresholds.');
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) === ($same_warning['advisory_fingerprint'] ?? null), 'Unchanged warning state must retain a suppressible fingerprint.');
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) !== ($new_threshold['advisory_fingerprint'] ?? null), 'A changed active threshold must produce a new fingerprint.');
 capacity_advisory_assert(($warning['advisory_fingerprint'] ?? null) !== ($blocked['advisory_fingerprint'] ?? null), 'A blocking state change must produce a new fingerprint.');
 capacity_advisory_assert(str_starts_with((string) ($warning['evidence_reference'] ?? ''), 'workspace_capacity@'), 'Capacity evidence must expose a compact reference.');
+
+$healthy = WorktreeDiskBudget::evaluate(array_merge($metrics, array( 'worktree_count' => 12 )));
+$advisory_read = WorktreeDiskBudget::for_routine_read($warning);
+$healthy_read  = WorktreeDiskBudget::for_routine_read($healthy);
+$blocked_read  = WorktreeDiskBudget::for_routine_read($blocked);
+capacity_advisory_assert(false === ($healthy['emergency_triggered'] ?? true) && 'ok' === ($healthy['status'] ?? null), 'Healthy capacity must remain non-emergency.');
+capacity_advisory_assert($advisory_read === WorktreeDiskBudget::compact_status($warning), 'Routine list/show must compact healthy-disk advisory count status.');
+capacity_advisory_assert(! isset($advisory_read['filesystem_free_bytes']) && ! isset($advisory_read['cleanup_recommendations']) && ! isset($advisory_read['emergency_cleanup_command']) && ! isset($advisory_read['recovery_actions']), 'Routine advisory reads must omit the capacity dossier and cleanup plans.');
+capacity_advisory_assert('studio wp datamachine-code workspace hygiene --format=json' === ($advisory_read['evidence_command'] ?? null), 'Routine reads must retain the hygiene evidence command.');
+capacity_advisory_assert(false === ($advisory_read['emergency_triggered'] ?? true) && 'advisory' === ($advisory_read['typed_trigger_reasons'][0]['severity'] ?? null), 'Compact advisory count status must keep typed advisory severity.');
+capacity_advisory_assert(! isset($healthy_read['filesystem_free_bytes']) && 'ok' === ($healthy_read['status'] ?? null), 'Healthy routine reads must stay compact.');
+capacity_advisory_assert(isset($blocked_read['filesystem_free_bytes']) && isset($blocked_read['cleanup_recommendations']) && true === ($blocked_read['emergency_triggered'] ?? false), 'Blocking routine reads must retain complete emergency evidence.');
+capacity_advisory_assert(! str_contains(WorktreeDiskBudget::format_advisory($advisory_read), 'workspace worktree prune'), 'Compact routine advisory must not embed cleanup plans.');
 capacity_advisory_assert(4 === count((array) ($warning['recovery_actions'] ?? array())), 'Worktree-count warnings must add bounded cleanup and registration previews.');
 capacity_advisory_assert('studio wp datamachine-code workspace worktree cleanup-eligible-drain --limit=25 --format=json' === ($warning['recovery_actions'][2]['command'] ?? null), 'Worktree-count warnings must point to bounded cleanup preview.');
 capacity_advisory_assert('studio wp datamachine-code workspace worktree prune --dry-run --format=json' === ($warning['recovery_actions'][3]['command'] ?? null), 'Worktree-count warnings must point to the non-mutating prune preview.');

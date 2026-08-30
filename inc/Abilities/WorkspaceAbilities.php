@@ -167,7 +167,7 @@ class WorkspaceAbilities {
 							'summary'            => array( 'type' => 'object' ),
 							'workspace_capacity' => array(
 								'type'        => 'object',
-								'description' => 'One command-level, lossless workspace capacity envelope with a stable diagnostic ID, advisory fingerprint, evidence reference, and recovery actions.',
+								'description' => 'Compact command-level capacity status with typed triggers and an evidence reference. Full capacity evidence remains on workspace hygiene.',
 							),
 							'repos'              => array(
 								'type'  => 'array',
@@ -272,7 +272,7 @@ class WorkspaceAbilities {
 							'dirty'              => array( 'type' => 'integer' ),
 							'workspace_capacity' => array(
 								'type'        => 'object',
-								'description' => 'Complete workspace capacity envelope including byte and inode total/used/free values and percentages, probe, status, warnings, reasons, thresholds, and remediation commands.',
+								'description' => 'Compact workspace capacity status and evidence reference for routine reads. Blocking states retain complete evidence; hygiene owns the full dossier.',
 							),
 							'primary_freshness'  => self::primaryFreshnessSchema(),
 						),
@@ -3511,7 +3511,7 @@ class WorkspaceAbilities {
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
-		$result['workspace_capacity'] = WorktreeDiskBudget::inspect($workspace->get_path());
+		$result['workspace_capacity'] = WorktreeDiskBudget::for_routine_read( WorktreeDiskBudget::inspect( $workspace->get_path() ) );
 
 		return $result;
 	}
@@ -3593,7 +3593,7 @@ class WorkspaceAbilities {
 			$result = ( new RemoteWorkspaceBackend() )->show( $handle );
 			if ( ! self::shouldFallbackToLocalWorkspace( $result ) ) {
 				if ( is_array( $result ) && is_dir( $workspace->get_path() ) ) {
-					$result['workspace_capacity'] = WorktreeDiskBudget::inspect( $workspace->get_path() );
+					$result['workspace_capacity'] = WorktreeDiskBudget::for_routine_read( WorktreeDiskBudget::inspect( $workspace->get_path() ) );
 				}
 				return $result;
 			}

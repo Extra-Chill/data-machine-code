@@ -759,7 +759,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Include per-row Git remote, branch, and primary freshness probes.
 	 *
 	 * [--full]
-	 * : Render full disk/inode capacity evidence and recovery details instead of one compact advisory.
+	 * : Expand complete capacity evidence when the command already produced it. Routine list output stays compact; use workspace hygiene for the full dossier.
 	 *
 	 * [--format=<format>]
 	 * : Output format.
@@ -840,7 +840,11 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === ( $assoc_args['format'] ?? 'table' ) ) {
-			$this->renderer()->json( ! empty( $assoc_args['envelope'] ) ? $result : (array) ( $result['repos'] ?? array() ) );
+			$payload = ! empty( $assoc_args['envelope'] ) ? $result : (array) ( $result['repos'] ?? array() );
+			if ( ! empty( $assoc_args['envelope'] ) && empty( $assoc_args['full'] ) ) {
+				$payload = WorkspaceCompactOutput::workspace_read_result($payload);
+			}
+			$this->renderer()->json($payload);
 			return;
 		}
 
@@ -1073,7 +1077,7 @@ class WorkspaceCommand extends BaseCommand {
 
 		$format = (string) ( $assoc_args['format'] ?? 'table' );
 		if ( 'json' === $format ) {
-			$this->renderer()->json( $summary );
+			$this->renderer()->json(empty($assoc_args['full']) ? WorkspaceCompactOutput::workspace_read_result($summary) : $summary);
 			return;
 		}
 		if ( 'csv' === $format || 'yaml' === $format ) {
@@ -3243,7 +3247,7 @@ class WorkspaceCommand extends BaseCommand {
 	 * : Repository directory name.
 	 *
 	 * [--full]
-	 * : Render full disk/inode capacity evidence and recovery details instead of one compact advisory.
+	 * : Expand complete capacity evidence when the command already produced it. Routine show output stays compact; use workspace hygiene for the full dossier.
 	 *
 	 * [--refresh]
 	 * : Fetch the tracked remote under a bounded timeout before classifying primary freshness.
@@ -3296,7 +3300,7 @@ class WorkspaceCommand extends BaseCommand {
 		}
 
 		if ( 'json' === $format ) {
-			$this->renderer()->json( $result );
+			$this->renderer()->json(empty($assoc_args['full']) ? WorkspaceCompactOutput::workspace_read_result($result) : $result);
 			return;
 		}
 
@@ -3341,8 +3345,9 @@ class WorkspaceCommand extends BaseCommand {
 		if ( array() === $capacity || array() === (array) ( $capacity['trigger_reasons'] ?? array() ) ) {
 			return;
 		}
-		$blocking = empty( $capacity['creation_allowed'] ) || ! empty( $capacity['force_override_required'] );
-		if ( ! $full && ! $blocking ) {
+		$blocking          = empty( $capacity['creation_allowed'] ) || ! empty( $capacity['force_override_required'] );
+		$has_full_evidence = array_key_exists( 'filesystem_free_bytes', $capacity ) && array_key_exists( 'warn_free_bytes', $capacity );
+		if ( ! $blocking && ( ! $full || ! $has_full_evidence ) ) {
 			$advisory = \DataMachineCode\Workspace\WorktreeDiskBudget::format_advisory( $capacity );
 			if ( '' !== $advisory ) {
 				WP_CLI::warning( $advisory );

@@ -58,6 +58,7 @@ namespace {
 	function wp_get_ability( string $name ): ?WorkspaceListAbility { return $GLOBALS['dmc_workspace_list_ability']; }
 
 	require_once dirname(__DIR__) . '/inc/Cli/CliResponseRenderer.php';
+	require_once dirname(__DIR__) . '/inc/Cli/WorkspaceCompactOutput.php';
 	require_once dirname(__DIR__) . '/inc/Cli/Commands/WorkspaceCommand.php';
 	require_once dirname(__DIR__) . '/inc/Abilities/WorkspaceAbilities.php';
 
@@ -129,14 +130,19 @@ namespace {
 	$command->list_repos(array(), array( 'format' => 'json', 'envelope' => true ));
 	$envelope_json = json_decode(WP_CLI::$lines[0] ?? '', true);
 	cli_format_assert(100 === ($envelope_json['total'] ?? null) && 'cursor-2' === ($envelope_json['next_cursor'] ?? null), 'Envelope JSON must explicitly expose pagination metadata.');
-	cli_format_assert('abc' === ($envelope_json['workspace_capacity']['advisory_fingerprint'] ?? null) && ! isset($envelope_json['repos'][0]['workspace_capacity']), 'Envelope JSON must retain one deduplicated command-level capacity evidence object.');
+	cli_format_assert('abc' === ($envelope_json['workspace_capacity']['advisory_fingerprint'] ?? null) && ! isset($envelope_json['workspace_capacity']['advisory']) && ! isset($envelope_json['repos'][0]['workspace_capacity']), 'Envelope JSON must retain one compact command-level capacity evidence object.');
 
 	cli_format_reset();
 	$command->list_repos(array(), array( 'summary' => true, 'format' => 'json' ));
 	$summary_json = json_decode(WP_CLI::$lines[0] ?? '', true);
 	cli_format_assert(100 === ($summary_json['total'] ?? null) && ! isset($summary_json['repos'][0]['name']), 'Summary JSON must serialize the full aggregate summary, not the current page.');
 	cli_format_assert(2 === ($summary_json['returned'] ?? null) && 'cursor-2' === ($summary_json['next_cursor'] ?? null), 'Summary JSON must retain page continuation metadata.');
-	cli_format_assert('abc' === ($summary_json['workspace_capacity']['advisory_fingerprint'] ?? null), 'Summary JSON must retain lossless command-level capacity evidence.');
+	cli_format_assert('abc' === ($summary_json['workspace_capacity']['advisory_fingerprint'] ?? null) && ! isset($summary_json['workspace_capacity']['advisory']), 'Summary JSON must retain compact command-level capacity evidence.');
+
+	cli_format_reset();
+	$command->list_repos(array(), array( 'summary' => true, 'format' => 'json', 'full' => true ));
+	$full_summary_json = json_decode(WP_CLI::$lines[0] ?? '', true);
+	cli_format_assert('Capacity advisory [workspace_capacity@abc]: admission allowed.' === ($full_summary_json['workspace_capacity']['advisory'] ?? null), 'Summary --full JSON must retain complete capacity evidence.');
 
 	cli_format_reset();
 	$command->list_repos(array(), array( 'summary' => true ));

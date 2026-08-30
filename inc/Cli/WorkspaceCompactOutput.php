@@ -50,6 +50,15 @@ class WorkspaceCompactOutput {
 		);
 	}
 
+	/** Project routine workspace reads without embedding the full capacity dossier. */
+	public static function workspace_read_result( array $result ): array {
+		if ( isset($result['workspace_capacity']) && is_array($result['workspace_capacity']) ) {
+			$result['workspace_capacity'] = self::worktree_capacity_summary($result['workspace_capacity']);
+		}
+
+		return $result;
+	}
+
 	private static function worktree_capacity_summary( array $capacity ): array {
 		if ( array() === $capacity ) {
 			return array();
@@ -74,7 +83,10 @@ class WorkspaceCompactOutput {
 			'diagnostic_id'           => $capacity['diagnostic_id'] ?? null,
 			'advisory_fingerprint'    => $capacity['advisory_fingerprint'] ?? null,
 			'evidence_reference'      => $capacity['evidence_reference'] ?? null,
+			'evidence_command'        => $capacity['evidence_command'] ?? null,
 			'status'                  => $capacity['status'] ?? null,
+			'worktree_count'          => $capacity['worktree_count'] ?? null,
+			'emergency_triggered'     => isset($capacity['emergency_triggered']) ? (bool) $capacity['emergency_triggered'] : null,
 			'force_override'          => isset( $capacity['force_override'] ) ? (bool) $capacity['force_override'] : null,
 			'creation_allowed'        => array_key_exists('creation_allowed', $capacity) ? (bool) $capacity['creation_allowed'] : ( 'refused' !== ( $capacity['status'] ?? '' ) ),
 			'force_override_required' => array_key_exists('force_override_required', $capacity) ? (bool) $capacity['force_override_required'] : $has_blocking_trigger,

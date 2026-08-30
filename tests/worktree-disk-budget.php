@@ -36,6 +36,7 @@ try {
 	);
 
 	assert_true('refused' === $budget['status'], 'low free space should refuse worktree creation');
+	assert_true(true === $budget['emergency_triggered'], 'byte refusal must remain an emergency threshold');
 	assert_true('independent_filesystem_bytes_and_inodes' === $budget['safety_basis'], 'response should identify independent byte and inode safeguards');
 	assert_true(str_contains($budget['warnings'][0] ?? '', 'Projected free filesystem space'), 'threshold messaging should identify projected filesystem free space');
 	assert_true(98 * $gib === $budget['filesystem_used_bytes'], 'filesystem used bytes should be explicit');
@@ -82,6 +83,7 @@ try {
 	);
 
 	assert_true('ok' === $healthy['status'], 'healthy free space should pass the worktree disk budget gate');
+	assert_true(false === $healthy['emergency_triggered'], 'healthy free space must not report an emergency');
 	assert_true(array() === $healthy['warnings'], 'healthy free space should not emit disk budget warnings');
 	assert_true(array_key_exists('workspace_size_bytes', $healthy) && null === $healthy['workspace_size_bytes'], 'legacy workspace size field should remain present when diagnostics are unavailable');
 
@@ -173,6 +175,7 @@ try {
 		$inode_thresholds
 	);
 	assert_true('warning' === $worktree_count_warning['status'], 'worktree count above its threshold should warn with healthy byte and inode capacity');
+	assert_true(false === $worktree_count_warning['emergency_triggered'], 'count-only advisory pressure must not trigger emergency cleanup');
 	assert_true(array( 'worktree_count_warning_threshold' ) === $worktree_count_warning['trigger_reasons'], 'worktree count warning should retain its stable reason code');
 	assert_true(true === $worktree_count_warning['creation_allowed'], 'count-only pressure must allow creation');
 	assert_true(false === $worktree_count_warning['force_override_required'], 'count-only pressure must not require force');
@@ -303,6 +306,7 @@ try {
 	assert_true(false === $combined_pressure['creation_allowed'], 'combined blocking pressure must deny creation');
 	assert_true(true === $combined_pressure['force_override_required'], 'combined byte or inode pressure must require force');
 	assert_true(array( 'blocking', 'advisory', 'blocking' ) === array_column($combined_pressure['typed_trigger_reasons'], 'severity'), 'combined pressure must preserve each trigger severity in stable reason order');
+	assert_true(true === $combined_pressure['emergency_triggered'], 'blocking pressure must trigger emergency cleanup');
 	$combined_summary = WorktreeDiskBudget::format_summary($combined_pressure);
 	assert_true(str_contains($combined_summary, 'Admission: blocked; force override required=yes; advisory triggers=worktree_count_warning_threshold; blocking triggers=projected_free_bytes_absolute_refusal_floor,projected_free_inodes_absolute_refusal_floor.'), 'human summary must distinguish advisory count pressure from byte and inode refusal');
 	$legacy_summary = WorktreeDiskBudget::format_summary(array( 'status' => 'warning', 'trigger_reasons' => array( 'worktree_count_warning_threshold' ) ));
