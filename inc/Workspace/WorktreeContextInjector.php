@@ -1278,13 +1278,7 @@ class WorktreeContextInjector {
 		}
 		if ( function_exists('posix_kill') && ! posix_kill($pid, 0) ) {
 			$errno = function_exists('posix_get_last_error') ? posix_get_last_error() : 0;
-			if ( defined('POSIX_ESRCH') && POSIX_ESRCH === $errno ) {
-				return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
-			}
-			if ( defined('POSIX_EPERM') && POSIX_EPERM === $errno ) {
-				return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' );
-			}
-			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unavailable' );
+			return self::bootstrap_posix_error_state($errno);
 		}
 		$output = array();
 		$status = 1;
@@ -1301,6 +1295,19 @@ class WorktreeContextInjector {
 			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unparsable' );
 		}
 		return array( 'state' => 'active', 'identity' => array( 'platform' => 'ps', 'started_at' => trim($matches[1]), 'command' => $command, 'command_sha256' => hash('sha256', $command) ) );
+	}
+
+	/** Classify portable POSIX errors even when PHP omits their named constants. */
+	private static function bootstrap_posix_error_state( int $errno ): array {
+		$missing = defined('POSIX_ESRCH') ? constant('POSIX_ESRCH') : 3;
+		$denied  = defined('POSIX_EPERM') ? constant('POSIX_EPERM') : 1;
+		if ( $missing === $errno ) {
+			return array( 'state' => 'stale', 'reason' => 'owner_process_missing' );
+		}
+		if ( $denied === $errno ) {
+			return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_denied' );
+		}
+		return array( 'state' => 'unverifiable', 'reason' => 'owner_probe_unavailable' );
 	}
 
 	/** Whether a durable cleanup timestamp is backed by a finalized lifecycle record. */

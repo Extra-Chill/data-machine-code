@@ -5673,7 +5673,7 @@ trait WorkspaceWorktreeLifecycle {
 			$this->workspace_path,
 			WorktreeDiskBudget::thresholds($repo, $branch),
 			$force,
-			array( 'include_workspace_usage' => true ),
+			array( 'include_workspace_usage' => false ),
 			$demand_plan
 		);
 	}

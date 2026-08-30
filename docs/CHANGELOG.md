@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.72.18] - 2026-08-30
+
+### Fixed
+- classify portable POSIX probe errors
+
 ## [0.72.17] - 2026-08-29
 
 ### Fixed
