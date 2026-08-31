@@ -96,6 +96,9 @@ Data Machine Code provides repository, primary-checkout, worktree, and GitHub wo
 
 **Discovery**
 Use `{$wp} datamachine-code workspace --help` and `{$wp} datamachine-code workspace worktree --help` for the live lifecycle contract. Query `workspace list`, `workspace show`, or `workspace hygiene` for current state instead of relying on an embedded inventory snapshot.
+
+**WordPress recovery**
+If WordPress or its database cannot boot, use the installed plugin's `bin/dmc-worktree-provider inventory <workspace-root> --limit=50` or `bin/dmc-worktree-provider show <workspace-root> <handle> --format=json`. These standalone operations report bounded live filesystem/Git observations only; restore WordPress/database access and return to `{$wp} datamachine-code workspace list` or `workspace show` for authoritative lifecycle metadata.
 MD;
 			}, array(
 				'label'       => 'Data Machine Code',

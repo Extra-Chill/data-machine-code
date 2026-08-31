@@ -114,6 +114,10 @@ namespace {
 	assert_contains('workspace worktree add <repo> <branch> --from=origin/<base>', $default, 'worktree creation route missing');
 	assert_contains('workspace worktree finalize <repo@slug> --pr=<url>', $default, 'worktree finalization route missing');
 	assert_contains('**Discovery**', $default, 'DMC discovery guidance missing');
+	assert_contains('**WordPress recovery**', $default, 'DMC WordPress recovery guidance missing');
+	assert_contains('bin/dmc-worktree-provider inventory <workspace-root> --limit=50', $default, 'Standalone bounded inventory recovery route missing');
+	assert_contains('bin/dmc-worktree-provider show <workspace-root> <handle> --format=json', $default, 'Standalone targeted show recovery route missing');
+	assert_contains('restore WordPress/database access', $default, 'Standalone guidance did not return operators to DB-backed lifecycle authority');
 	assert_not_contains('adopt|clone|list|show|path|hygiene', $default, 'enumerated workspace commands returned');
 	assert_not_contains('wp-content/plugins/', $default, 'DMC duplicated WordPress source guidance');
 	assert_not_contains('Snapshot summary:', $default, 'DMC embedded workspace inventory state');

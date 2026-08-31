@@ -41,6 +41,10 @@ namespace {
 	standalone_provider_command_assert($executable === ( $payload['executable'] ?? null ), 'Provider command did not emit its resolved executable.');
 	standalone_provider_command_assert(in_array('plan', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone planning.');
 	standalone_provider_command_assert(in_array('primary-refresh', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone primary refresh.');
+	standalone_provider_command_assert(in_array('inventory', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone inventory.');
+	standalone_provider_command_assert(in_array('show', $payload['capabilities']['operations'] ?? array(), true), 'Provider command capabilities omitted standalone show.');
+	standalone_provider_command_assert(200 === ($payload['capabilities']['inventory_max_limit'] ?? null), 'Provider command omitted the inventory output bound.');
+	standalone_provider_command_assert(false === ($payload['capabilities']['inventory_mutating'] ?? null) && false === ($payload['capabilities']['inventory_networked'] ?? null), 'Provider command did not identify inventory as local read-only inspection.');
 	standalone_provider_command_assert(\DataMachineCode\Workspace\StandalonePrimaryRefresher::SCHEMA === ($payload['capabilities']['primary_refresh_schema'] ?? null), 'Provider command capabilities omitted the primary refresh schema.');
 	standalone_provider_command_assert(true === ($payload['capabilities']['primary_refresh_mutating'] ?? null), 'Provider command did not identify primary refresh as mutating.');
 	standalone_provider_command_assert('origin' === ($payload['capabilities']['primary_refresh_remote'] ?? null), 'Provider command did not bind refresh to the canonical freshness remote.');

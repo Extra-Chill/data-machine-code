@@ -41,17 +41,30 @@ final class StandaloneWorktreeProvider {
 	private const SAFETY_SCHEMA   = 'datamachine-code/worktree-safety/v1';
 	private const CONVERGE_SCHEMA = 'datamachine-code/worktree-convergence/v1';
 	private const CAPABILITIES_SCHEMA = 'datamachine-code/worktree-provider-capabilities/v1';
+	private const INVENTORY_SCHEMA = 'datamachine-code/standalone-workspace-inventory/v1';
+	private const SHOW_SCHEMA      = 'datamachine-code/standalone-workspace-show/v1';
 	private const TOKEN_PREFIX    = 'dmc-worktree-v1.';
+	private const CURSOR_PREFIX   = 'dmc-inventory-v1.';
 	private const PROBE_TIMEOUT   = 2.0;
 	private const LOCK_TIMEOUT    = 2.0;
 	private const TASK_MAX_MATCHES = 200;
 	private const TASK_MAX_ENTRIES = 10000;
+	private const INVENTORY_DEFAULT_LIMIT = 50;
+	private const INVENTORY_MAX_LIMIT     = 200;
+	private const INVENTORY_MAX_ENTRIES   = 10000;
 
 	/** @return array<string,mixed> */
 	public function capabilities(): array {
 		return array(
 			'schema'                => self::CAPABILITIES_SCHEMA,
-			'operations'            => array( 'capabilities', 'identity', 'task', 'safety', 'converge', 'plan', 'primary-refresh' ),
+			'operations'            => array( 'capabilities', 'inventory', 'show', 'identity', 'task', 'safety', 'converge', 'plan', 'primary-refresh' ),
+			'inventory_schema'      => self::INVENTORY_SCHEMA,
+			'show_schema'           => self::SHOW_SCHEMA,
+			'inventory_default_limit' => self::INVENTORY_DEFAULT_LIMIT,
+			'inventory_max_limit'   => self::INVENTORY_MAX_LIMIT,
+			'inventory_max_entries' => self::INVENTORY_MAX_ENTRIES,
+			'inventory_mutating'    => false,
+			'inventory_networked'   => false,
 			'identity_schema'       => self::IDENTITY_SCHEMA,
 			'task_resolution_schema' => self::TASK_SCHEMA,
 			'plan_schema'           => WorktreePlanEnvelope::SCHEMA,
@@ -79,6 +92,126 @@ final class StandaloneWorktreeProvider {
 	/** @return array<string,mixed> */
 	public function refresh_primary( string $workspace, string $repo, string $remote = 'origin' ): array {
 		return ( new StandalonePrimaryRefresher() )->refresh($workspace, $repo, $remote);
+	}
+
+	/**
+	 * Observe one bounded page of direct-child repositories without WordPress.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function inventory( string $workspace, int $limit = self::INVENTORY_DEFAULT_LIMIT, ?string $cursor = null ): array {
+		$started        = microtime(true);
+		$workspace_real = realpath($workspace);
+		if ( false === $workspace_real || ! is_dir($workspace_real) ) {
+			return $this->error('workspace_not_found', 'The canonical workspace root does not exist.', $started);
+		}
+		if ( $limit < 1 || $limit > self::INVENTORY_MAX_LIMIT ) {
+			return $this->error('invalid_inventory_limit', sprintf('Inventory limit must be between 1 and %d.', self::INVENTORY_MAX_LIMIT), $started);
+		}
+
+		$after = $this->decode_inventory_cursor($cursor);
+		if ( null !== $cursor && null === $after ) {
+			return $this->error('invalid_inventory_cursor', 'The inventory cursor is invalid.', $started);
+		}
+
+		$handles = array();
+		$scanned = 0;
+		try {
+			foreach ( new \FilesystemIterator($workspace_real, \FilesystemIterator::SKIP_DOTS) as $entry ) {
+				if ( ++$scanned > self::INVENTORY_MAX_ENTRIES ) {
+					return $this->error('inventory_workspace_entries_overflow', 'Inventory exceeded the bounded workspace entry limit.', $started);
+				}
+				if ( ! $entry->isDir() || $entry->isLink() || ! file_exists($entry->getPathname() . '/.git') ) {
+					continue;
+				}
+				$handle = $entry->getBasename();
+				$parsed = WorkspaceHandle::parse($handle)->to_array();
+				if ( $handle === $parsed['dir_name'] && '' !== $parsed['repo'] ) {
+					$handles[] = $handle;
+				}
+			}
+		} catch ( \UnexpectedValueException ) {
+			return $this->error('workspace_unreadable', 'The canonical workspace root could not be read.', $started);
+		}
+
+		sort($handles, SORT_STRING);
+		if ( null !== $after ) {
+			$handles = array_values(array_filter($handles, static fn( string $handle ): bool => 0 < strcmp($handle, $after)));
+		}
+		$page     = array_slice($handles, 0, $limit + 1);
+		$has_more = count($page) > $limit;
+		if ( $has_more ) {
+			array_pop($page);
+		}
+
+		$items = array();
+		foreach ( $page as $handle ) {
+			$items[] = $this->observe_handle($workspace_real, $handle);
+		}
+		$next_cursor = $has_more && array() !== $page ? $this->encode_inventory_cursor((string) end($page)) : null;
+
+		return array(
+			'schema'      => self::INVENTORY_SCHEMA,
+			'status'      => 'complete',
+			'workspace'   => $workspace_real,
+			'observed_at' => gmdate('c'),
+			'items'       => $items,
+			'page'        => array(
+				'limit'       => $limit,
+				'cursor'      => $cursor,
+				'next_cursor' => $next_cursor,
+				'has_more'    => $has_more,
+				'count'       => count($items),
+			),
+			'scan'        => array(
+				'scope'            => 'direct_children',
+				'entries_examined' => $scanned,
+				'entry_limit'      => self::INVENTORY_MAX_ENTRIES,
+				'git_probes'       => count($items),
+			),
+			'lifecycle'   => $this->unavailable_lifecycle('wp datamachine-code workspace list --format=json'),
+			'execution'   => $this->read_only_execution(),
+			'latency_ms'  => $this->elapsed_ms($started),
+		);
+	}
+
+	/**
+	 * Observe one exact direct-child handle without scanning the workspace.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function show( string $workspace, string $handle ): array {
+		$started        = microtime(true);
+		$workspace_real = realpath($workspace);
+		if ( false === $workspace_real || ! is_dir($workspace_real) ) {
+			return $this->error('workspace_not_found', 'The canonical workspace root does not exist.', $started);
+		}
+
+		$identity = $this->resolve_identity($workspace_real, $handle);
+		if ( 'owned' !== ( $identity['status'] ?? '' ) ) {
+			return array(
+				'schema'     => self::SHOW_SCHEMA,
+				'status'     => 'not_found',
+				'workspace'  => $workspace_real,
+				'handle'     => $handle,
+				'reason'     => $identity['reason'] ?? 'worktree_not_found',
+				'lifecycle'  => $this->unavailable_lifecycle(sprintf('wp datamachine-code workspace show %s --format=json', escapeshellarg($handle))),
+				'execution'  => $this->read_only_execution(),
+				'latency_ms' => $this->elapsed_ms($started),
+			);
+		}
+
+		return array(
+			'schema'      => self::SHOW_SCHEMA,
+			'status'      => 'complete',
+			'workspace'   => $workspace_real,
+			'observed_at' => gmdate('c'),
+			'item'        => $this->observe_identity($workspace_real, $identity),
+			'lookup'      => array( 'scope' => 'exact_handle', 'workspace_scanned' => false, 'git_probes' => 1 ),
+			'lifecycle'   => $this->unavailable_lifecycle(sprintf('wp datamachine-code workspace show %s --format=json', escapeshellarg($handle))),
+			'execution'   => $this->read_only_execution(),
+			'latency_ms'  => $this->elapsed_ms($started),
+		);
 	}
 
 	/**
@@ -915,6 +1048,89 @@ final class StandaloneWorktreeProvider {
 	private function read_head( string $path ): ?string {
 		$result = $this->run_git($path, array( 'rev-parse', '--verify', 'HEAD^{commit}' ));
 		return $result['success'] ? trim($result['stdout']) : null;
+	}
+
+	/** @return array<string,mixed> */
+	private function observe_handle( string $workspace, string $handle ): array {
+		$identity = $this->resolve_identity($workspace, $handle);
+		if ( 'owned' === ( $identity['status'] ?? '' ) ) {
+			return $this->observe_identity($workspace, $identity);
+		}
+
+		$parsed = WorkspaceHandle::parse($handle)->to_array();
+		return array(
+			'handle'    => $handle,
+			'repo'      => $parsed['repo'],
+			'kind'      => $parsed['is_worktree'] ? 'worktree' : 'primary',
+			'observation' => array(
+				'source' => 'filesystem_git',
+				'status' => 'unavailable',
+				'reason' => $identity['reason'] ?? 'identity_unavailable',
+			),
+			'lifecycle' => $this->unavailable_lifecycle(sprintf('wp datamachine-code workspace show %s --format=json', escapeshellarg($handle))),
+		);
+	}
+
+	/** @param array<string,mixed> $identity @return array<string,mixed> */
+	private function observe_identity( string $workspace, array $identity ): array {
+		$safety = $this->attest_safety($workspace, (string) $identity['token']);
+		$head   = $this->read_head((string) $identity['path']);
+		return array(
+			'handle'      => $identity['handle'],
+			'repo'        => WorkspaceHandle::parse((string) $identity['handle'])->repo(),
+			'kind'        => ! empty($identity['primary']) ? 'primary' : 'worktree',
+			'observation' => array(
+				'source'      => 'filesystem_git',
+				'status'      => 'observed',
+				'path'        => $identity['path'],
+				'branch'      => $identity['branch'],
+				'head'        => $head,
+				'dirty'       => 'attested' === ( $safety['status'] ?? '' ) ? (bool) $safety['dirty'] : null,
+				'unpushed'    => 'attested' === ( $safety['status'] ?? '' ) ? (bool) $safety['unpushed'] : null,
+				'probe_status' => 'attested' === ( $safety['status'] ?? '' ) && null !== $head ? 'complete' : 'unavailable',
+				'task_url'    => $identity['task_url'],
+				'task_ref'    => $identity['task_ref'],
+			),
+			'lifecycle'   => $this->unavailable_lifecycle(sprintf('wp datamachine-code workspace show %s --format=json', escapeshellarg((string) $identity['handle']))),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private function unavailable_lifecycle( string $recovery_command ): array {
+		return array(
+			'source'           => 'wordpress_database',
+			'status'           => 'unavailable',
+			'unavailable_fields' => array( 'lifecycle_state', 'cleanup_signal', 'origin', 'last_seen_at' ),
+			'recovery'         => array(
+				'message' => 'Restore WordPress/database availability and use the canonical WP-backed workspace command for lifecycle state.',
+				'command' => $recovery_command,
+			),
+		);
+	}
+
+	/** @return array<string,bool> */
+	private function read_only_execution(): array {
+		return array(
+			'wordpress_loaded' => false,
+			'database_accessed' => false,
+			'network_accessed' => false,
+			'mutated'          => false,
+		);
+	}
+
+	private function encode_inventory_cursor( string $handle ): string {
+		return self::CURSOR_PREFIX . rtrim(strtr(base64_encode($handle), '+/', '-_'), '=');
+	}
+
+	private function decode_inventory_cursor( ?string $cursor ): ?string {
+		if ( null === $cursor || ! str_starts_with($cursor, self::CURSOR_PREFIX) ) {
+			return null;
+		}
+		$decoded = base64_decode(strtr(substr($cursor, strlen(self::CURSOR_PREFIX)), '-_', '+/'), true);
+		if ( false === $decoded || '' === $decoded || str_contains($decoded, '/') || str_contains($decoded, "\0") ) {
+			return null;
+		}
+		return $decoded;
 	}
 
 	private function run_convergence_test_hook( string $path ): void {
