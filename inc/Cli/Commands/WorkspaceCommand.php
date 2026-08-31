@@ -122,8 +122,8 @@ class WorkspaceCommand extends BaseCommand {
 		$worktree_policy     = WorktreeContextInjector::worktree_add_policy_schema_properties();
 		$definitions         = array(
 			'provider'              => array(
-				'shortdesc' => 'Resolve the standalone worktree provider executable.',
-				'longdesc'  => "Returns the executable path from this installed Data Machine Code source tree.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree provider --format=json",
+				'shortdesc' => 'Resolve the standalone workspace recovery executable.',
+				'longdesc'  => "Returns the executable path and capabilities from this installed Data Machine Code source tree. When WordPress or its database cannot boot, use that executable for bounded read-only inventory or exact-handle show; lifecycle metadata remains available only through the normal WP-backed commands after recovery.\n\n## EXAMPLES\n\n    wp datamachine-code workspace worktree provider --format=json\n    <executable> inventory <workspace-root> --limit=50\n    <executable> show <workspace-root> <repo@slug> --format=json",
 				'synopsis'  => array( $format ),
 			),
 			'add'                   => array(

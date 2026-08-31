@@ -47,7 +47,9 @@ namespace {
 	$assert_synopsis('list', array( 'repo', 'state', 'task-ref', 'owner-run-ref', 'limit', 'cursor', 'all', 'envelope', 'with-status', 'with-size', 'full', 'stale', 'include-unmanaged', 'verbose', 'format' ));
 	$assert_synopsis('prune', array( 'dry-run', 'until-budget', 'format' ));
 	$provider = $definitions['provider'];
-	worktree_help_assert('Resolve the standalone worktree provider executable.' === $provider['shortdesc'], 'Provider help snapshot changed.');
+	worktree_help_assert('Resolve the standalone workspace recovery executable.' === $provider['shortdesc'], 'Provider help snapshot changed.');
+	worktree_help_assert(str_contains($provider['longdesc'], '<executable> inventory <workspace-root> --limit=50'), 'Provider help omitted standalone bounded inventory recovery.');
+	worktree_help_assert(str_contains($provider['longdesc'], '<executable> show <workspace-root> <repo@slug> --format=json'), 'Provider help omitted standalone targeted show recovery.');
 	worktree_help_assert(array_column($provider['synopsis'], 'name') === array( 'format' ), 'Provider help option snapshot changed.');
 	$assert_synopsis('emergency-cleanup', array( 'apply', 'force', 'apply-plan', 'format' ));
 	$assert_synopsis('cleanup-artifacts', array( 'dry-run', 'force', 'allow-active-artifact-cleanup', 'allow-unavailable-process-probe', 'limit', 'offset', 'only-handle', 'exhaustive', 'safety-probes', 'sort', 'older-than', 'apply-plan', 'format' ));

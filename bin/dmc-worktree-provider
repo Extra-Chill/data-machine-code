@@ -13,13 +13,32 @@ $workspace = (string) ( $argv[2] ?? '' );
 $value     = (string) ( $argv[3] ?? '' );
 $base_sha  = (string) ( $argv[4] ?? '' );
 
-if ( ! in_array($operation, array( 'capabilities', 'identity', 'task', 'safety', 'converge', 'plan', 'primary-refresh' ), true) || ( 'capabilities' !== $operation && ( '' === $workspace || '' === $value ) ) || ( 'converge' === $operation && '' === $base_sha ) || ( 'primary-refresh' === $operation && '' !== $base_sha ) ) {
-	fwrite(STDERR, "Usage: dmc-worktree-provider capabilities | <identity|task|safety|converge|plan|primary-refresh> <workspace-root> <handle|task-url|identity-token|plan-json|repo> [base-sha]\n");
+$options = array();
+foreach ( array_slice($argv, 'inventory' === $operation ? 3 : 4) as $argument ) {
+	if ( str_starts_with($argument, '--') ) {
+		$parts = explode('=', substr($argument, 2), 2);
+		$options[ $parts[0] ] = $parts[1] ?? true;
+	}
+}
+
+$valid = array( 'capabilities', 'inventory', 'show', 'identity', 'task', 'safety', 'converge', 'plan', 'primary-refresh' );
+if ( ! in_array($operation, $valid, true) || ( 'capabilities' !== $operation && '' === $workspace ) || ( ! in_array($operation, array( 'capabilities', 'inventory' ), true) && '' === $value ) || ( 'converge' === $operation && '' === $base_sha ) || ( 'primary-refresh' === $operation && '' !== $base_sha ) ) {
+	fwrite(STDERR, "Usage: dmc-worktree-provider capabilities | inventory <workspace-root> [--limit=50] [--cursor=<cursor>] [--format=text|json] | show <workspace-root> <handle> [--format=text|json] | <identity|task|safety|converge|plan|primary-refresh> <workspace-root> <value> [base-sha]\n");
 	exit(2);
 }
 
 $provider = new StandaloneWorktreeProvider();
-if ( 'plan' === $operation ) {
+if ( 'inventory' === $operation ) {
+	$limit = isset($options['limit']) && is_string($options['limit']) && ctype_digit($options['limit']) ? (int) $options['limit'] : 50;
+	if ( isset($options['limit']) && ( ! is_string($options['limit']) || ! ctype_digit($options['limit']) ) ) {
+		fwrite(STDERR, "--limit must be an integer\n");
+		exit(2);
+	}
+	$cursor = isset($options['cursor']) && is_string($options['cursor']) ? $options['cursor'] : null;
+	$result = $provider->inventory($workspace, $limit, $cursor);
+} elseif ( 'show' === $operation ) {
+	$result = $provider->show($workspace, $value);
+} elseif ( 'plan' === $operation ) {
 	$intent = json_decode($value, true);
 	if ( ! is_array($intent) ) {
 		fwrite(STDERR, "plan intent must be a JSON object\n");
@@ -37,6 +56,27 @@ if ( 'plan' === $operation ) {
 	};
 }
 
-fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+$format = (string) ( $options['format'] ?? ( in_array($operation, array( 'inventory', 'show' ), true) ? 'text' : 'json' ) );
+if ( ! in_array($format, array( 'text', 'json' ), true) ) {
+	fwrite(STDERR, "--format must be text or json\n");
+	exit(2);
+}
+
+if ( 'text' === $format && 'inventory' === $operation && 'complete' === ( $result['status'] ?? '' ) ) {
+	fwrite(STDOUT, 'Standalone workspace inventory: ' . $result['workspace'] . "\n");
+	foreach ( $result['items'] as $item ) {
+		$observed = $item['observation'];
+		fwrite(STDOUT, sprintf("%s\t%s\t%s\t%s\tdirty:%s\tunpushed:%s\n", $item['handle'], $item['kind'], $observed['branch'] ?? '-', isset($observed['head']) && is_string($observed['head']) ? substr($observed['head'], 0, 12) : '-', isset($observed['dirty']) ? ( $observed['dirty'] ? 'yes' : 'no' ) : 'unknown', isset($observed['unpushed']) ? ( $observed['unpushed'] ? 'yes' : 'no' ) : 'unknown'));
+	}
+	fwrite(STDOUT, sprintf("Showing %d item(s).%s\n", $result['page']['count'], $result['page']['has_more'] ? ' Continue with --cursor=' . $result['page']['next_cursor'] : ''));
+	fwrite(STDOUT, "Database lifecycle metadata unavailable. Restore WordPress/database access, then run: wp datamachine-code workspace list --format=json\n");
+} elseif ( 'text' === $format && 'show' === $operation && 'complete' === ( $result['status'] ?? '' ) ) {
+	$item = $result['item'];
+	$observed = $item['observation'];
+	fwrite(STDOUT, sprintf("%s (%s)\nPath: %s\nBranch: %s\nHEAD: %s\nDirty: %s\nUnpushed: %s\n", $item['handle'], $item['kind'], $observed['path'], $observed['branch'], $observed['head'] ?? 'unknown', isset($observed['dirty']) ? ( $observed['dirty'] ? 'yes' : 'no' ) : 'unknown', isset($observed['unpushed']) ? ( $observed['unpushed'] ? 'yes' : 'no' ) : 'unknown'));
+	fwrite(STDOUT, 'Database lifecycle metadata unavailable. Restore WordPress/database access, then run: ' . $result['lifecycle']['recovery']['command'] . "\n");
+} else {
+	fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+}
 $failed = 'error' === ( $result['status'] ?? '' ) || ( 'primary-refresh' === $operation && 'refused' === ( $result['status'] ?? '' ) );
 exit($failed ? 1 : 0);

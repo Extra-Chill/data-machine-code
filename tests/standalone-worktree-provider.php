@@ -87,6 +87,8 @@ try {
 	standalone_provider_assert(array( 'task_url', 'task_ref' ) === $capabilities_payload['tracker_fields'], 'Provider capabilities did not advertise both generic tracker fields.');
 	standalone_provider_assert(in_array('task', $capabilities_payload['operations'], true), 'Provider capabilities did not advertise standalone task resolution.');
 	standalone_provider_assert(in_array('plan', $capabilities_payload['operations'], true), 'Provider capabilities did not advertise standalone planning.');
+	standalone_provider_assert(in_array('inventory', $capabilities_payload['operations'], true) && in_array('show', $capabilities_payload['operations'], true), 'Provider capabilities did not advertise standalone workspace inspection.');
+	standalone_provider_assert(50 === ($capabilities_payload['inventory_default_limit'] ?? null) && 200 === ($capabilities_payload['inventory_max_limit'] ?? null), 'Provider capabilities omitted standalone inventory bounds.');
 	standalone_provider_assert('datamachine-code/worktree-plan/v1' === ($capabilities_payload['plan_schema'] ?? null), 'Provider capabilities did not advertise the plan schema.');
 	standalone_provider_assert(false === ($capabilities_payload['plan_mutating'] ?? null), 'Provider capabilities advertised planning as mutating.');
 	standalone_provider_assert('datamachine-code/worktree-task-resolution/v1' === $capabilities_payload['task_resolution_schema'], 'Provider capabilities did not advertise the task resolution schema.');
