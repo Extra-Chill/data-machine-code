@@ -1,0 +1,736 @@
+<?php
+/**
+ * DB-visible workspace lock store.
+ *
+ * @package DataMachineCode\Workspace
+ */
+
+namespace DataMachineCode\Workspace;
+
+defined('ABSPATH') || exit;
+
+if ( ! class_exists(\DataMachineCode\Storage\SqliteBusyRetry::class) ) {
+	include_once dirname(__DIR__) . '/Storage/SqliteBusyRetry.php';
+}
+
+final class WorkspaceLockStore {
+
+
+
+	private const DEFAULT_EXPIRES_SECONDS      = 900;
+	private const DEFAULT_RELEASED_TTL_SECONDS = 604800;
+	private const SQLITE_LOCK_MAX_WAIT_MS      = 5000;
+
+	/**
+	 * Whether a WordPress database handle is available.
+	 */
+	public static function is_available(): bool {
+		global $wpdb;
+		return is_object($wpdb) && isset($wpdb->prefix);
+	}
+
+	/**
+	 * Register an acquired lock in the database.
+	 *
+	 * @param  array<string,mixed> $args Lock fields.
+	 * @return int|\WP_Error Lock row id, 0 when DB is unavailable, or error.
+	 */
+	public static function register_acquired( array $args ): int|\WP_Error {
+		if ( ! self::is_available() ) {
+			return 0;
+		}
+
+		$max_wait_ms = isset($args['max_wait_ms']) ? max(1, (int) $args['max_wait_ms']) : null;
+		$deadline_ns = null === $max_wait_ms ? null : hrtime(true) + ( $max_wait_ms * 1000000 );
+		$ensured     = self::ensure_table($max_wait_ms);
+		if ( $ensured instanceof \WP_Error ) {
+			return $ensured;
+		}
+		if ( null !== $deadline_ns ) {
+			$max_wait_ms = max(1, (int) floor(($deadline_ns - hrtime(true)) / 1000000));
+		}
+
+		global $wpdb;
+		$time    = self::now_timestamp();
+		$now     = gmdate('Y-m-d H:i:s', $time);
+		$expires = self::expires_at($time, $args);
+		$meta    = isset($args['metadata']) && is_array($args['metadata']) ? $args['metadata'] : array();
+
+		$inserted = self::with_sqlite_lock_retry(
+			'workspace_lock_register',
+			static fn() => $wpdb->insert(
+				self::table_name(),
+				array(
+					'lock_key'      => self::bounded_string( (string) ( $args['lock_key'] ?? '' ), 190),
+					'purpose'       => self::bounded_string( (string) ( $args['purpose'] ?? 'workspace_repo_mutation' ), 100),
+					'scope'         => self::bounded_string( (string) ( $args['scope'] ?? '' ), 190),
+					'owner'         => self::bounded_string( (string) ( $args['owner'] ?? self::default_owner() ), 190),
+					'run_id'        => self::nullable_bounded_string($args['run_id'] ?? null, 100),
+					'job_id'        => isset($args['job_id']) ? (int) $args['job_id'] : null,
+					'status'        => 'active',
+					'acquired_at'   => $now,
+					'heartbeat_at'  => $now,
+					'expires_at'    => $expires,
+					'released_at'   => null,
+					'metadata_json' => self::encode_metadata($meta),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			),
+			$max_wait_ms
+		);
+		if ( is_wp_error($inserted) ) {
+			return $inserted;
+		}
+
+		if ( false === $inserted ) {
+			return new \WP_Error(
+				'workspace_lock_db_insert_failed',
+				'Failed to record workspace lock ownership in the database.',
+				array(
+					'status'     => 500,
+					'wpdb_error' => (string) $wpdb->last_error,
+				)
+			);
+		}
+
+		return (int) $wpdb->insert_id;
+	}
+
+	/** Start a bounded lease when its owner actually acquires the OS lock. */
+	public static function activate_lease( array $metadata ): array {
+		if ( ! isset($metadata['lease_duration_seconds']) || ! is_numeric($metadata['lease_duration_seconds']) ) {
+			return $metadata;
+		}
+
+		$activated_at                    = self::now_microtime();
+		$duration                        = max(1, (int) $metadata['lease_duration_seconds']);
+		$metadata['lease_activated_at']  = gmdate('c', (int) floor($activated_at));
+		$metadata['expected_release_at'] = gmdate('c', (int) ceil($activated_at + $duration));
+
+		return $metadata;
+	}
+
+	/**
+	 * Mark a lock row released.
+	 */
+	public static function release( int $lock_id, ?int $max_wait_ms = null ): true|\WP_Error {
+		if ( $lock_id <= 0 || ! self::is_available() ) {
+			return true;
+		}
+
+		global $wpdb;
+		$released = self::with_sqlite_lock_retry(
+			'workspace_lock_release',
+			static fn() => $wpdb->update(
+				self::table_name(),
+				array(
+					'status'      => 'released',
+					'released_at' => gmdate('Y-m-d H:i:s'),
+				),
+				array( 'id' => $lock_id ),
+				array( '%s', '%s' ),
+				array( '%d' )
+			),
+			$max_wait_ms
+		);
+		if ( is_wp_error($released) ) {
+			return $released;
+		}
+		if ( false === $released ) {
+			return new \WP_Error(
+				'workspace_lock_db_release_failed',
+				'Failed to record workspace lock release in the database.',
+				array(
+					'status'     => 500,
+					'wpdb_error' => (string) $wpdb->last_error,
+				)
+			);
+		}
+
+		return true;
+	}
+
+	/** Renew an active DB-visible lock without changing its owner identity. */
+	public static function heartbeat( int $lock_id, array $metadata = array() ): bool|\WP_Error {
+		if ( $lock_id <= 0 || ! self::is_available() ) {
+			return false;
+		}
+
+		global $wpdb;
+		$table          = self::table_name();
+		$metadata_patch = $metadata;
+		$updated        = self::with_sqlite_lock_retry(
+			'workspace_lock_heartbeat',
+			static function () use ( $wpdb, $table, $lock_id, $metadata_patch ): bool|int {
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Internal table name is generated by self::table_name().
+				$existing = $wpdb->get_var($wpdb->prepare("SELECT metadata_json FROM {$table} WHERE id = %d AND status = %s", $lock_id, 'active'));
+				if ( false === $existing && '' !== (string) $wpdb->last_error ) {
+					return false;
+				}
+				$metadata = self::decode_metadata( (string) $existing);
+				$time     = self::now_timestamp();
+				$expected = strtotime( (string) ( $metadata['expected_release_at'] ?? '' ));
+				if ( false !== $expected && $expected <= $time ) {
+					return 0;
+				}
+				$metadata = array_merge($metadata, $metadata_patch);
+				$updated = $wpdb->update(
+					$table,
+					array(
+						'heartbeat_at'  => self::now(),
+						'expires_at'    => self::expires_at($time, array( 'metadata' => $metadata )),
+						'metadata_json' => self::encode_metadata($metadata),
+					),
+					array(
+						'id'     => $lock_id,
+						'status' => 'active',
+					),
+					array( '%s', '%s', '%s' ),
+					array( '%d', '%s' )
+				);
+				if ( false === $updated || 0 < $updated ) {
+					return $updated;
+				}
+
+				// Identical same-second values are a healthy no-op, not lost ownership.
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Internal table name is generated by self::table_name().
+				return 0 < (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE id = %d AND status = %s AND expires_at >= %s", $lock_id, 'active', self::now()));
+			}
+		);
+		return is_wp_error($updated) ? $updated : (bool) $updated;
+	}
+
+	/** Keep DB-visible lock operations compatible with bounded maintenance transactions. */
+	private static function with_sqlite_lock_retry( string $operation, callable $callback, ?int $max_wait_ms = null ): mixed {
+		return \DataMachineCode\Storage\SqliteBusyRetry::run(
+			$operation,
+			$callback,
+			array_filter(
+				array(
+					'max_wait_ms'      => self::SQLITE_LOCK_MAX_WAIT_MS,
+					'hard_max_wait_ms' => null === $max_wait_ms ? null : min(self::SQLITE_LOCK_MAX_WAIT_MS, max(1, $max_wait_ms)),
+				),
+				static fn( mixed $value ): bool => null !== $value
+			)
+		);
+	}
+
+	/**
+	 * Build active/stale/released lock counts.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function status(): array {
+		if ( ! self::is_available() ) {
+			return array(
+				'available' => false,
+				'table'     => null,
+				'active'    => 0,
+				'stale'     => 0,
+				'released'  => 0,
+				'total'     => 0,
+			);
+		}
+
+		// Inspection must never create or migrate schema: callers use this path
+		// specifically while a writer may be stalled. SQLite contention is bounded
+		// by the same primitive used for lock ownership writes.
+		global $wpdb;
+		$table  = self::table_name();
+		$now    = self::now();
+		$result = self::with_sqlite_lock_retry(
+			'workspace_lock_status',
+			static function () use ( $wpdb, $table, $now ): array|false {
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Internal table name is generated by self::table_name(); values remain prepared.
+				$active = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at >= %s", 'active', $now));
+				if ( false === $active ) {
+					return false;
+				}
+				return array(
+					'active'      => (int) $active,
+					'active_keys' => self::lock_keys_for_status('active', false),
+					// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Internal table name is generated by self::table_name(); values remain prepared.
+					'stale'       => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s AND expires_at < %s", 'active', $now)),
+					'stale_keys'  => self::lock_keys_for_status('active', true),
+					'locks'       => array_merge(self::lock_rows_for_status('active', false), self::lock_rows_for_status('active', true)),
+					// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Internal table name is generated by self::table_name(); values remain prepared.
+					'released'    => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE status = %s", 'released')),
+					// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Internal table name is generated by self::table_name().
+					'total'       => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}"),
+				);
+			}
+		);
+		if ( is_wp_error($result) ) {
+			$error_data = (array) $result->get_error_data();
+			return array(
+				'available'           => false,
+				'state'               => 'contended',
+				'error'               => $result->get_error_message(),
+				'error_code'          => $result->get_error_code(),
+				'retry_after_seconds' => (int) ( $error_data['retry_after_seconds'] ?? 1 ),
+				'table'               => self::table_name(),
+				'active'              => 0,
+				'stale'               => 0,
+				'released'            => 0,
+				'total'               => 0,
+			);
+		}
+		if ( false === $result ) {
+			return array(
+				'available' => false,
+				'state'     => 'unavailable',
+				'error'     => (string) $wpdb->last_error,
+				'table'     => $table,
+				'active'    => 0,
+				'stale'     => 0,
+				'released'  => 0,
+				'total'     => 0,
+			);
+		}
+
+		return array(
+			'available' => true,
+			'table'     => $table,
+			...$result,
+		);
+	}
+
+	/**
+	 * Return the active DB-visible lock row for a specific lock target.
+	 *
+	 * @return array<string,mixed>|null|\WP_Error
+	 */
+	public static function active_lock( string $lock_key, string $scope ): array|null|\WP_Error {
+		if ( ! self::is_available() ) {
+			return null;
+		}
+
+		$ensured = self::ensure_table();
+		if ( $ensured instanceof \WP_Error ) {
+			return $ensured;
+		}
+
+		global $wpdb;
+		$table = self::table_name();
+		$now   = self::now();
+
+     // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, not user input.
+		$row = self::with_sqlite_lock_retry(
+			'workspace_lock_active_owner',
+			static fn() => $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT id, lock_key, purpose, scope, owner, run_id, job_id, status, acquired_at, heartbeat_at, expires_at, released_at, metadata_json FROM {$table} WHERE lock_key = %s AND scope = %s AND status = %s AND expires_at >= %s ORDER BY acquired_at DESC, id DESC LIMIT 1",
+					$lock_key,
+					$scope,
+					'active',
+					$now
+				),
+				ARRAY_A
+			)
+		);
+     // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( is_wp_error($row) ) {
+			return $row;
+		}
+
+		if ( empty($row) || ! is_array($row) ) {
+			return null;
+		}
+
+		$row = self::normalize_lock_row($row, 'active');
+		unset($row['state'], $row['expires_age_seconds']);
+		if ( isset($row['expires_in_seconds']) ) {
+			$row['retry_after_seconds'] = $row['expires_in_seconds'];
+		}
+
+		return $row;
+	}
+
+	/**
+	 * Prune expired DB lock rows according to retention policy.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function prune_expired( array $protected_lock_keys = array() ): array {
+		$status = self::status();
+		if ( empty($status['available']) ) {
+			return array(
+				'available'           => false,
+				'active_marked_stale' => 0,
+				'released_deleted'    => 0,
+				'before'              => $status,
+				'after'               => $status,
+			);
+		}
+
+		global $wpdb;
+		$table               = self::table_name();
+		$time                = self::now_timestamp();
+		$now                 = gmdate('Y-m-d H:i:s', $time);
+		$released_cutoff     = gmdate('Y-m-d H:i:s', $time - self::released_ttl_seconds());
+		$protected_lock_keys = array_values(array_unique(array_filter(array_map('strval', $protected_lock_keys))));
+		$protected_sql       = '';
+		$protected_args      = array();
+		if ( array() !== $protected_lock_keys ) {
+			$protected_sql  = ' AND lock_key NOT IN (' . implode(', ', array_fill(0, count($protected_lock_keys), '%s')) . ')';
+			$protected_args = $protected_lock_keys;
+		}
+
+	 // phpcs:disable WordPress.DB.PreparedSQL -- Table name from $wpdb->prefix, not user input.
+		$mark_sql  = "UPDATE {$table} SET status = %s WHERE status = %s AND expires_at < %s{$protected_sql}";
+		$mark_args = array_merge(array( 'stale', 'active', $now ), $protected_args);
+		$wpdb->query(call_user_func_array(array( $wpdb, 'prepare' ), array_merge(array( $mark_sql ), $mark_args)));
+		$marked = (int) $wpdb->rows_affected;
+
+		$delete_sql  = "DELETE FROM {$table} WHERE status IN (%s, %s) AND COALESCE(released_at, expires_at) < %s{$protected_sql}";
+		$delete_args = array_merge(array( 'released', 'stale', $released_cutoff ), $protected_args);
+		$wpdb->query(call_user_func_array(array( $wpdb, 'prepare' ), array_merge(array( $delete_sql ), $delete_args)));
+	 // phpcs:enable WordPress.DB.PreparedSQL
+		$deleted = (int) $wpdb->rows_affected;
+
+		return array(
+			'available'           => true,
+			'active_marked_stale' => $marked,
+			'released_deleted'    => $deleted,
+			'protected_active'    => count($protected_lock_keys),
+			'protected_keys'      => $protected_lock_keys,
+			'before'              => $status,
+			'after'               => self::status(),
+		);
+	}
+
+	private static function ensure_table( ?int $max_wait_ms = null ): true|\WP_Error {
+		global $wpdb;
+		$table = self::table_name();
+
+		$exists = self::with_sqlite_lock_retry(
+			'workspace_lock_table_check',
+			static fn() => $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)),
+			$max_wait_ms
+		);
+		if ( is_wp_error($exists) ) {
+			return $exists;
+		}
+		if ( $exists === $table ) {
+			return true;
+		}
+		if ( null !== $max_wait_ms ) {
+			return new \WP_Error('workspace_lock_table_missing', sprintf('Workspace lock table is unavailable for bounded admission: %s.', $table), array( 'status' => 503, 'retryable' => true ));
+		}
+
+		$ensured = self::with_sqlite_lock_retry(
+			'workspace_lock_table_ensure',
+			static function () use ( $wpdb, $table ): bool {
+				include_once ABSPATH . 'wp-admin/includes/upgrade.php';
+				$charset_collate = method_exists($wpdb, 'get_charset_collate') ? $wpdb->get_charset_collate() : '';
+				$sql             = "CREATE TABLE {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			lock_key varchar(190) NOT NULL,
+			purpose varchar(100) NOT NULL,
+			scope varchar(190) NOT NULL,
+			owner varchar(190) NOT NULL,
+			run_id varchar(100) NULL,
+			job_id bigint(20) unsigned NULL,
+			status varchar(20) NOT NULL DEFAULT 'active',
+			acquired_at datetime NOT NULL,
+			heartbeat_at datetime NOT NULL,
+			expires_at datetime NOT NULL,
+			released_at datetime NULL,
+			metadata_json longtext NULL,
+			PRIMARY KEY  (id),
+			KEY lock_key (lock_key),
+			KEY status_expires (status, expires_at),
+			KEY scope_status (scope, status),
+			KEY run_id (run_id),
+			KEY job_id (job_id)
+		) {$charset_collate};";
+
+				dbDelta($sql);
+				return $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) === $table;
+			}
+		);
+		if ( is_wp_error($ensured) ) {
+			return $ensured;
+		}
+		if ( ! $ensured ) {
+			return new \WP_Error('workspace_lock_table_missing', sprintf('Failed to create workspace locks table: %s.', $table), array( 'status' => 500 ));
+		}
+
+		return true;
+	}
+
+	private static function table_name(): string {
+		global $wpdb;
+		return $wpdb->prefix . 'datamachine_code_locks';
+	}
+
+	/**
+	 * Return distinct lock keys for active or expired active DB rows.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function lock_keys_for_status( string $status, bool $expired ): array {
+		global $wpdb;
+		if ( ! is_object($wpdb) || ! is_callable(array( $wpdb, 'prepare' )) || ! is_callable(array( $wpdb, 'get_col' )) ) {
+			return array();
+		}
+
+		$table    = self::table_name();
+		$now      = self::now();
+		$operator = $expired ? '<' : '>=';
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, operator is constant-selected above.
+		$query = call_user_func(array( $wpdb, 'prepare' ), "SELECT DISTINCT lock_key FROM {$table} WHERE status = %s AND expires_at {$operator} %s", $status, $now);
+		$keys  = call_user_func(array( $wpdb, 'get_col' ), $query);
+		if ( ! is_array($keys) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map('strval', $keys),
+				static fn( string $key ): bool => '' !== $key
+			)
+		);
+	}
+
+	/**
+	 * Return lock rows for owner/session/age diagnostics.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function lock_rows_for_status( string $status, bool $expired ): array {
+		global $wpdb;
+		if ( ! is_object($wpdb) || ! is_callable(array( $wpdb, 'prepare' )) || ! is_callable(array( $wpdb, 'get_results' )) ) {
+			return array();
+		}
+
+		$table    = self::table_name();
+		$now      = self::now();
+		$operator = $expired ? '<' : '>=';
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from $wpdb->prefix, operator is constant-selected above.
+		$query = call_user_func(array( $wpdb, 'prepare' ), "SELECT id, lock_key, purpose, scope, owner, run_id, job_id, status, acquired_at, heartbeat_at, expires_at, released_at, metadata_json FROM {$table} WHERE status = %s AND expires_at {$operator} %s ORDER BY acquired_at DESC, id DESC LIMIT 25", $status, $now);
+		$rows  = call_user_func(array( $wpdb, 'get_results' ), $query, ARRAY_A);
+		if ( ! is_array($rows) ) {
+			return array();
+		}
+
+		return array_values(array_map(static fn( array $row ): array => self::normalize_lock_row($row, $expired ? 'stale' : 'active'), $rows));
+	}
+
+	/**
+	 * @param array<string,mixed> $row Raw DB row.
+	 * @return array<string,mixed>
+	 */
+	private static function normalize_lock_row( array $row, string $state ): array {
+		$row['id']       = (int) ( $row['id'] ?? 0 );
+		$row['job_id']   = isset($row['job_id']) ? (int) $row['job_id'] : null;
+		$row['state']    = $state;
+		$row['metadata'] = self::decode_metadata( (string) ( $row['metadata_json'] ?? '' ) );
+		unset($row['metadata_json']);
+
+		$acquired  = self::timestamp_seconds( (string) ( $row['acquired_at'] ?? '' ) );
+		$heartbeat = self::timestamp_seconds( (string) ( $row['heartbeat_at'] ?? '' ) );
+		$expires   = self::timestamp_seconds( (string) ( $row['expires_at'] ?? '' ) );
+		$time      = self::now_timestamp();
+		if ( null !== $acquired ) {
+			$row['age_seconds'] = max(0, $time - $acquired);
+		}
+		if ( null !== $heartbeat ) {
+			$row['heartbeat_age_seconds'] = max(0, $time - $heartbeat);
+		}
+		if ( null !== $expires ) {
+			$row['expires_age_seconds'] = 'stale' === $state ? max(0, $time - $expires) : 0;
+			$row['expires_in_seconds']  = 'active' === $state ? max(0, $expires - $time) : 0;
+		}
+
+		return $row;
+	}
+
+	private static function expires_seconds(): int {
+		$seconds = self::DEFAULT_EXPIRES_SECONDS;
+		if ( function_exists('apply_filters') ) {
+			$seconds = (int) apply_filters('datamachine_code_lock_expires_seconds', $seconds);
+		}
+		return max(60, $seconds);
+	}
+
+	/** Resolve the lock expiry from its renewable lease or declared operation deadline. */
+	private static function expires_at( int $now, array $args ): string {
+		$expected = strtotime( (string) ( $args['metadata']['expected_release_at'] ?? '' ));
+		if ( false !== $expected ) {
+			return gmdate('Y-m-d H:i:s', $expected);
+		}
+		return gmdate('Y-m-d H:i:s', $now + self::expires_seconds());
+	}
+
+	private static function now(): string {
+		return gmdate('Y-m-d H:i:s', self::now_timestamp());
+	}
+
+	private static function now_timestamp(): int {
+		$time = time();
+		if ( function_exists('apply_filters') ) {
+			$time = (int) apply_filters('datamachine_code_workspace_lock_time', $time);
+		}
+		return max(0, $time);
+	}
+
+	/** Preserve a complete duration before storing its deadline at DB precision. */
+	private static function now_microtime(): float {
+		$time = microtime(true);
+		if ( function_exists('apply_filters') ) {
+			$time = (float) apply_filters('datamachine_code_workspace_lock_time', $time);
+		}
+		return max(0.0, $time);
+	}
+
+	private static function released_ttl_seconds(): int {
+		$seconds = self::DEFAULT_RELEASED_TTL_SECONDS;
+		if ( function_exists('apply_filters') ) {
+			$seconds = (int) apply_filters('datamachine_code_lock_released_ttl_seconds', $seconds);
+		}
+		return max(3600, $seconds);
+	}
+
+	public static function default_owner_context(): array {
+		$context = array(
+			'host' => function_exists('gethostname') ? (string) gethostname() : 'unknown-host',
+			'pid'  => function_exists('getmypid') ? (string) getmypid() : 'unknown-pid',
+		);
+		// DMC's own namespace — these are not vendor leaks.
+		$env_map = array(
+			'datamachine_task_url'   => 'DATAMACHINE_TASK_URL',
+			'datamachine_task_ref'   => 'DATAMACHINE_TASK_REF',
+			'datamachine_agent'      => 'DATAMACHINE_AGENT',
+			'datamachine_agent_name' => 'DATAMACHINE_AGENT_NAME',
+		);
+		foreach ( $env_map as $key => $env ) {
+			$value = getenv($env);
+			if ( false !== $value && '' !== trim( (string) $value) ) {
+				$context[ $key ] = self::bounded_string( (string) $value, 300);
+			}
+		}
+
+		// Runtime-specific session identifiers are NOT hardcoded here. Integration
+		// layers (e.g. wp-coding-agents) declare which env vars to sniff and how to
+		// project them into a runtime-keyed envelope via the
+		// `datamachine_code_worktree_runtime_signatures` filter — the same registry
+		// WorktreeContextInjector reads. DMC enumerates no runtime IDs and no
+		// vendor-specific env-var names.
+		$runtime_ids = self::resolve_runtime_ids();
+		if ( ! empty($runtime_ids) ) {
+			$context['runtime_ids'] = $runtime_ids;
+		}
+
+		if ( isset($_SERVER['argv']) && is_array($_SERVER['argv']) ) {
+			$context['wp_cli_args'] = self::bounded_string(self::redact_secret_values(implode(' ', array_map('strval', $_SERVER['argv']))), 1000);
+		}
+
+		return $context;
+	}
+
+	/**
+	 * Resolve runtime-specific session identifiers from registered signatures.
+	 *
+	 * Reads the `datamachine_code_worktree_runtime_signatures` filter (the same
+	 * public contract WorktreeContextInjector consumes) and projects any env
+	 * vars the surrounding runtime exposes into a runtime-keyed envelope:
+	 *
+	 *   array(
+	 *       '<runtime-id>' => array( '<subkey>' => '<value>', ... ),
+	 *   )
+	 *
+	 * DMC enumerates no runtime IDs and no vendor-specific env-var names; the
+	 * integration layer declares both. Missing fields stay missing.
+	 *
+	 * @return array<string,array<string,string>>
+	 */
+	private static function resolve_runtime_ids(): array {
+		if ( ! function_exists('apply_filters') ) {
+			return array();
+		}
+
+		$signatures = apply_filters('datamachine_code_worktree_runtime_signatures', array());
+		if ( ! is_array($signatures) ) {
+			return array();
+		}
+
+		$runtime_ids = array();
+		foreach ( $signatures as $runtime_id => $entry ) {
+			if ( ! is_string($runtime_id) || '' === $runtime_id || ! is_array($entry) ) {
+				continue;
+			}
+			$resolved = array();
+			foreach ( $entry as $subkey => $env_var ) {
+				if ( ! is_string($subkey) || '' === $subkey || ! is_string($env_var) || '' === $env_var ) {
+					continue;
+				}
+				$value = getenv($env_var);
+				if ( false === $value || '' === trim( (string) $value) ) {
+					continue;
+				}
+				$resolved[ $subkey ] = self::bounded_string( (string) $value, 300);
+			}
+			if ( ! empty($resolved) ) {
+				$runtime_ids[ $runtime_id ] = $resolved;
+			}
+		}
+
+		return $runtime_ids;
+	}
+
+	private static function default_owner(): string {
+		$context = self::default_owner_context();
+		$host    = (string) ( $context['host'] ?? 'unknown-host' );
+		$pid     = function_exists('getmypid') ? (string) getmypid() : 'unknown-pid';
+		return $host . ':' . $pid;
+	}
+
+	private static function bounded_string( string $value, int $max ): string {
+		$value = trim($value);
+		if ( '' === $value ) {
+			$value = 'unknown';
+		}
+		return substr($value, 0, $max);
+	}
+
+	private static function nullable_bounded_string( mixed $value, int $max ): ?string {
+		if ( null === $value || '' === trim( (string) $value) ) {
+			return null;
+		}
+		return self::bounded_string( (string) $value, $max);
+	}
+
+	/**
+	 * @param array<string,mixed> $metadata Metadata to encode.
+	 */
+	private static function encode_metadata( array $metadata ): string {
+		$metadata = array_slice($metadata, 0, 20, true);
+		$json     = wp_json_encode($metadata);
+		$json     = false === $json ? '{}' : (string) $json;
+		return substr($json, 0, 8192);
+	}
+
+	/**
+	 * @return array<string,mixed>
+	 */
+	private static function decode_metadata( string $json ): array {
+		$decoded = json_decode($json, true);
+		return is_array($decoded) ? $decoded : array();
+	}
+
+	private static function timestamp_seconds( string $timestamp ): ?int {
+		if ( '' === trim($timestamp) ) {
+			return null;
+		}
+
+		$seconds = strtotime($timestamp . ' UTC');
+		return false === $seconds ? null : (int) $seconds;
+	}
+
+	private static function redact_secret_values( string $value ): string {
+		return (string) preg_replace('/(--(?:password|token|key|secret|authorization)(?:=|\s+))\S+/i', '$1[redacted]', $value);
+	}
+}
