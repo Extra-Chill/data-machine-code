@@ -2,6 +2,11 @@
 
 All notable changes to Data Machine Code will be documented in this file.
 
+## [0.75.0] - 2026-08-31
+
+### Added
+- inspect workspaces without WordPress
+
 ## [0.74.1] - 2026-08-30
 
 ### Changed
